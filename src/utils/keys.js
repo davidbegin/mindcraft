@@ -19,7 +19,7 @@ function loadEnvFile(path) {
 }
 
 let keys = {};
-// Prefer code/.env, then keys.json, then process.env
+// Root .env wins over code/.env, and both win over keys.json / process.env
 const envFromFile = {
     ...loadEnvFile(resolve('code/.env')),
     ...loadEnvFile(resolve('.env')),

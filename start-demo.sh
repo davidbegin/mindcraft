@@ -4,14 +4,22 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
 
-if [[ -f code/.env ]]; then
+ENV_FILE=""
+for candidate in .env code/.env; do
+  if [[ -f "$candidate" ]]; then
+    ENV_FILE="$candidate"
+    break
+  fi
+done
+
+if [[ -n "$ENV_FILE" ]]; then
   set -a
-  # shellcheck disable=SC1091
-  source code/.env
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
   set +a
-  echo "Loaded API keys from code/.env"
+  echo "Loaded API keys from $ENV_FILE"
 else
-  echo "WARNING: code/.env not found. Put OPENAI_API_KEY there (or use keys.json)."
+  echo "WARNING: no .env found. Put OPENAI_API_KEY in .env (or use keys.json)."
 fi
 
 echo "Starting Mindcraft bot (OpenAI / andy)..."

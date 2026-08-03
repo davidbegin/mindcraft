@@ -6,15 +6,19 @@ set shell := ["bash", "-cu"]
 default:
     @just --list
 
-# Start Minecraft server + Andy bot (full demo)
+# Start Minecraft + Andy, streaming bot logs (Ctrl-C stops the bot)
 up:
     @./scripts/demo.sh up
+
+# Same as `up`, but leaves the bot running in the background
+up-bg:
+    @./scripts/demo.sh up-bg
 
 # Stop bot + Minecraft server
 down:
     @./scripts/demo.sh down
 
-# Restart everything
+# Restart everything (bot in the background)
 restart:
     @./scripts/demo.sh restart
 
@@ -22,13 +26,21 @@ restart:
 mc-up:
     @./scripts/demo.sh mc-up
 
-# Stop only the Minecraft server
+# Stop only the Minecraft server (world is preserved)
 mc-down:
     @./scripts/demo.sh mc-down
 
-# Start only the Mindcraft bot (expects Minecraft already up)
+# Delete the world and start a fresh Minecraft server
+mc-reset:
+    @./scripts/demo.sh mc-reset
+
+# Start only the Mindcraft bot in the foreground (expects Minecraft already up)
 bot-up:
     @./scripts/demo.sh bot-up
+
+# Start only the Mindcraft bot in the background
+bot-bg:
+    @./scripts/demo.sh bot-bg
 
 # Stop only the Mindcraft bot
 bot-down:
