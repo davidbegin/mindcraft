@@ -1,6 +1,10 @@
 {
     "name": "andy",
-
-    "model": "gpt-5.4-mini"
-
+    "model": {
+        "api": "openai",
+        "model": "gpt-5.4-mini",
+        "params": {
+            "temperature": 0.7
+        }
+    }
 }

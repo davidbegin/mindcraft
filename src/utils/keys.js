@@ -1,11 +1,35 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { resolve } from 'path';
+
+function loadEnvFile(path) {
+    if (!existsSync(path)) return {};
+    const loaded = {};
+    for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+        const eq = trimmed.indexOf('=');
+        const name = trimmed.slice(0, eq).trim();
+        let value = trimmed.slice(eq + 1).trim();
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+        }
+        loaded[name] = value;
+    }
+    return loaded;
+}
 
 let keys = {};
+// Prefer code/.env, then keys.json, then process.env
+const envFromFile = {
+    ...loadEnvFile(resolve('code/.env')),
+    ...loadEnvFile(resolve('.env')),
+};
 try {
     const data = readFileSync('./keys.json', 'utf8');
-    keys = JSON.parse(data);
+    keys = { ...JSON.parse(data), ...envFromFile };
 } catch (err) {
-    console.warn('keys.json not found. Defaulting to environment variables.'); // still works with local models
+    keys = { ...envFromFile };
+    console.warn('keys.json not found. Defaulting to code/.env and environment variables.');
 }
 
 export function getKey(name) {

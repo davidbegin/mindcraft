@@ -1,0 +1,18 @@
+services:
+  minecraft:
+    image: itzg/minecraft-server:latest
+    container_name: mindcraft-mc
+    ports:
+      - "55916:25565"
+    environment:
+      EULA: "TRUE"
+      ONLINE_MODE: "FALSE"
+      MODE: creative
+      DIFFICULTY: peaceful
+      VERSION: "1.21.6"
+      MEMORY: 2G
+      SPAWN_PROTECTION: 0
+      VIEW_DISTANCE: 8
+      MOTD: "Mindcraft Demo"
+      LEVEL_TYPE: minecraft:normal
+    restart: unless-stopped
