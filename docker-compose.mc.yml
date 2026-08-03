@@ -7,13 +7,14 @@ services:
     environment:
       EULA: "TRUE"
       ONLINE_MODE: "FALSE"
-      MODE: creative
-      DIFFICULTY: peaceful
+      MODE: survival
+      DIFFICULTY: normal
       VERSION: "1.21.6"
+      LEVEL: mindcraft-colony-survival-v1
       MEMORY: 2G
       SPAWN_PROTECTION: 0
       VIEW_DISTANCE: 8
-      MOTD: "Mindcraft Demo"
+      MOTD: "Mindcraft Persistent Survival Colony"
     volumes:
       - mindcraft-mc-data:/data
     restart: unless-stopped

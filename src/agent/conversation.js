@@ -14,6 +14,7 @@ class Conversation {
         this.blocked = false;
         this.in_queue = [];
         this.inMessageTimer = null;
+        this.started_at = null;
     }
 
     reset() {
@@ -21,12 +22,14 @@ class Conversation {
         this.ignore_until_start = false;
         this.in_queue = [];
         this.inMessageTimer = null;
+        this.started_at = Date.now();
     }
 
     end() {
         this.active = false;
         this.ignore_until_start = true;
         this.inMessageTimer = null;
+        this.started_at = null;
         const full_message = _compileInMessages(this);
         if (full_message.message.trim().length > 0)
             agent.history.add(this.name, full_message.message);
@@ -74,6 +77,16 @@ class ConversationManager {
             let delta = Date.now() - last_time;
             last_time = Date.now();
             let convo_partner = this.activeConversation.name;
+            const timeout = settings.colony?.conversation_timeout_ms ?? 90000;
+            if (settings.colony?.enabled && this.activeConversation.started_at &&
+                Date.now() - this.activeConversation.started_at >= timeout) {
+                this.endConversation(convo_partner);
+                agent.history.add(
+                    'system',
+                    `Conversation with ${convo_partner} reached the colony time limit. Resume your assigned physical work.`
+                );
+                return;
+            }
 
             if (this.awaiting_response && agent.isIdle()) {
                 wait_time += delta;
@@ -227,7 +240,7 @@ class ConversationManager {
     endConversation(sender) {
         if (this.convos[sender]) {
             this.convos[sender].end();
-            if (this.activeConversation.name === sender) {
+            if (this.activeConversation?.name === sender) {
                 this._stopMonitor();
                 this.activeConversation = null;
                 if (agent.self_prompter.isPaused() && !this.inConversation()) {
@@ -347,7 +360,9 @@ function _tagMessage(message) {
 
 async function _resumeSelfPrompter() {
     await new Promise(resolve => setTimeout(resolve, 5000));
-    if (agent.self_prompter.isPaused() && !convoManager.inConversation()) {
+    if (!agent.colony_paused &&
+        agent.self_prompter.isPaused() &&
+        !convoManager.inConversation()) {
         agent.self_prompter.start();
     }
 }

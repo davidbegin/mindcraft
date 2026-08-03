@@ -120,7 +120,7 @@
     "allow_insecure_coding": {
         "type": "boolean",
         "description": "Whether to allow newAction command that let's LLM write/run code on host computer. Despite sandboxxing, it is potentially insecure.",
-        "default": false
+        "default": true
     },
     "code_timeout_mins": {
         "type": "number",
@@ -136,5 +136,23 @@
         "type": "number",
         "description": "Number of seconds allowed for the bot to spawn before throwing an error. Increase when spawning takes a while.",
         "default": 30
+    },
+    "colony": {
+        "type": "object",
+        "description": "Persistent multi-agent colony coordination and liveness settings.",
+        "default": {
+            "enabled": true,
+            "world_id": "mindcraft-colony-survival-v1",
+            "state_dir": "./colony",
+            "max_agents": 8,
+            "min_agents": 3,
+            "heartbeat_interval_ms": 10000,
+            "idle_directive_ms": 15000,
+            "conversation_timeout_ms": 90000,
+            "task_lease_ms": 300000,
+            "spawn_cooldown_ms": 30000,
+            "model_probe_base_ms": 60000,
+            "model_probe_max_ms": 900000
+        }
     }
 }

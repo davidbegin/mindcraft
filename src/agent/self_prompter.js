@@ -1,3 +1,5 @@
+import settings from './settings.js';
+
 const STOPPED = 0
 const ACTIVE = 1
 const PAUSED = 2
@@ -69,7 +71,23 @@ export class SelfPrompter {
             if (!used_command) {
                 no_command_count++;
                 if (no_command_count >= MAX_NO_COMMAND) {
-                    let out = `Agent did not use command in the last ${MAX_NO_COMMAND} auto-prompts. Stopping auto-prompting.`;
+                    const persistent = settings.colony?.enabled;
+                    let out = `Agent did not use a command in the last ${MAX_NO_COMMAND} auto-prompts.`;
+                    if (persistent) {
+                        out += ' Re-reading the colony directive after a short recovery delay.';
+                        this.agent.history.add(
+                            'system',
+                            'You are an active colony worker. Read the shared plan with !colonyStatus, claim useful work, and issue exactly one command.'
+                        );
+                        this.agent.openChat(out);
+                        console.warn(out);
+                        no_command_count = 0;
+                        // Longer pause so a Cursor get_models / request burst can cool down
+                        // instead of every idle bot immediately re-entering Agent.create.
+                        await new Promise(r => setTimeout(r, Math.max(this.cooldown * 15, 30000)));
+                        continue;
+                    }
+                    out += ' Stopping auto-prompting.';
                     this.agent.openChat(out);
                     console.warn(out);
                     this.state = STOPPED;

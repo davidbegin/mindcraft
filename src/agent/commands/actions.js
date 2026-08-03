@@ -38,6 +38,12 @@ export const actionsList = [
                 agent.openChat('newAction is disabled. Enable with allow_insecure_coding=true in settings.js');
                 return "newAction not allowed! Code writing is disabled in settings. Notify the user.";
             }
+            const pos = agent.bot.entity?.position;
+            const where = pos
+                ? ` at ${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`
+                : '';
+            const plan = (prompt || 'custom behavior').toString().replaceAll('\n', ' ').slice(0, 120);
+            agent.openChat(`[CODING] Standing still${where} while I write code: ${plan}`);
             let result = "";
             const actionFn = async () => {
                 try {
@@ -47,6 +53,7 @@ export const actionsList = [
                 }
             };
             await agent.actions.runAction('action:newAction', actionFn, {timeout: settings.code_timeout_mins});
+            agent.openChat(`[CODING DONE] ${result ? 'Finished custom code.' : 'Coding stopped.'}`);
             return result;
         }
     },

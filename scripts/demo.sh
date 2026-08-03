@@ -41,11 +41,13 @@ bot_running() {
   pgrep -f "node main.js" >/dev/null 2>&1
 }
 
-# Puts the player and Andy in a lit, walkable spot so the demo looks good.
+# Normalizes non-destructive survival settings after the server is ready.
 prep_world() {
   docker exec "$MC_CONTAINER" rcon-cli time set day >/dev/null 2>&1 || true
   docker exec "$MC_CONTAINER" rcon-cli weather clear >/dev/null 2>&1 || true
-  docker exec "$MC_CONTAINER" rcon-cli defaultgamemode creative >/dev/null 2>&1 || true
+  docker exec "$MC_CONTAINER" rcon-cli defaultgamemode survival >/dev/null 2>&1 || true
+  docker exec "$MC_CONTAINER" rcon-cli difficulty normal >/dev/null 2>&1 || true
+  docker exec "$MC_CONTAINER" rcon-cli gamemode survival @a >/dev/null 2>&1 || true
 }
 
 wait_mc() {
@@ -134,7 +136,19 @@ os.execv("/bin/bash", ["bash", "./start-demo.sh"])' &
     echo "Bot still starting — check: just logs"
     ;;
   bot-down)
+    # Reassure anyone in-game before bots vanish (esp. during code updates).
+    if mc_running; then
+      docker exec "$MC_CONTAINER" rcon-cli say "The colony bots are stepping away for a bit — be right back soon!" 2>/dev/null || true
+      sleep 1
+    fi
     pkill -f "node main.js" 2>/dev/null || true
+    for _ in $(seq 1 10); do
+      if ! pgrep -f "node src/process/init_agent.js" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    pkill -f "node src/process/init_agent.js" 2>/dev/null || true
     rm -f /tmp/mindcraft-demo.pid
     echo "Mindcraft bot stopped."
     ;;
@@ -166,8 +180,8 @@ os.execv("/bin/bash", ["bash", "./start-demo.sh"])' &
 3. Play that 1.21.6 installation
 4. Multiplayer → Direct Connection
 5. Server Address:  ${MC_HOST}:${MC_PORT}
-6. Join — you should see Andy in the world
-7. Chat in-game to talk to Andy (or use ${UI_URL})
+6. Join the persistent survival colony
+7. Use ${UI_URL} to inspect the shared plan and every agent
 
 EOF
     ;;

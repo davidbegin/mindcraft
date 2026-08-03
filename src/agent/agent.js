@@ -12,7 +12,8 @@ import { SelfPrompter } from './self_prompter.js';
 import convoManager from './conversation.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
-import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
+import { serverProxy, sendOutputToServer, requestColonyCommand } from './mindserver_proxy.js';
+import { setOutageHandler } from '../models/quota_guard.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
@@ -21,6 +22,7 @@ import { log, validateNameFormat, handleDisconnection } from './connection_handl
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
         this.last_sender = null;
+        this.colony_paused = false;
         this.count_id = count_id;
         this._disconnectHandled = false;
 
@@ -45,12 +47,16 @@ export class Agent {
         this.memory_bank = new MemoryBank();
         this.self_prompter = new SelfPrompter(this);
         convoManager.initAgent(this);
+        setOutageHandler(outage => this._handleModelOutage(outage));
         await this.prompter.initExamples();
 
         // load mem first before doing task
         let save_data = null;
         if (load_mem) {
             save_data = this.history.load();
+            if (save_data?.place_memory) {
+                this.memory_bank.loadJson(save_data.place_memory);
+            }
         }
         let taskStart = null;
         if (save_data) {
@@ -119,8 +125,9 @@ export class Agent {
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
               
-                this._setupEventHandlers(save_data, init_message);
+                await this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
+                serverProxy.colonyReady();
               
                 if (!load_mem) {
                     if (settings.task) {
@@ -194,13 +201,13 @@ export class Agent {
             bannedFood: ["rotten_flesh", "spider_eye", "poisonous_potato", "pufferfish", "chicken"]
         };
 
-        if (save_data?.self_prompt) {
+        if (save_data?.self_prompt && !settings.colony?.enabled) {
             if (init_message) {
                 this.history.add('system', init_message);
             }
             await this.self_prompter.handleLoad(save_data.self_prompt, save_data.self_prompting_state);
         }
-        if (save_data?.last_sender) {
+        if (save_data?.last_sender && !settings.colony?.enabled) {
             this.last_sender = save_data.last_sender;
             if (convoManager.otherAgentInGame(this.last_sender)) {
                 const msg_package = {
@@ -210,10 +217,10 @@ export class Agent {
                 convoManager.receiveFromBot(this.last_sender, msg_package);
             }
         }
-        else if (init_message) {
+        else if (init_message && !settings.colony?.enabled) {
             await this.handleMessage('system', init_message, 2);
         }
-        else {
+        else if (!settings.colony?.enabled) {
             this.openChat("Hello world! I am "+this.name);
         }
     }
@@ -389,6 +396,17 @@ export class Agent {
             // so it can respond to events like death but be routed back to the last sender
             to_player = this.last_sender;
         }
+        const commandName = containsCommand(message);
+        if (commandName) {
+            if (convoManager.isOtherAgent(to_player) && convoManager.inConversation(to_player)) {
+                const conversationMessage = commandName === '!endConversation'
+                    ? message
+                    : `I'm acting on our conversation now with ${commandName} and will keep progressing.`;
+                convoManager.sendToBot(to_player, conversationMessage, false, false);
+            }
+            this.openChat(message);
+            return;
+        }
 
         if (convoManager.isOtherAgent(to_player) && convoManager.inConversation(to_player)) {
             // if we're in an ongoing conversation with the other bot, send the response to it
@@ -528,14 +546,54 @@ export class Agent {
     }
     
 
+    /**
+     * A quota or credential failure will not recover on its own, so stop self-prompting
+     * immediately and ask the coordinator to pause the whole colony rather than letting
+     * every agent keep retrying against a provider that is refusing requests.
+     */
+    async _handleModelOutage(outage) {
+        console.warn(`Model outage detected (${outage.kind}/${outage.code}): ${outage.message}`);
+        try {
+            await this.self_prompter.pause();
+        } catch (error) {
+            console.error('Failed to pause self prompting during a model outage:', error);
+        }
+        if (!settings.colony?.enabled) return;
+        const result = await requestColonyCommand('model-outage', {
+            kind: outage.kind,
+            code: outage.code,
+            message: outage.message,
+        });
+        if (!result?.success) {
+            console.error(`Could not report the model outage to the colony: ${result?.error}`);
+        }
+    }
+
     cleanKill(msg='Killing agent process...', code=1) {
+        if (this._cleanKilling) {
+            return;
+        }
+        this._cleanKilling = true;
         this.history.add('system', msg);
-        this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
+        // code === 1 restarts the agent process; other codes leave for good.
+        // Say something reassuring so players don't worry when bots vanish for updates.
+        const farewell = code === 1
+            ? "Be right back soon!"
+            : "Heading out for a bit — we'll be back soon!";
+        try {
+            if (this.bot && !this._disconnectHandled) {
+                this.bot.chat(farewell);
+            }
+        } catch (err) {
+            console.warn('Could not send farewell chat:', err.message);
+        }
         this.history.save();
-        process.exit(code);
+        // Give the chat packet a moment to flush before the process dies.
+        setTimeout(() => process.exit(code), 500);
     }
     async checkTaskDone() {
-        if (this.task.data) {
+        // messages can arrive from other agents before init assigns this.task
+        if (this.task?.data) {
             let res = this.task.isDone();
             if (res) {
                 await this.history.add('system', `Task ended with score : ${res.score}`);

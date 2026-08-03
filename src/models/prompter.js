@@ -9,6 +9,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
+import { isModelHealthy, resetOutage } from './quota_guard.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -297,6 +298,16 @@ export class Prompter {
         prompt = await this.replaceStrings(prompt, null, null, messages);
         let res = await this.chat_model.sendRequest([], prompt);
         return res.trim().toLowerCase() === 'respond';
+    }
+
+    /**
+     * Sends the smallest possible request to the chat model to test whether a recorded
+     * provider outage has cleared. Returns true only if the adapter reported success.
+     */
+    async checkModelHealth() {
+        resetOutage();
+        await this.chat_model.sendRequest([{ role: 'user', content: 'ping' }], 'Reply with OK.');
+        return isModelHealthy();
     }
 
     async promptVision(messages, imageBuffer) {

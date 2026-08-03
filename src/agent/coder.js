@@ -24,6 +24,15 @@ export class Coder {
         mkdirSync('.' + this.fp, { recursive: true });
     }
 
+    _codingStatus(message) {
+        // Keep in-game observers oriented: bots stand still while waiting on the LLM.
+        const pos = this.agent.bot.entity?.position;
+        const where = pos
+            ? ` @ ${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`
+            : '';
+        this.agent.openChat(`[CODING${where}] ${message}`);
+    }
+
     async generateCode(agent_history) {
         this.agent.bot.modes.pause('unstuck');
         lockdown();
@@ -39,6 +48,7 @@ export class Coder {
         for (let i=0; i<MAX_ATTEMPTS; i++) {
             if (this.agent.bot.interrupt_code)
                 return null;
+            this._codingStatus(`Waiting on model (attempt ${i + 1}/${MAX_ATTEMPTS})...`);
             const messages_copy = JSON.parse(JSON.stringify(messages));
             let res = await this.agent.prompter.promptCoding(messages_copy);
             if (this.agent.bot.interrupt_code)
@@ -55,6 +65,7 @@ export class Coder {
                 
                 if (no_code_failures >= MAX_NO_CODE) {
                     console.warn("Action failed, agent would not write code.");
+                    this._codingStatus('Gave up — model would not write code.');
                     return 'Action failed, agent would not write code.';
                 }
                 messages.push({
@@ -62,6 +73,7 @@ export class Coder {
                     content: 'Error: no code provided. Write code in codeblock in your response. ``` // example ```'}
                 );
                 console.warn("No code block generated. Trying again.");
+                this._codingStatus('No codeblock yet, retrying...');
                 no_code_failures++;
                 continue;
             }
@@ -72,16 +84,19 @@ export class Coder {
             if (lintResult) {
                 const message = 'Error: Code lint error:'+'\n'+lintResult+'\nPlease try again.';
                 console.warn("Linting error:"+'\n'+lintResult+'\n');
+                this._codingStatus('Lint failed, rewriting...');
                 messages.push({ role: 'system', content: message });
                 continue;
             }
             if (!executionModule) {
                 console.warn("Failed to stage code, something is wrong.");
+                this._codingStatus('Failed to stage code.');
                 return 'Failed to stage code, something is wrong.';
             }
 
             try {
                 console.log('Executing code...');
+                this._codingStatus('Running generated code now...');
                 await executionModule.main(this.agent.bot);
 
                 const code_output = this.agent.actions.getBotOutputSummary();
@@ -93,6 +108,7 @@ export class Coder {
                 
                 console.warn('Generated code threw error: ' + e.toString());
                 console.warn('trying again...');
+                this._codingStatus(`Runtime error, rewriting: ${e.toString().slice(0, 80)}`);
 
                 const code_output = this.agent.actions.getBotOutputSummary();
 
@@ -106,6 +122,7 @@ export class Coder {
                 });
             }
         }
+        this._codingStatus(`Failed after ${MAX_ATTEMPTS} attempts.`);
         return `Code generation failed after ${MAX_ATTEMPTS} attempts.`;
     }
     

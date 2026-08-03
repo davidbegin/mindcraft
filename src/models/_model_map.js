@@ -62,6 +62,8 @@ export function selectAPI(profile) {
                 profile.api = 'deepseek';
             else if (profile.model.includes('qwen'))
                 profile.api = 'qwen';
+            else if (profile.model.includes('composer'))
+                profile.api = 'cursor';
         }
         if (!profile.api) {
             throw new Error('Unknown model:', profile.model);

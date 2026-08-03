@@ -1,0 +1,1 @@
+Night farm perimeter blueprint: center at x:-23 y:68 z:-20. Build a small enclosed, lit crop plot beside the water source with a 1-block safe walking access, perimeter lighting at corners/edges, and one planted crop row ready for growth. Keep the water source exposed for irrigation and use nearby dirt for tilled farmland.

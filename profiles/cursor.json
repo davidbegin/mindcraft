@@ -1,0 +1,8 @@
+{
+    "name": "cursor",
+
+    "model": {
+        "api": "cursor",
+        "model": "composer-2.5"
+    }
+}

@@ -76,6 +76,7 @@ You can configure the agent's name, model, and prompts in their profile like `an
 | `vllm` | n/a | n/a |
 | `cerebras` | `CEREBRAS_API_KEY` | [docs](https://inference-docs.cerebras.ai/introduction) |
 | `mercury` | `MERCURY_API_KEY` | [docs](https://www.inceptionlabs.ai/) |
+| `cursor` | `CURSOR_API_KEY` | [docs](https://cursor.com/docs/sdk/typescript) |
 
 </details>
 
@@ -204,6 +205,33 @@ The `model` field can be a string or an object. A model object must specify an `
 `model` is used for chat, `code_model` is used for newAction coding, `vision_model` is used for image interpretation, `embedding` is used to embed text for example selection, and `speak_model` is used for voice synthesis. `model` will be used by default for all other models if not specified. Not all APIs support embeddings, vision, or voice synthesis.
 
 All apis have default models and urls, so those fields are optional. The `params` field is optional and can be used to specify additional parameters for the model. It accepts any key-value pairs supported by the api. Is not supported for embedding models.
+
+## Cursor
+
+The `cursor` api runs each request as a one-shot [Cursor SDK](https://cursor.com/docs/sdk/typescript) agent, so bots use your Cursor plan instead of a per-token provider bill. Put a key from [Cursor Dashboard → Integrations](https://cursor.com/dashboard/integrations) in `CURSOR_API_KEY` and use `./profiles/cursor.json` or set a model yourself:
+
+```json
+"model": {
+  "api": "cursor",
+  "model": "composer-2.5",
+  "params": {
+    "fast": true,
+    "timeout_ms": 90000
+  }
+}
+```
+
+Any `params` key that isn't an adapter option below is passed through as a Cursor model parameter — `fast`, `effort`, `reasoning`, `thinking`, and `context`, depending on the model. `Cursor.models.list()` returns the valid ids and parameters for your account; `composer-2.5` is the default.
+
+| Adapter option | Default | Purpose |
+|------|------|------|
+| `timeout_ms` | `120000` | Cancels a run that hangs. `-1` waits forever. |
+| `cwd` | fresh temp dir | Workspace the agent runs against. |
+| `settingSources` | `[]` | Ambient Cursor settings layers to load. Leave empty so your local rules and hooks stay out of bot turns. |
+| `sandbox` | `false` | Runs tool calls in Cursor's sandbox. |
+| `mode` | `"agent"` | Agent conversation mode. |
+
+Expect roughly 5 seconds per turn: a run carries the agent harness prompt on top of the bot prompt, so it is slower and more token-hungry than a chat completion. Embeddings are not supported, so leave `embedding` pointed at another api or let it fall back to word overlap.
 
 ## Embedding Models
 

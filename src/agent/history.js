@@ -87,7 +87,9 @@ export class History {
                 self_prompting_state: this.agent.self_prompter.state,
                 self_prompt: this.agent.self_prompter.isStopped() ? null : this.agent.self_prompter.prompt,
                 taskStart: this.agent.task.taskStartTime,
-                last_sender: this.agent.last_sender
+                last_sender: this.agent.last_sender,
+                place_memory: this.agent.memory_bank.getJson(),
+                world_id: settings.colony?.world_id ?? null
             };
             writeFileSync(this.memory_fp, JSON.stringify(data, null, 2));
             console.log('Saved memory to:', this.memory_fp);
@@ -104,6 +106,11 @@ export class History {
                 return null;
             }
             const data = JSON.parse(readFileSync(this.memory_fp, 'utf8'));
+            const worldId = settings.colony?.world_id;
+            if (worldId && data.world_id !== worldId) {
+                console.log(`Ignoring memory from another world (${data.world_id || 'legacy'}).`);
+                return null;
+            }
             this.memory = data.memory || '';
             this.turns = data.turns || [];
             console.log('Loaded memory:', this.memory);

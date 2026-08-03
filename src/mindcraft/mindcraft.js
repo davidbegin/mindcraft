@@ -1,4 +1,9 @@
-import { createMindServer, registerAgent, numStateListeners } from './mindserver.js';
+import {
+    createMindServer,
+    numStateListeners,
+    registerAgent,
+    unregisterAgent,
+} from './mindserver.js';
 import { AgentProcess } from '../process/agent_process.js';
 import { getServer } from './mcserver.js';
 import open from 'open';
@@ -39,11 +44,11 @@ export async function createAgent(settings) {
     let agent_name = settings.profile.name;
     const agentIndex = agent_count++;
     const viewer_port = 3000 + agentIndex;
-    registerAgent(settings, viewer_port);
     let load_memory = settings.load_memory || false;
     let init_message = settings.init_message || null;
 
     try {
+        const registeredColonyAgent = await registerAgent(settings, viewer_port);
         try {
             const server = await getServer(settings.host, settings.port, settings.minecraft_version);
             settings.host = server.host;
@@ -58,11 +63,15 @@ export async function createAgent(settings) {
         }
 
         const agentProcess = new AgentProcess(agent_name, mindserver_port);
-        agentProcess.start(load_memory, init_message, agentIndex);
         agent_processes[settings.profile.name] = agentProcess;
+        if (registeredColonyAgent?.desired === false) {
+            return { success: true, error: null };
+        }
+        agentProcess.start(load_memory, init_message, agentIndex);
     } catch (error) {
         console.error(`Error creating agent ${agent_name}:`, error);
         destroyAgent(agent_name);
+        await unregisterAgent(agent_name);
         return {
             success: false,
             error: error.message

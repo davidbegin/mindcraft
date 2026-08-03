@@ -40,6 +40,7 @@ keys = {
     "OPENROUTER_API_KEY": "",
     "CEREBRAS_API_KEY": "",
     "MERCURY_API_KEY": "",
+    "CURSOR_API_KEY": "",
 }
 for line in env.read_text().splitlines():
     line = line.strip()

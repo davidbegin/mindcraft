@@ -40,6 +40,25 @@ export function getFullState(agent) {
     const leggings = bot.inventory.slots[7];
     const boots = bot.inventory.slots[8];
 
+    const healthMax = typeof bot.health === 'number'
+        ? Math.round(bot.maxHealth ?? 20)
+        : 20;
+    const hungerMax = 20;
+    const yaw = typeof bot.entity?.yaw === 'number'
+        ? Number(bot.entity.yaw.toFixed(3))
+        : 0;
+
+    const skin = agent.prompter?.profile?.skin
+        ? {
+            model: agent.prompter.profile.skin.model || null,
+            path: agent.prompter.profile.skin.path || null
+        }
+        : null;
+
+    const selfPromptActive = agent.self_prompter?.isActive?.() === true;
+    const selfPromptPaused = agent.self_prompter?.isPaused?.() === true;
+    const selfPromptText = agent.self_prompter?.prompt || '';
+
     const state = {
         name: agent.name,
         gameplay: {
@@ -47,16 +66,25 @@ export function getFullState(agent) {
             dimension: bot.game.dimension,
             gamemode: bot.game.gameMode,
             health: Math.round(bot.health),
+            healthMax,
             hunger: Math.round(bot.food),
+            hungerMax,
             biome: getBiomeName(bot),
             weather,
             timeOfDay: bot.time.timeOfDay,
-            timeLabel
+            timeLabel,
+            yaw
         },
         action: {
             current: agent.isIdle() ? 'Idle' : agent.actions.currentActionLabel,
             isIdle: agent.isIdle()
         },
+        selfPrompt: {
+            active: selfPromptActive,
+            paused: selfPromptPaused,
+            prompt: selfPromptText
+        },
+        skin,
         surroundings: {
             below,
             legs,

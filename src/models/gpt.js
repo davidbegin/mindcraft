@@ -1,6 +1,7 @@
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { noteModelFailure, noteModelSuccess } from './quota_guard.js';
 
 export class GPT {
     static prefix = 'openai';
@@ -71,8 +72,10 @@ export class GPT {
                 let stop_seq_index = res.indexOf(stop_seq);
                 res = stop_seq_index !== -1 ? res.slice(0, stop_seq_index) : res;
             }
+            noteModelSuccess();
         }
         catch (err) {
+            noteModelFailure(err);
             if ((err.message == 'Context length exceeded' || err.code == 'context_length_exceeded') && turns.length > 1) {
                 console.log('Context length exceeded, trying again with shorter context.');
                 return await this.sendRequest(turns.slice(1), systemMessage, stop_seq);

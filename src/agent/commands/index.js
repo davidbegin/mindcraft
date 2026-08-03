@@ -1,10 +1,12 @@
 import { getBlockId, getItemId } from "../../utils/mcdata.js";
 import { actionsList } from './actions.js';
+import { colonyActionList, colonyQueryList } from './colony.js';
 import { queryList } from './queries.js';
 
 let suppressNoDomainWarning = true;
 
-const commandList = queryList.concat(actionsList);
+const allActionCommands = actionsList.concat(colonyActionList);
+const commandList = queryList.concat(colonyQueryList, allActionCommands);
 const commandMap = {};
 for (let command of commandList) {
     commandMap[command.name] = command;
@@ -182,7 +184,7 @@ export function truncCommandMessage(message) {
 }
 
 export function isAction(name) {
-    return actionsList.find(action => action.name === name) !== undefined;
+    return allActionCommands.find(action => action.name === name) !== undefined;
 }
 
 /**

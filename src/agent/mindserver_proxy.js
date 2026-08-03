@@ -69,6 +69,43 @@ class MindServerProxy {
             }
         });
 
+        this.socket.on('colony-directive', async (directive, callback) => {
+            try {
+                if (!this.agent || !directive?.prompt) {
+                    callback?.({ success: false, error: 'Agent is not ready for a colony directive' });
+                    return;
+                }
+                this.agent.colony_paused = Boolean(directive.paused);
+                this.agent.history.add('system', `COLONY DIRECTIVE\n${directive.prompt}`);
+                if (directive.paused) {
+                    await this.agent.self_prompter.pause();
+                    callback?.({ success: true });
+                    return;
+                }
+                if (convoManager.inConversation()) {
+                    this.agent.self_prompter.setPromptPaused(directive.prompt);
+                } else {
+                    await this.agent.self_prompter.start(directive.prompt);
+                }
+                callback?.({ success: true });
+            } catch (error) {
+                console.error('Error applying colony directive:', error);
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
+        this.socket.on('model-probe', async (callback) => {
+            try {
+                if (!this.agent?.prompter) {
+                    callback?.({ ok: false, error: 'Agent is not ready to probe the model' });
+                    return;
+                }
+                callback?.({ ok: await this.agent.prompter.checkModelHealth() });
+            } catch (error) {
+                callback?.({ ok: false, error: error.message });
+            }
+        });
+
         this.socket.on('get-full-state', (callback) => {
             try {
                 const state = getFullState(this.agent);
@@ -113,6 +150,10 @@ class MindServerProxy {
         this.socket.emit('login-agent', this.agent.name);
     }
 
+    colonyReady() {
+        this.socket.emit('colony-ready');
+    }
+
     shutdown() {
         this.socket.emit('shutdown');
     }
@@ -133,4 +174,20 @@ export function sendBotChatToServer(agentName, json) {
 // for sending general output to server for display
 export function sendOutputToServer(agentName, message) {
     serverProxy.getSocket().emit('bot-output', agentName, message);
+}
+
+export function requestColonyCommand(type, payload = {}) {
+    const socket = serverProxy.getSocket();
+    if (!socket?.connected) {
+        return Promise.resolve({ success: false, error: 'MindServer is not connected' });
+    }
+    return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+            resolve({ success: false, error: `Colony command '${type}' timed out` });
+        }, 10000);
+        socket.emit('colony-command', { type, payload }, (result) => {
+            clearTimeout(timeout);
+            resolve(result);
+        });
+    });
 }

@@ -37,12 +37,35 @@ const argv = yargs(args)
     })
     .argv;
 
+let agent = null;
+
+// Graceful stop (bot-down, UI stop, updates): announce in chat before leaving
+// so players don't think the bots crashed. Exit 0 so the parent does not restart us.
+function installShutdownHandlers() {
+    let handling = false;
+    const onSignal = (signal) => {
+        if (handling) return;
+        handling = true;
+        console.log(`Received ${signal}, announcing farewell and exiting...`);
+        if (agent?.cleanKill) {
+            // code 0: intentional stop, do not auto-restart
+            agent.cleanKill(`Received ${signal}, shutting down.`, 0);
+            return;
+        }
+        process.exit(0);
+    };
+    process.on('SIGINT', () => onSignal('SIGINT'));
+    process.on('SIGTERM', () => onSignal('SIGTERM'));
+}
+
+installShutdownHandlers();
+
 (async () => {
     try {
         console.log('Connecting to MindServer');
         await serverProxy.connect(argv.name, argv.port);
         console.log('Starting agent');
-        const agent = new Agent();
+        agent = new Agent();
         serverProxy.setAgent(agent);
         await agent.start(argv.load_memory, argv.init_message, argv.count_id);
     } catch (error) {
