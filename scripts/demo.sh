@@ -9,7 +9,12 @@ MC_HOST="127.0.0.1"
 MC_PORT="55916"
 MC_VERSION="1.21.6"
 MC_CONTAINER="mindcraft-mc"
+COMPOSE_FILE="docker-compose.mc.yml"
 UI_URL="http://localhost:8080"
+
+compose() {
+  docker compose -f "$COMPOSE_FILE" "$@"
+}
 
 mc_running() {
   [[ "$(docker inspect -f '{{.State.Running}}' "$MC_CONTAINER" 2>/dev/null || echo false)" == "true" ]]
@@ -19,19 +24,17 @@ mc_exists() {
   docker inspect "$MC_CONTAINER" >/dev/null 2>&1
 }
 
-mc_create() {
-  docker run -d --name "$MC_CONTAINER" \
-    -p "${MC_PORT}:25565" \
-    -e EULA=TRUE \
-    -e ONLINE_MODE=FALSE \
-    -e MODE=creative \
-    -e DIFFICULTY=peaceful \
-    -e VERSION="$MC_VERSION" \
-    -e MEMORY=2G \
-    -e SPAWN_PROTECTION=0 \
-    -e VIEW_DISTANCE=8 \
-    -e MOTD="Mindcraft Demo" \
-    itzg/minecraft-server:latest >/dev/null
+# Old plain-docker containers conflict with Compose's fixed container_name.
+ensure_compose_managed() {
+  if ! mc_exists; then
+    return 0
+  fi
+  local project
+  project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$MC_CONTAINER" 2>/dev/null || true)"
+  if [[ -z "$project" ]]; then
+    echo "Replacing unmanaged Minecraft container with Compose-managed one..."
+    docker rm -f "$MC_CONTAINER" >/dev/null
+  fi
 }
 
 bot_running() {
@@ -62,30 +65,42 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
-  mc-up)
-    if mc_running; then
-      echo "Minecraft already running on ${MC_HOST}:${MC_PORT}"
-    else
-      echo "Starting Minecraft ${MC_HOST}:${MC_PORT}..."
-      if mc_exists; then
-        docker start "$MC_CONTAINER" >/dev/null
-      else
-        mc_create
-      fi
-      wait_mc
-      prep_world
-    fi
-    ;;
   mc-down)
-    # Stop, don't remove: keeps the world between sessions.
+    # Prefer Compose stop; always fall through to docker stop so unmanaged
+    # containers (from earlier plain `docker run`) also shut down.
+    compose stop >/dev/null 2>&1 || true
     docker stop "$MC_CONTAINER" >/dev/null 2>&1 || true
     echo "Minecraft stopped (world preserved)."
     ;;
   mc-reset)
     echo "Deleting the Minecraft world and starting fresh..."
+    compose down -v >/dev/null 2>&1 || true
     docker rm -f "$MC_CONTAINER" >/dev/null 2>&1 || true
-    mc_create
+    compose up -d
     wait_mc
+    prep_world
+    ;;
+  mc-up)
+    if mc_running; then
+      # If an old unmanaged container is still up, migrate it to Compose.
+      project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$MC_CONTAINER" 2>/dev/null || true)"
+      if [[ -z "$project" ]]; then
+        echo "Migrating unmanaged Minecraft container to Compose..."
+        docker stop "$MC_CONTAINER" >/dev/null 2>&1 || true
+        docker rm -f "$MC_CONTAINER" >/dev/null
+        compose up -d
+        wait_mc
+        prep_world
+      else
+        echo "Minecraft already running on ${MC_HOST}:${MC_PORT}"
+      fi
+    else
+      echo "Starting Minecraft ${MC_HOST}:${MC_PORT}..."
+      ensure_compose_managed
+      compose up -d
+      wait_mc
+      prep_world
+    fi
     ;;
   bot-up)
     ./scripts/sync-keys.sh
