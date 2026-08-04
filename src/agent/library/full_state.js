@@ -8,6 +8,7 @@ import {
     getFirstBlockAboveHead
 } from "./world.js";
 import convoManager from '../conversation.js';
+import { getLastModelFailure, getOutage } from '../../models/quota_guard.js';
 
 export function getFullState(agent) {
     const bot = agent.bot;
@@ -57,7 +58,15 @@ export function getFullState(agent) {
 
     const selfPromptActive = agent.self_prompter?.isActive?.() === true;
     const selfPromptPaused = agent.self_prompter?.isPaused?.() === true;
+    const selfPromptLoop = agent.self_prompter?.isLoopActive?.() === true;
     const selfPromptText = agent.self_prompter?.prompt || '';
+    const attention = typeof agent.getAttention === 'function'
+        ? agent.getAttention()
+        : {
+            phase: agent.isIdle() ? 'idle' : 'acting',
+            label: agent.isIdle() ? 'Idle' : agent.actions.currentActionLabel,
+            available: agent.isIdle(),
+        };
 
     const state = {
         name: agent.name,
@@ -76,12 +85,16 @@ export function getFullState(agent) {
             yaw
         },
         action: {
-            current: agent.isIdle() ? 'Idle' : agent.actions.currentActionLabel,
-            isIdle: agent.isIdle()
+            current: attention.label,
+            isIdle: attention.phase === 'idle',
+            phase: attention.phase,
+            thinking: attention.phase === 'thinking',
+            available: attention.available === true,
         },
         selfPrompt: {
             active: selfPromptActive,
             paused: selfPromptPaused,
+            loopActive: selfPromptLoop,
             prompt: selfPromptText
         },
         skin,
@@ -110,7 +123,11 @@ export function getFullState(agent) {
         },
         modes: {
             summary: bot.modes.getMiniDocs()
-        }
+        },
+        model: {
+            outage: getOutage(),
+            lastError: getLastModelFailure(),
+        },
     };
 
     return state;

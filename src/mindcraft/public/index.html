@@ -440,6 +440,10 @@
         .chip.role { color: var(--cyan); border-color: rgba(94, 200, 192, 0.35); }
         .chip.busy { color: var(--amber); background: var(--amber-dim); border-color: rgba(240, 180, 41, 0.35); }
         .chip.idle { color: var(--lime); background: var(--lime-dim); border-color: rgba(159, 232, 112, 0.35); }
+        .chip.thinking { color: var(--cyan); background: rgba(94, 200, 192, 0.16); border-color: rgba(94, 200, 192, 0.35); }
+        .chip.planning,
+        .chip.queued { color: #c4a5ff; background: rgba(196, 165, 255, 0.14); border-color: rgba(196, 165, 255, 0.32); }
+        .chip.paused { color: var(--text-dim); background: rgba(255, 255, 255, 0.06); border-color: var(--border); }
 
         .menu-wrap { position: relative; }
 
@@ -508,6 +512,10 @@
 
         .action-value.busy { color: var(--amber); }
         .action-value.idle { color: var(--lime); }
+        .action-value.thinking { color: var(--cyan); }
+        .action-value.planning,
+        .action-value.queued { color: #c4a5ff; }
+        .action-value.paused { color: var(--text-dim); }
 
         .task-line {
             margin-top: 4px;
@@ -545,11 +553,144 @@
 
         .bar.health > span { background: linear-gradient(90deg, #c62828, var(--health)); }
         .bar.hunger > span { background: linear-gradient(90deg, #a67c00, var(--hunger)); }
+        .bar.gear > span { background: linear-gradient(90deg, #2a6f6a, var(--cyan)); }
+        .bar.gear.maxed > span { background: linear-gradient(90deg, #5a8f3a, var(--lime)); }
 
         .vital-num {
             font-family: var(--mono);
             font-size: 0.72rem;
             text-align: right;
+        }
+
+        .loadout {
+            display: grid;
+            gap: 8px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            background: var(--bg-inset);
+            border: 1px solid var(--border);
+        }
+
+        .loadout-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--text-mute);
+        }
+
+        .loadout-track {
+            display: grid;
+            grid-template-columns: 34px 1fr;
+            gap: 8px 10px;
+            align-items: center;
+        }
+
+        .loadout-icon {
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.03);
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+        }
+
+        .loadout-icon.empty { opacity: 0.45; }
+
+        .loadout-icon img {
+            width: 24px;
+            height: 24px;
+            image-rendering: pixelated;
+        }
+
+        .loadout-body {
+            display: grid;
+            gap: 4px;
+            min-width: 0;
+        }
+
+        .loadout-top {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .loadout-label {
+            font-size: 0.72rem;
+            color: var(--text-mute);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .loadout-item {
+            font-size: 0.86rem;
+            font-weight: 600;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .loadout-item.none { color: var(--text-mute); font-weight: 500; }
+
+        .tier-pips {
+            display: flex;
+            gap: 3px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .tier-pips span {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid transparent;
+        }
+
+        .tier-pips span.on {
+            background: var(--cyan);
+            box-shadow: 0 0 0 1px rgba(94, 200, 192, 0.25);
+        }
+
+        .tier-pips span.maxed {
+            background: var(--lime);
+            box-shadow: 0 0 0 1px rgba(159, 232, 112, 0.25);
+        }
+
+        .loadout-next {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 0.72rem;
+            color: var(--text-dim);
+        }
+
+        .loadout-next strong {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .loadout-next .have {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--cyan);
+            white-space: nowrap;
+        }
+
+        .loadout-next .have.maxed { color: var(--lime); }
+
+        .loadout-track .bar {
+            grid-column: 2;
+            height: 6px;
         }
 
         .where {
@@ -722,6 +863,26 @@
         }
 
         .last-msg .text.empty { color: var(--text-mute); font-style: normal; }
+
+        .model-error {
+            margin-top: 6px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            background: rgba(232, 93, 93, 0.12);
+            border: 1px solid rgba(232, 93, 93, 0.35);
+            color: #f0a8a8;
+            font-size: 0.72rem;
+            line-height: 1.35;
+        }
+
+        .model-error[hidden] { display: none; }
+
+        .model-error .me-kind {
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-right: 6px;
+        }
 
         .msg-recent {
             margin-top: 4px;
@@ -1105,6 +1266,335 @@
                 onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'slot-fallback',textContent:'${short}'}));">`;
         }
 
+        // Survival gear ladder used for "best item" + next-upgrade progress.
+        const TOOL_LADDER = ['wooden', 'stone', 'iron', 'diamond', 'netherite'];
+        // Leather/gold/chain are sidegrades; the meaningful upgrade path is iron → diamond → netherite.
+        const ARMOR_LADDER = ['iron', 'diamond', 'netherite'];
+        const TOOL_TIER_RANK = {
+            wooden: 1, stone: 2, golden: 2, iron: 3, diamond: 4, netherite: 5,
+        };
+        const ARMOR_TIER_RANK = {
+            leather: 1, golden: 2, chainmail: 2, iron: 3, diamond: 4, netherite: 5,
+        };
+        const UPGRADE_COST = {
+            wooden: { material: 'oak_planks', need: 3, label: 'planks' },
+            stone: { material: 'cobblestone', need: 3, label: 'cobble' },
+            iron: { material: 'iron_ingot', need: 3, label: 'iron' },
+            diamond: { material: 'diamond', need: 3, label: 'diamonds' },
+            netherite: { material: 'netherite_ingot', need: 1, label: 'netherite' },
+        };
+        const ARMOR_UPGRADE_COST = {
+            leather: { material: 'leather', need: 24, label: 'leather' },
+            iron: { material: 'iron_ingot', need: 24, label: 'iron' },
+            diamond: { material: 'diamond', need: 24, label: 'diamonds' },
+            netherite: { material: 'netherite_ingot', need: 4, label: 'netherite' },
+        };
+        const ARMOR_SLOTS = ['helmet', 'chestplate', 'leggings', 'boots'];
+        const WEAPON_KINDS = ['sword', 'axe', 'trident', 'mace'];
+
+        function countItem(counts, ...names) {
+            return names.reduce((sum, name) => sum + (Number(counts?.[name]) || 0), 0);
+        }
+
+        function materialHave(counts, material) {
+            if (material === 'oak_planks') {
+                return countItem(
+                    counts,
+                    'oak_planks', 'spruce_planks', 'birch_planks', 'jungle_planks',
+                    'acacia_planks', 'dark_oak_planks', 'mangrove_planks', 'cherry_planks',
+                    'bamboo_planks', 'crimson_planks', 'warped_planks'
+                );
+            }
+            if (material === 'cobblestone') {
+                return countItem(counts, 'cobblestone', 'cobbled_deepslate', 'blackstone');
+            }
+            if (material === 'netherite_ingot') {
+                return countItem(counts, 'netherite_ingot', 'netherite_scrap');
+            }
+            return countItem(counts, material);
+        }
+
+        function parseTier(itemName, rankMap) {
+            if (!itemName) return null;
+            const clean = String(itemName).replace(/^minecraft:/, '');
+            for (const [tier, rank] of Object.entries(rankMap)) {
+                if (clean.startsWith(`${tier}_`)) {
+                    return { tier, rank, name: clean };
+                }
+            }
+            return null;
+        }
+
+        function bestByKind(counts, equipment, kind, rankMap) {
+            let best = null;
+            const consider = (raw) => {
+                if (!raw) return;
+                const clean = String(raw).replace(/^minecraft:/, '');
+                if (kind === 'armor') {
+                    if (!ARMOR_SLOTS.some(slot => clean.endsWith(`_${slot}`) || clean === slot)) return;
+                } else if (!clean.endsWith(`_${kind}`) && clean !== kind) {
+                    return;
+                }
+                const parsed = parseTier(clean, rankMap);
+                if (!parsed) return;
+                if (!best || parsed.rank > best.rank ||
+                    (parsed.rank === best.rank && clean.localeCompare(best.name) < 0)) {
+                    best = { ...parsed, name: clean };
+                }
+            };
+            Object.keys(counts || {}).forEach(consider);
+            Object.values(equipment || {}).forEach(consider);
+            return best;
+        }
+
+        function bestWeapon(counts, equipment) {
+            let best = null;
+            for (const kind of WEAPON_KINDS) {
+                const candidate = bestByKind(counts, equipment, kind, TOOL_TIER_RANK);
+                if (!candidate) continue;
+                // Prefer swords at equal tier; otherwise higher tier wins.
+                const swordBonus = candidate.name.endsWith('_sword') ? 0.1 : 0;
+                const score = candidate.rank + swordBonus;
+                if (!best || score > best.score) {
+                    best = { ...candidate, score, kind };
+                }
+            }
+            if (!best) return null;
+            const { score, ...rest } = best;
+            return rest;
+        }
+
+        function bestArmorSet(counts, equipment) {
+            const pieces = [];
+            for (const slot of ARMOR_SLOTS) {
+                let best = null;
+                const consider = (raw) => {
+                    if (!raw) return;
+                    const clean = String(raw).replace(/^minecraft:/, '');
+                    if (!clean.endsWith(`_${slot}`)) return;
+                    const parsed = parseTier(clean, ARMOR_TIER_RANK);
+                    if (!parsed) return;
+                    if (!best || parsed.rank > best.rank) best = { ...parsed, name: clean, slot };
+                };
+                Object.keys(counts || {}).forEach(consider);
+                consider(equipment?.[slot]);
+                if (best) pieces.push(best);
+            }
+            if (!pieces.length) return null;
+            pieces.sort((a, b) => b.rank - a.rank);
+            const top = pieces[0];
+            const sameTier = pieces.filter(p => p.tier === top.tier).length;
+            return {
+                tier: top.tier,
+                rank: top.rank,
+                name: top.name,
+                pieces: sameTier,
+                totalSlots: ARMOR_SLOTS.length,
+            };
+        }
+
+        function nextOnLadder(ladder, currentTier, rankMap = {}) {
+            if (!currentTier) return ladder[0];
+            const idx = ladder.indexOf(currentTier);
+            if (idx >= 0) {
+                return idx >= ladder.length - 1 ? null : ladder[idx + 1];
+            }
+            // Sidegrades like golden/chainmail: jump to the next ladder tier above their rank.
+            const rank = rankMap[currentTier] || 0;
+            return ladder.find(tier => (rankMap[tier] || 0) > rank) || null;
+        }
+
+        function ladderIndexFor(ladder, currentTier, rankMap = {}) {
+            if (!currentTier) return -1;
+            const idx = ladder.indexOf(currentTier);
+            if (idx >= 0) return idx;
+            const rank = rankMap[currentTier] || 0;
+            let best = -1;
+            ladder.forEach((tier, i) => {
+                if ((rankMap[tier] || 0) <= rank) best = i;
+            });
+            return best;
+        }
+
+        function analyzeLoadout(inventory) {
+            const counts = inventory?.counts || {};
+            const equipment = inventory?.equipment || {};
+            const armor = bestArmorSet(counts, equipment);
+            const weapon = bestWeapon(counts, equipment);
+            const pickaxe = bestByKind(counts, equipment, 'pickaxe', TOOL_TIER_RANK);
+
+            const tracks = [
+                buildArmorTrack(armor, counts),
+                buildToolTrack('Weapon', weapon, counts, TOOL_LADDER, (tier) => {
+                    const kind = weapon?.name?.endsWith('_axe') ? 'axe' : 'sword';
+                    return `${tier}_${kind}`;
+                }, (tier) => {
+                    const cost = UPGRADE_COST[tier];
+                    if (!cost) return null;
+                    const kind = weapon?.name?.endsWith('_axe') ? 'axe' : 'sword';
+                    return {
+                        ...cost,
+                        need: kind === 'sword' && tier !== 'netherite' ? 2 : cost.need,
+                    };
+                }),
+                buildToolTrack('Pickaxe', pickaxe, counts, TOOL_LADDER, (tier) => `${tier}_pickaxe`, (tier) => UPGRADE_COST[tier]),
+            ];
+            return tracks;
+        }
+
+        function buildArmorTrack(armor, counts) {
+            const ladder = ARMOR_LADDER;
+            const currentTier = armor?.tier || null;
+            const nextTier = nextOnLadder(ladder, currentTier, ARMOR_TIER_RANK);
+            const ladderIndex = ladderIndexFor(ladder, currentTier, ARMOR_TIER_RANK);
+            const displayItem = armor
+                ? (armor.pieces >= 4 ? `${armor.tier}_chestplate` : armor.name)
+                : null;
+            const label = armor
+                ? (armor.pieces >= 4
+                    ? `${prettyItem(armor.tier)} set`
+                    : `${prettyItem(armor.name)} (${armor.pieces}/4)`)
+                : 'No armor';
+
+            if (!nextTier) {
+                return {
+                    key: 'armor',
+                    kind: 'Armor',
+                    itemName: displayItem,
+                    label,
+                    tierIndex: ladder.length - 1,
+                    tierCount: ladder.length,
+                    maxed: true,
+                    nextLabel: 'Max tier',
+                    have: 1,
+                    need: 1,
+                    progress: 100,
+                };
+            }
+
+            // If they have a partial set of the current top tier, finish that set first.
+            if (armor && armor.pieces < 4 && ARMOR_UPGRADE_COST[armor.tier]) {
+                const cost = ARMOR_UPGRADE_COST[armor.tier];
+                const perPiece = Math.ceil(cost.need / 4);
+                const missing = 4 - armor.pieces;
+                const need = missing * perPiece;
+                const have = Math.min(need, materialHave(counts, cost.material));
+                return {
+                    key: 'armor',
+                    kind: 'Armor',
+                    itemName: displayItem,
+                    label,
+                    tierIndex: Math.max(ladderIndex, 0),
+                    tierCount: ladder.length,
+                    maxed: false,
+                    nextLabel: `finish ${prettyItem(armor.tier)} set`,
+                    have,
+                    need,
+                    materialLabel: cost.label,
+                    progress: need ? Math.min(100, Math.round((have / need) * 100)) : 0,
+                };
+            }
+
+            const cost = ARMOR_UPGRADE_COST[nextTier];
+            const have = Math.min(cost.need, materialHave(counts, cost.material));
+            return {
+                key: 'armor',
+                kind: 'Armor',
+                itemName: displayItem,
+                label,
+                tierIndex: ladderIndex,
+                tierCount: ladder.length,
+                maxed: false,
+                nextLabel: `${prettyItem(nextTier)} set`,
+                have,
+                need: cost.need,
+                materialLabel: cost.label,
+                progress: Math.min(100, Math.round((have / cost.need) * 100)),
+            };
+        }
+
+        function buildToolTrack(kind, best, counts, ladder, nextItemName, costFor) {
+            const currentTier = best?.tier || null;
+            const nextTier = nextOnLadder(ladder, currentTier, TOOL_TIER_RANK);
+            const ladderIndex = ladderIndexFor(ladder, currentTier, TOOL_TIER_RANK);
+            const label = best ? prettyItem(best.name) : `No ${kind.toLowerCase()}`;
+
+            if (!nextTier) {
+                return {
+                    key: kind.toLowerCase(),
+                    kind,
+                    itemName: best?.name || null,
+                    label,
+                    tierIndex: ladder.length - 1,
+                    tierCount: ladder.length,
+                    maxed: true,
+                    nextLabel: 'Max tier',
+                    have: 1,
+                    need: 1,
+                    progress: 100,
+                };
+            }
+
+            const cost = costFor(nextTier);
+            const have = Math.min(cost.need, materialHave(counts, cost.material));
+            return {
+                key: kind.toLowerCase(),
+                kind,
+                itemName: best?.name || null,
+                label,
+                tierIndex: ladderIndex,
+                tierCount: ladder.length,
+                maxed: false,
+                nextLabel: prettyItem(nextItemName(nextTier)),
+                have,
+                need: cost.need,
+                materialLabel: cost.label,
+                progress: Math.min(100, Math.round((have / cost.need) * 100)),
+            };
+        }
+
+        function tierPipsHtml(track) {
+            const pips = [];
+            for (let i = 0; i < track.tierCount; i += 1) {
+                const on = i <= track.tierIndex && track.tierIndex >= 0 && (track.itemName || track.maxed);
+                const cls = track.maxed && on ? 'maxed' : (on ? 'on' : '');
+                pips.push(`<span class="${cls}"></span>`);
+            }
+            return `<div class="tier-pips" title="Tier ${Math.max(track.tierIndex + 1, 0)}/${track.tierCount}">${pips.join('')}</div>`;
+        }
+
+        function loadoutTrackHtml(track) {
+            const nextBits = track.maxed
+                ? `<span><strong>Maxed</strong></span><span class="have maxed">ready</span>`
+                : `<span>Next: <strong>${esc(track.nextLabel)}</strong></span>
+                   <span class="have">${track.have}/${track.need} ${esc(track.materialLabel || '')}</span>`;
+            return `
+                <div class="loadout-track" data-track="${esc(track.key)}">
+                    <div class="loadout-icon ${track.itemName ? '' : 'empty'}">${itemIconHtml(track.itemName || null, 24)}</div>
+                    <div class="loadout-body">
+                        <div class="loadout-top">
+                            <div>
+                                <div class="loadout-label">${esc(track.kind)}</div>
+                                <div class="loadout-item ${track.itemName ? '' : 'none'}">${esc(track.label)}</div>
+                            </div>
+                            ${tierPipsHtml(track)}
+                        </div>
+                        <div class="loadout-next">${nextBits}</div>
+                    </div>
+                    <div class="bar gear ${track.maxed ? 'maxed' : ''}"><span style="width:${track.progress}%"></span></div>
+                </div>`;
+        }
+
+        function loadoutHtml(inventory) {
+            const tracks = analyzeLoadout(inventory);
+            return `
+                <div class="loadout-head">
+                    <span>Best gear</span>
+                    <span>upgrade progress</span>
+                </div>
+                ${tracks.map(loadoutTrackHtml).join('')}`;
+        }
+
         function truncate(str, max = 140) {
             const s = String(str || '');
             if (s.length <= max) return s;
@@ -1481,17 +1971,41 @@
             drawColonyMap();
         });
 
+        function actionPhase(st, inGame = true) {
+            if (!inGame) return 'offline';
+            const phase = st?.action?.phase;
+            if (phase) return phase;
+            if (st?.action?.thinking) return 'thinking';
+            if (st?.selfPrompt?.loopActive || st?.selfPrompt?.active) return 'planning';
+            if (st?.selfPrompt?.paused) return 'paused';
+            if (st?.action?.isIdle === false) return 'acting';
+            return 'idle';
+        }
+
+        function actionChipClass(phase) {
+            if (phase === 'acting') return 'busy';
+            if (phase === 'thinking' || phase === 'planning' || phase === 'queued' || phase === 'paused' || phase === 'idle') {
+                return phase;
+            }
+            return 'busy';
+        }
+
+        function actionLabel(st, inGame = true) {
+            if (!inGame) return 'offline';
+            return st?.action?.current || (actionPhase(st, inGame) === 'idle' ? 'Idle' : 'Busy');
+        }
+
         function patchAgentCard(name, st) {
             const gp = st.gameplay || {};
+            const phase = actionPhase(st, true);
             const actionEl = document.getElementById(`action-${name}`);
             if (actionEl && st.action) {
-                const idle = st.action.isIdle;
-                actionEl.textContent = st.action.current || 'Idle';
-                actionEl.className = `action-value ${idle ? 'idle' : 'busy'}`;
+                actionEl.textContent = actionLabel(st, true);
+                actionEl.className = `action-value ${actionChipClass(phase)}`;
                 const statusChip = document.getElementById(`statusChip-${name}`);
                 if (statusChip) {
-                    statusChip.textContent = idle ? 'idle' : 'busy';
-                    statusChip.className = `chip ${idle ? 'idle' : 'busy'}`;
+                    statusChip.textContent = phase;
+                    statusChip.className = `chip ${actionChipClass(phase)}`;
                 }
             }
 
@@ -1554,6 +2068,11 @@
                     : '<div class="inv-item"><span>(empty)</span></div>';
             }
 
+            const loadoutEl = document.getElementById(`loadout-${name}`);
+            if (loadoutEl && st.inventory) {
+                loadoutEl.innerHTML = loadoutHtml(st.inventory);
+            }
+
             const nearby = document.getElementById(`nearby-${name}`);
             if (nearby && st.nearby) {
                 const bits = [];
@@ -1584,6 +2103,34 @@
             const avatar = document.getElementById(`avatar-${name}`);
             if (avatar && st.skin?.path) {
                 avatar.src = st.skin.path;
+            }
+
+            const modelErrEl = document.getElementById(`modelError-${name}`);
+            if (modelErrEl) {
+                const err = st.model?.lastError || st.model?.outage;
+                if (err && err.message) {
+                    const ageMs = typeof err.at === 'number' ? Date.now() - err.at : 0;
+                    // Keep the diagnostic visible for a few minutes after the failure.
+                    if (ageMs < 5 * 60 * 1000) {
+                        const kind = err.kind || err.fatalKind || 'error';
+                        const bits = [
+                            `<span class="me-kind">${esc(kind)}</span>`,
+                            err.provider ? esc(err.provider) : null,
+                            err.code ? esc(String(err.code)) : null,
+                            err.hint ? esc(err.hint) : null,
+                            esc(truncate(err.message, 140)),
+                        ].filter(Boolean);
+                        modelErrEl.innerHTML = bits.join(' · ');
+                        modelErrEl.hidden = false;
+                        modelErrEl.title = err.message;
+                    } else {
+                        modelErrEl.hidden = true;
+                        modelErrEl.textContent = '';
+                    }
+                } else {
+                    modelErrEl.hidden = true;
+                    modelErrEl.textContent = '';
+                }
             }
         }
 
@@ -1876,8 +2423,7 @@
             const task = colonyTaskFor(agent.name);
             const st = lastStates[agent.name];
             const gp = st?.gameplay || {};
-            const action = st?.action || {};
-            const idle = action.isIdle !== false;
+            const phase = actionPhase(st, agent.in_game);
             const joining = agent.socket_connected && !agent.in_game;
             const dotClass = agent.in_game ? 'on' : (joining ? 'joining' : '');
             const focused = focusedAgent === agent.name ? 'focused' : '';
@@ -1893,6 +2439,8 @@
             ];
 
             const hist = (agentMessageHistory[agent.name] || []).slice(1, 4).join(' · ');
+            const statusText = agent.in_game ? phase : 'offline';
+            const doingText = actionLabel(st, agent.in_game);
 
             return `
                 <article class="agent-card ${focused} ${offline}" id="agent-${agent.name}" data-name="${esc(agent.name)}"
@@ -1910,7 +2458,7 @@
                                 ${joining ? '<span style="color:var(--amber);font-size:0.75rem;font-weight:500;">joining…</span>' : ''}
                             </h3>
                             <div class="chips">
-                                <span class="chip ${idle ? 'idle' : 'busy'}" id="statusChip-${agent.name}">${agent.in_game ? (idle ? 'idle' : 'busy') : 'offline'}</span>
+                                <span class="chip ${actionChipClass(phase)}" id="statusChip-${agent.name}">${esc(statusText)}</span>
                                 <span class="chip role" id="roleChip-${agent.name}" ${role ? '' : 'hidden'}>${esc(role || '')}</span>
                                 <span class="chip" id="itemsHint-${agent.name}">${st?.inventory ? `${st.inventory.stacksUsed ?? 0}/${st.inventory.totalSlots ?? 0} slots` : '— slots'}</span>
                             </div>
@@ -1933,7 +2481,7 @@
 
                     <div class="action-block">
                         <div class="action-label">Doing</div>
-                        <div class="action-value ${idle ? 'idle' : 'busy'}" id="action-${agent.name}">${esc(action.current || (agent.in_game ? 'Idle' : '—'))}</div>
+                        <div class="action-value ${actionChipClass(phase)}" id="action-${agent.name}">${esc(doingText)}</div>
                         <div class="task-line" id="taskLine-${agent.name}" ${task ? '' : 'hidden'}>${task ? `task: ${esc(task.title)}` : ''}</div>
                         <div class="task-line" id="prompt-${agent.name}" title="${esc(st?.selfPrompt?.prompt || '')}"
                             ${st?.selfPrompt?.active || st?.selfPrompt?.paused ? '' : 'hidden'}>
@@ -1977,6 +2525,10 @@
                         <button class="inv-toggle" onclick="toggleDetails('${esc(agent.name)}')" title="Toggle inventory">bag</button>
                     </div>
 
+                    <div class="loadout" id="loadout-${agent.name}">
+                        ${loadoutHtml(st?.inventory)}
+                    </div>
+
                     <div class="inventory-panel ${invOpen ? 'open' : ''}" id="inventorySection-${agent.name}">
                         <div class="inventory-grid" id="inventory-${agent.name}"></div>
                     </div>
@@ -1990,6 +2542,7 @@
                         <div class="label">Last message</div>
                         <div class="text ${lastMessage ? '' : 'empty'}" id="lastMessage-${agent.name}">${lastMessage ? esc(lastMessage) : 'No messages yet'}</div>
                         <div class="msg-recent" id="msgHist-${agent.name}">${esc(hist)}</div>
+                        <div class="model-error" id="modelError-${agent.name}" hidden></div>
                     </div>
 
                     <div class="agent-viewer-wrap ${showViewer ? 'show' : ''}" id="viewerWrap-${agent.name}">

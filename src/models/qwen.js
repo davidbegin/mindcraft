@@ -1,6 +1,7 @@
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 export class Qwen {
     static prefix = 'qwen';
@@ -42,8 +43,7 @@ export class Qwen {
                 console.log('Context length exceeded, trying again with shorter context.');
                 return await this.sendRequest(turns.slice(1), systemMessage, stop_seq);
             } else {
-                console.log(err);
-                res = 'My brain disconnected, try again.';
+                res = handleModelRequestError(err, { provider: 'qwen', model: this.model_name });
             }
         }
         return res;

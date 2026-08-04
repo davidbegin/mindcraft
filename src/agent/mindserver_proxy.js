@@ -79,15 +79,21 @@ class MindServerProxy {
                 this.agent.history.add('system', `COLONY DIRECTIVE\n${directive.prompt}`);
                 if (directive.paused) {
                     await this.agent.self_prompter.pause();
-                    callback?.({ success: true });
+                    callback?.({ success: true, status: 'paused' });
                     return;
                 }
                 if (convoManager.inConversation()) {
                     this.agent.self_prompter.setPromptPaused(directive.prompt);
-                } else {
-                    await this.agent.self_prompter.start(directive.prompt);
+                    callback?.({ success: true, status: 'queued_during_conversation' });
+                    return;
                 }
-                callback?.({ success: true });
+                const result = this.agent.self_prompter.start(directive.prompt);
+                const alreadyActive = typeof result === 'string' && /already active/i.test(result);
+                callback?.({
+                    success: true,
+                    status: alreadyActive ? 'goal_refreshed' : 'started',
+                    detail: result,
+                });
             } catch (error) {
                 console.error('Error applying colony directive:', error);
                 callback?.({ success: false, error: error.message });

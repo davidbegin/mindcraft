@@ -6,6 +6,7 @@ import {
     buildPrompt,
     ensureLocalModelCatalog,
     isRateLimitError,
+    isRecoverableAuthError,
     isStaleAgentError,
     rateLimitBackoffMs,
     resetCursorAdapterGates,
@@ -124,6 +125,22 @@ test('detects stale reused-agent failures that should force a recreate', () => {
     busy.name = 'AgentBusyError';
     assert.equal(isStaleAgentError(busy), true);
     assert.equal(isStaleAgentError(new Error('normal failure')), false);
+});
+
+test('detects soft Cursor session auth as recoverable (not hard 401)', () => {
+    const soft = new Error(
+        'Cursor agent run error: Authentication error If you are logged in, try logging out and back in.'
+    );
+    assert.equal(isRecoverableAuthError(soft), true);
+
+    const hard = new Error('401 Incorrect API key provided');
+    hard.status = 401;
+    hard.code = 'invalid_api_key';
+    assert.equal(isRecoverableAuthError(hard), false);
+
+    const src = readFileSync(new URL('../src/models/cursor.js', import.meta.url), 'utf8');
+    assert.match(src, /isRecoverableAuthError\(err\) && !authRetried/);
+    assert.match(src, /dropping handle and retrying once with a fresh agent/);
 });
 
 test('rate-limit backoff grows with the attempt and stays bounded', () => {

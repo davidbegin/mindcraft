@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { strictFormat } from '../utils/text.js';
 import { getKey } from '../utils/keys.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 export class Claude {
     static prefix = 'anthropic';
@@ -50,10 +51,10 @@ export class Claude {
         catch (err) {
             if (err.message.includes("does not support image input")) {
                 res = "Vision is only supported by certain models.";
+                console.log(err);
             } else {
-                res = "My brain disconnected, try again.";
+                res = handleModelRequestError(err, { provider: 'anthropic', model: this.model_name });
             }
-            console.log(err);
         }
         return res;
     }

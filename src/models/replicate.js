@@ -1,6 +1,7 @@
 import Replicate from 'replicate';
 import { toSinglePrompt } from '../utils/text.js';
 import { getKey } from '../utils/keys.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 // llama, mistral
 export class ReplicateAPI {
@@ -43,8 +44,7 @@ export class ReplicateAPI {
 			}
 			res = result;
 		} catch (err) {
-			console.log(err);
-			res = 'My brain disconnected, try again.';
+			res = handleModelRequestError(err, { provider: 'replicate', model: this.model_name });
 		}
 		console.log('Received.');
 		return res;

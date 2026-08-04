@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { getKey } from '../utils/keys.js';
 import { stringifyTurns } from '../utils/text.js';
-import { noteModelFailure, noteModelSuccess } from './quota_guard.js';
+import { handleModelRequestError, noteModelSuccess } from './quota_guard.js';
 
 // Cursor exposes agents, not chat completions. The bot's own history stays authoritative:
 // each send embeds the full conversation in the prompt. We still reuse one local Agent per
@@ -72,10 +72,11 @@ export class CursorSDK {
             return res;
         }
         catch (err) {
-            noteModelFailure(err);
-            console.log(err);
             await this.#backoffIfRateLimited(err);
-            return 'My brain disconnected, try again.';
+            return handleModelRequestError(err, {
+                provider: 'cursor',
+                model: this.model_name || DEFAULT_MODEL,
+            });
         }
     }
 
@@ -90,10 +91,11 @@ export class CursorSDK {
             return res;
         }
         catch (err) {
-            noteModelFailure(err);
-            console.log(err);
             await this.#backoffIfRateLimited(err);
-            return 'My brain disconnected, try again.';
+            return handleModelRequestError(err, {
+                provider: 'cursor',
+                model: this.model_name || DEFAULT_MODEL,
+            });
         }
     }
 
@@ -103,18 +105,38 @@ export class CursorSDK {
 
     async #runWithRetries(text, images = null) {
         let lastErr = null;
-        for (let attempt = 0; attempt < MAX_RATE_LIMIT_RETRIES; attempt++) {
+        // Rate-limit retries + one extra slot so a stale-session auth failure can
+        // drop the Agent handle and succeed on a fresh create.
+        const maxAttempts = MAX_RATE_LIMIT_RETRIES + 1;
+        let authRetried = false;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
             try {
                 await waitOutRateLimit();
                 return await this.#run(text, images);
             }
             catch (err) {
                 lastErr = err;
-                if (!isRateLimitError(err) || attempt >= MAX_RATE_LIMIT_RETRIES - 1) {
-                    throw err;
+                if (isRateLimitError(err) && attempt < MAX_RATE_LIMIT_RETRIES - 1) {
+                    await this.#dropAgent();
+                    await this.#backoffIfRateLimited(err, attempt);
+                    continue;
                 }
-                await this.#dropAgent();
-                await this.#backoffIfRateLimited(err, attempt);
+                if (isRecoverableAuthError(err) && !authRetried) {
+                    authRetried = true;
+                    console.warn(
+                        'Cursor agent auth failed on existing session; '
+                        + 'dropping handle and retrying once with a fresh agent.'
+                    );
+                    await this.#dropAgent();
+                    await sleep(500);
+                    continue;
+                }
+                if (isStaleAgentError(err) && attempt < maxAttempts - 1) {
+                    await this.#dropAgent();
+                    await sleep(250);
+                    continue;
+                }
+                throw err;
             }
         }
         throw lastErr;
@@ -141,8 +163,8 @@ export class CursorSDK {
             return (result.result || '').trim();
         }
         catch (err) {
-            // A broken/busy handle should not poison every later turn.
-            if (isRateLimitError(err) || isStaleAgentError(err)) {
+            // A broken/busy/auth-poisoned handle should not poison every later turn.
+            if (isRateLimitError(err) || isStaleAgentError(err) || isRecoverableAuthError(err)) {
                 await this.#dropAgent();
             }
             throw err;
@@ -301,6 +323,20 @@ export function isStaleAgentError(err) {
         || /agent (?:is )?busy/i.test(message)
         || /agent .* not found/i.test(message)
         || /disposed/i.test(message);
+}
+
+/**
+ * Soft auth failures from a long-lived local Agent session. A fresh Agent.create
+ * usually recovers; hard 401/403 / invalid_api_key are NOT treated as recoverable here.
+ */
+export function isRecoverableAuthError(err) {
+    if (!err) return false;
+    if (err.status === 401 || err.status === 403 || err.code === 'invalid_api_key') {
+        return false;
+    }
+    const message = err.message || err.error?.message || '';
+    return /authentication error/i.test(message)
+        || /try logging out and back in/i.test(message);
 }
 
 export function rateLimitBackoffMs(attempt = 0) {

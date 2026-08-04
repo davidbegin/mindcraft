@@ -1,7 +1,7 @@
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
-import { noteModelFailure, noteModelSuccess } from './quota_guard.js';
+import { handleModelRequestError, logModelFailure, noteModelSuccess } from './quota_guard.js';
 
 export class GPT {
     static prefix = 'openai';
@@ -75,16 +75,14 @@ export class GPT {
             noteModelSuccess();
         }
         catch (err) {
-            noteModelFailure(err);
             if ((err.message == 'Context length exceeded' || err.code == 'context_length_exceeded') && turns.length > 1) {
                 console.log('Context length exceeded, trying again with shorter context.');
                 return await this.sendRequest(turns.slice(1), systemMessage, stop_seq);
             } else if (err.message.includes('image_url')) {
-                console.log(err);
+                logModelFailure('openai', err, { model });
                 res = 'Vision is only supported by certain models.';
             } else {
-                console.log(err);
-                res = 'My brain disconnected, try again.';
+                res = handleModelRequestError(err, { provider: 'openai', model });
             }
         }
         return res;

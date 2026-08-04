@@ -1,5 +1,6 @@
 import OpenAIApi from 'openai';
 import { getKey } from '../utils/keys.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 // xAI doesn't supply a SDK for their models, but fully supports OpenAI and Anthropic SDKs
 export class Grok {
@@ -47,8 +48,7 @@ export class Grok {
                 console.log(err);
                 res = 'Vision is only supported by certain models.';
             } else {
-                console.log(err);
-                res = 'My brain disconnected, try again.';
+                res = handleModelRequestError(err, { provider: 'xai', model: this.model_name });
             }
         }
         // sometimes outputs special token <|separator|>, just replace it

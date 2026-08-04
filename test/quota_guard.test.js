@@ -3,7 +3,12 @@ import test from 'node:test';
 
 import {
     classifyModelError,
+    describeModelError,
+    formatBrainDisconnectMessage,
+    getLastModelFailure,
     getOutage,
+    handleModelRequestError,
+    isModelFailureMessage,
     isModelHealthy,
     noteModelFailure,
     noteModelSuccess,
@@ -89,6 +94,7 @@ test('a successful request closes the breaker and re-arms reporting', () => {
     noteModelSuccess();
     assert.equal(isModelHealthy(), true);
     assert.equal(getOutage(), null);
+    assert.equal(getLastModelFailure(), null);
 
     noteModelFailure(creditsExhaustedError());
     assert.equal(reported.length, 2, 'a new outage after recovery must be reported again');
@@ -109,4 +115,95 @@ test('a rejecting async outage handler does not produce an unhandled rejection',
     await Promise.resolve();
     await Promise.resolve();
     assert.equal(isModelHealthy(), false);
+});
+
+test('describes common Cursor-style failures with actionable kinds', () => {
+    const rate = describeModelError(rateLimitedError());
+    assert.equal(rate.kind, 'rate_limit');
+    assert.equal(rate.retryable, true);
+    assert.equal(rate.fatalKind, null);
+
+    const timeout = new Error('Cursor agent run timed out after 120000ms');
+    assert.equal(describeModelError(timeout).kind, 'timeout');
+
+    const stale = new Error('Agent is busy');
+    stale.name = 'AgentBusyError';
+    assert.equal(describeModelError(stale).kind, 'stale');
+
+    const network = new Error('fetch failed');
+    network.code = 'ECONNREFUSED';
+    assert.equal(describeModelError(network).kind, 'network');
+});
+
+test('soft Cursor session auth is classified as auth but not a fatal outage', () => {
+    const soft = new Error(
+        'Cursor agent run error: Authentication error If you are logged in, try logging out and back in.'
+    );
+    const info = describeModelError(soft);
+    assert.equal(info.kind, 'auth');
+    assert.equal(info.retryable, true);
+    assert.equal(info.fatalKind, null);
+
+    noteModelFailure(soft, { provider: 'cursor' });
+    assert.equal(isModelHealthy(), true, 'soft auth must not pause the colony');
+    assert.equal(getOutage(), null);
+
+    assert.match(
+        formatBrainDisconnectMessage(soft, { provider: 'cursor' }),
+        /auth glitch via cursor/i
+    );
+    assert.equal(
+        isModelFailureMessage(formatBrainDisconnectMessage(soft, { provider: 'cursor' })),
+        true
+    );
+});
+
+test('hard auth (401 / invalid key) still trips the breaker', () => {
+    const err = new Error('401 Incorrect API key provided');
+    err.status = 401;
+    err.code = 'invalid_api_key';
+    const info = describeModelError(err);
+    assert.equal(info.kind, 'auth');
+    assert.equal(info.fatalKind, 'auth');
+    assert.equal(info.retryable, false);
+
+    noteModelFailure(err);
+    assert.equal(isModelHealthy(), false);
+});
+
+test('legacy opaque disconnect strings are treated as model failure messages', () => {
+    assert.equal(isModelFailureMessage('My brain disconnected, try again.'), true);
+    assert.equal(isModelFailureMessage('My brain disconnected via cursor (unknown). Check server logs.'), true);
+});
+
+test('formats chat messages that name the failure instead of a blank disconnect', () => {
+    assert.match(
+        formatBrainDisconnectMessage(rateLimitedError(), { provider: 'cursor' }),
+        /rate limit via cursor/i
+    );
+    assert.match(
+        formatBrainDisconnectMessage(new Error('Cursor agent run timed out after 120000ms'), { provider: 'cursor' }),
+        /timed out via cursor/i
+    );
+    assert.match(
+        formatBrainDisconnectMessage(creditsExhaustedError(), { provider: 'openai' }),
+        /credits\/quota via openai/i
+    );
+});
+
+test('records transient failures for UI while leaving the breaker closed', () => {
+    noteModelFailure(rateLimitedError(), { provider: 'cursor', model: 'composer-2.5' });
+    const last = getLastModelFailure();
+    assert.equal(isModelHealthy(), true);
+    assert.equal(last.kind, 'rate_limit');
+    assert.equal(last.provider, 'cursor');
+    assert.equal(last.model, 'composer-2.5');
+    assert.equal(last.retryable, true);
+});
+
+test('handleModelRequestError returns a diagnostic chat string', () => {
+    const msg = handleModelRequestError(rateLimitedError(), { provider: 'cursor', model: 'composer-2.5' });
+    assert.match(msg, /rate limit/i);
+    assert.equal(isModelFailureMessage(msg), true);
+    assert.equal(isModelFailureMessage('Going mining for iron.'), false);
 });

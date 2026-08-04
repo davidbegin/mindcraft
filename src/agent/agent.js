@@ -46,6 +46,8 @@ export class Agent {
         this.npc = new NPCContoller(this);
         this.memory_bank = new MemoryBank();
         this.self_prompter = new SelfPrompter(this);
+        this._thinking = false;
+        this._thinking_label = null;
         convoManager.initAgent(this);
         setOutageHandler(outage => this._handleModelOutage(outage));
         await this.prompter.initExamples();
@@ -239,10 +241,11 @@ export class Agent {
 
     requestInterrupt() {
         this.bot.interrupt_code = true;
-        this.bot.stopDigging();
-        this.bot.collectBlock.cancelTask();
-        this.bot.pathfinder.stop();
-        this.bot.pvp.stop();
+        try { this.bot.stopDigging(); } catch (_) {}
+        try { this.bot.collectBlock?.cancelTask?.(); } catch (_) {}
+        try { this.bot.pathfinder?.stop?.(); } catch (_) {}
+        try { this.bot.pvp?.stop?.(); } catch (_) {}
+        try { this.bot.clearControlStates?.(); } catch (_) {}
     }
 
     clearBotLogs() {
@@ -324,7 +327,13 @@ export class Agent {
         for (let i=0; i<max_responses; i++) {
             if (checkInterrupt()) break;
             let history = this.history.getHistory();
-            let res = await this.prompter.promptConvo(history);
+            this._setThinking(true, 'Thinking…');
+            let res;
+            try {
+                res = await this.prompter.promptConvo(history);
+            } finally {
+                this._setThinking(false);
+            }
 
             console.log(`${this.name} full response to ${source}: ""${res}""`);
 
@@ -481,8 +490,13 @@ export class Agent {
             }
         });
         this.bot.on('death', () => {
+            // Death used to await stop(), which could cleanKill after 10s and
+            // restart the whole agent mid-respawn. Interrupt + force-clear instead.
             this.actions.cancelResume();
-            this.actions.stop();
+            this.requestInterrupt();
+            if (this.actions.executing) {
+                this.actions.forceClear('death');
+            }
         });
         this.bot.on('kicked', (reason) => {
             if (!this._disconnectHandled) {
@@ -544,7 +558,62 @@ export class Agent {
     isIdle() {
         return !this.actions.executing;
     }
-    
+
+    isThinking() {
+        return this._thinking === true;
+    }
+
+    /**
+     * High-level attention for UI/colony nudges. Physical idleness alone is misleading
+     * while an LLM request is in flight or the self-prompt loop is already driving work.
+     */
+    getAttention() {
+        if (this.actions.executing) {
+            return {
+                phase: 'acting',
+                label: this.actions.currentActionLabel || 'Acting',
+                available: false,
+            };
+        }
+        if (this.isThinking()) {
+            return {
+                phase: 'thinking',
+                label: this._thinking_label || 'Thinking…',
+                available: false,
+            };
+        }
+        if (this.self_prompter?.isActive?.() && this.self_prompter?.isLoopActive?.()) {
+            return {
+                phase: 'planning',
+                label: 'Planning next move…',
+                available: false,
+            };
+        }
+        if (this.self_prompter?.isActive?.()) {
+            return {
+                phase: 'queued',
+                label: 'Self-prompt armed',
+                available: false,
+            };
+        }
+        if (this.self_prompter?.isPaused?.()) {
+            return {
+                phase: 'paused',
+                label: 'Self-prompt paused',
+                available: false,
+            };
+        }
+        return {
+            phase: 'idle',
+            label: 'Idle',
+            available: true,
+        };
+    }
+
+    _setThinking(active, label = 'Thinking…') {
+        this._thinking = Boolean(active);
+        this._thinking_label = active ? label : null;
+    }
 
     /**
      * A quota or credential failure will not recover on its own, so stop self-prompting

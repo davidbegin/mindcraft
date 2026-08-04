@@ -1,6 +1,7 @@
 import CerebrasSDK from '@cerebras/cerebras_cloud_sdk';
 import { strictFormat } from '../utils/text.js';
 import { getKey } from '../utils/keys.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 export class Cerebras {
     static prefix = 'cerebras';
@@ -31,8 +32,7 @@ export class Cerebras {
             // OpenAI-compatible shape
             res = completion.choices?.[0]?.message?.content || '';
         } catch (err) {
-            console.error('Cerebras API error:', err);
-            res = 'My brain disconnected, try again.';
+            res = handleModelRequestError(err, { provider: 'cerebras', model: this.model_name });
         }
         return res;
     }

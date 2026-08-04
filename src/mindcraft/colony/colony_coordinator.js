@@ -12,6 +12,7 @@ import {
 import path from 'node:path';
 
 export const COLONY_PHASES = Object.freeze([
+    'epic-megabase',
     'bootstrap',
     'shelter',
     'food-security',
@@ -23,12 +24,38 @@ export const COLONY_PHASES = Object.freeze([
     'postgame-civilization',
 ]);
 
+/** Standing mission restated on every colony directive, including idle nudges. */
+export const EPIC_MEGABASE_MISSION =
+    'Build the most epic, complete base ever: uniquely decorated private rooms for every agent; lavish themed public rooms including a chess room, treasure vault, trophy hall, and at least one wild creative room; stocked with the best armor, weapons, and gear. Collaborate briefly with other agents, then keep building.';
+
+/**
+ * Personal readiness rule for every role. Specialists still keep a full combat/survival
+ * kit so miners, farmers, builders, etc. never skip swords or other basics.
+ */
+export const WELL_ROUNDED_KIT_RULE =
+    'Stay personally well-rounded regardless of role: always carry and continuously upgrade a sword, shield, full armor, food, and your role tools. Miners still need swords; builders and farmers still need combat gear. Opportunistically upgrade every piece whenever better materials appear; never specialize into one tool and ignore the rest.';
+
 export const COLONY_PHASE_DEFINITIONS = Object.freeze({
+    'epic-megabase': {
+        title: 'Epic Megabase',
+        objective: EPIC_MEGABASE_MISSION,
+        tasks: [
+            ['site-hub', 'Pick and publish the colony hub coordinates plus a room/wing layout outline that reserves chess, treasure, trophy, agent, and utility rooms', 'explorer', 100],
+            ['shell', 'Build the epic exterior shell: walls, roof, floor, entrance, and interior lighting', 'builder', 95],
+            ['agent-rooms', 'Build a uniquely decorated private room for every active agent', 'builder', 90],
+            ['themed-rooms', 'Build epic themed public rooms: chess room, treasure vault, trophy hall, and one wild creative room, all richly decorated', 'builder', 88],
+            ['shared-halls', 'Build shared crafting, storage, armory, and meeting halls connected to the themed rooms', 'logistics', 85],
+            ['food-wing', 'Attach a renewable food wing to the megabase', 'farmer', 80],
+            ['gear-supply', 'Mine and smelt materials for top-tier armor, swords, weapons, and tools', 'miner', 75],
+            ['gear-equip', 'Craft and deliver a well-rounded kit (sword, shield, armor, tools, food) at the best available tier to every agent', 'provisioner', 70],
+            ['defenses', 'Finish perimeter walls, lighting, and night-safe defenses around the megabase', 'builder', 65],
+        ],
+    },
     bootstrap: {
         title: 'Bootstrap',
         objective: 'Establish tools, shared coordinates, and immediate safety before the first night.',
         tasks: [
-            ['gather-wood', 'Gather wood and craft starter tools', 'provisioner', 100],
+            ['gather-wood', 'Gather wood and craft starter tools including swords', 'provisioner', 100],
             ['map-spawn', 'Survey spawn and publish useful coordinates', 'explorer', 90],
             ['first-food', 'Secure a renewable early food source', 'farmer', 80],
         ],
@@ -108,7 +135,16 @@ export const COLONY_PHASE_DEFINITIONS = Object.freeze({
 });
 
 const PHASE_ACCEPTANCE = Object.freeze({
-    'bootstrap:gather-wood': 'A shared crafting table exists and the colony has working wooden or stone pickaxes, axes, and spare logs at a reported cache.',
+    'epic-megabase:site-hub': 'Hub coordinates and a layout outline naming chess, treasure, trophy, agent, and shared wings are recorded in shared progress.',
+    'epic-megabase:shell': 'The megabase exterior has complete walls, roof, floor, entrance, and interior lighting large enough for every agent room and shared halls.',
+    'epic-megabase:agent-rooms': 'Every active agent has a uniquely decorated private room with a bed, chest, lighting, and published coordinates.',
+    'epic-megabase:themed-rooms': 'A chess room, treasure vault, trophy hall, and one additional creative themed room exist with distinctive decoration and published coordinates.',
+    'epic-megabase:shared-halls': 'Crafting, storage, armory, and meeting halls exist inside the base with published coordinates and deposited starter supplies.',
+    'epic-megabase:food-wing': 'A renewable irrigated crop farm or enclosed breedable animals is attached to the megabase with a harvest path.',
+    'epic-megabase:gear-supply': 'A documented mine route and shared reserve of iron or better materials for full agent kits are deposited.',
+    'epic-megabase:gear-equip': 'Every active agent has a well-rounded kit delivered (sword, shield, armor, tools, food) at the best available tier, with the kit recorded.',
+    'epic-megabase:defenses': 'Perimeter walls or fences, continuous lighting, and a night-safe entrance protect the megabase.',
+    'bootstrap:gather-wood': 'A shared crafting table exists and the colony has working wooden or stone pickaxes, axes, swords, and spare logs at a reported cache.',
     'bootstrap:map-spawn': 'Spawn, base candidate, useful resources, hazards, and at least three exact coordinates are recorded in shared progress.',
     'bootstrap:first-food': 'An irrigated planted crop plot or an enclosed pair of breedable animals exists; hunting one animal or collecting partial materials is not renewable food.',
     'shelter:build-base': 'The shared base has complete walls, roof, floor, entrance, interior lighting, and enough enclosed space to survive a hostile night.',
@@ -185,6 +221,46 @@ function assertState(state) {
 function hasRequiredCompletionEvidence(task, result) {
     const text = result.toLowerCase();
     switch (task.id) {
+        case 'epic-megabase-site-hub':
+            return /\bhub\b/.test(text) &&
+                /\b(layout|rooms?|wings?)\b/.test(text) &&
+                /\bx\s*[:=]\s*-?\d+/.test(text);
+        case 'epic-megabase-shell':
+            return ['wall', 'roof', 'floor', 'light', 'entrance']
+                .every(evidence => text.includes(evidence));
+        case 'epic-megabase-agent-rooms':
+            return /\b(every|each|all)\b/.test(text) &&
+                /\brooms?\b/.test(text) &&
+                /\b(bed|chest)\b/.test(text) &&
+                /\b(unique\w*|decorat\w*)\b/.test(text);
+        case 'epic-megabase-themed-rooms':
+            return /\bchess\b/.test(text) &&
+                /\btreasure\b/.test(text) &&
+                /\b(trophy|creative|themed)\b/.test(text) &&
+                /\b(decorat\w*|ornate|lavish)\b/.test(text);
+        case 'epic-megabase-shared-halls':
+            return ['crafting', 'storage', 'armory']
+                .every(evidence => text.includes(evidence)) &&
+                /\bx\s*[:=]\s*-?\d+/.test(text);
+        case 'epic-megabase-food-wing': {
+            const animalPen = /\b(2|two)\b/.test(text) &&
+                /\b(chickens?|cows?|sheep|pigs?)\b/.test(text) &&
+                /\b(pen|enclos|fenced)\b/.test(text);
+            const cropFarm = /\b(irrigated|water)\b/.test(text) &&
+                /\b(planted|farm|crops?)\b/.test(text);
+            return animalPen || cropFarm;
+        }
+        case 'epic-megabase-gear-supply':
+            return /\b(iron|diamond|netherite)\b/.test(text) &&
+                /\b(mine|smelt|ingots?|reserve)\b/.test(text);
+        case 'epic-megabase-gear-equip':
+            return /\b(every|each|all)\b/.test(text) &&
+                /\b(armor|weapons?|swords?|tools?|gear)\b/.test(text) &&
+                /\b(deliver|equipped?|kit)\b/.test(text);
+        case 'epic-megabase-defenses':
+            return /\b(perimeter|walls?|fences?)\b/.test(text) &&
+                /\b(light|torch)\b/.test(text) &&
+                /\b(safe|night|entrance|gate)\b/.test(text);
         case 'bootstrap-first-food': {
             const animalPen = /\b(2|two)\b/.test(text) &&
                 /\b(chickens?|cows?|sheep|pigs?)\b/.test(text) &&
@@ -289,6 +365,7 @@ export class ColonyCoordinator {
         });
         await coordinator._ensureDirectories();
         await coordinator.expireLeases();
+        await coordinator.adoptEpicMegabaseMissionIfNeeded();
         await coordinator.ensurePhaseTasks();
         await coordinator.reconcilePhase();
         return coordinator;
@@ -630,6 +707,40 @@ export class ColonyCoordinator {
         );
     }
 
+    /**
+     * Legacy colonies still on bootstrap chicken/food work are moved onto the epic
+     * megabase standing mission. Colonies that already have epic-megabase tasks, or
+     * that progressed past bootstrap, are left alone.
+     */
+    async adoptEpicMegabaseMissionIfNeeded() {
+        return this._mutate('mission.epic-megabase', {}, now => {
+            const hasEpicTasks = Object.values(this.state.tasks)
+                .some(task => task.phase === 'epic-megabase');
+            if (hasEpicTasks || this.state.phase !== 'bootstrap') {
+                return false;
+            }
+
+            this.state.phase = 'epic-megabase';
+            for (const task of Object.values(this.state.tasks)) {
+                if (task.phase === 'epic-megabase') {
+                    continue;
+                }
+                if (task.status !== 'proposed' && task.status !== 'claimed') {
+                    continue;
+                }
+                task.status = 'failed';
+                task.error = 'Superseded by epic megabase standing mission';
+                task.claimedBy = null;
+                task.leaseExpiresAt = null;
+                task.result = null;
+                task.updatedAt = now;
+                task.finishedAt = now;
+            }
+            this._seedPhaseTasks();
+            return true;
+        }, { journalWhen: adopted => adopted === true });
+    }
+
     async requestSpawn(role, requestedBy = null) {
         assertNonEmptyString(role, 'role');
         return this._mutate('spawn.requested', { role, requestedBy }, now => {
@@ -719,13 +830,15 @@ export class ColonyCoordinator {
         };
         directive.prompt = [
             `You are ${agentId}, the colony's ${agent.role}.`,
+            `Standing colony mission: ${EPIC_MEGABASE_MISSION}`,
+            WELL_ROUNDED_KIT_RULE,
             `Shared phase: ${phase.title}. Objective: ${phase.objective}`,
             instruction,
             'Operate continuously in legitimate survival: gather, craft, build, explore, fight, farm, trade, and automate.',
+            'Collaborate: use short !startConversation exchanges to assign rooms, share coordinates, and unblock materials, then !endConversation and resume building.',
             'Use !colonyStatus and !colonyTask whenever context is unclear.',
             'Claim work before starting it. Record partial progress, but call !completeColonyTask only after the whole objective is objectively finished; never mark plans, attempts, or partial materials complete.',
             'Record discoveries with !recordColonyProgress and publish durable notes, blueprints, or code artifacts when useful.',
-            'Coordinate material dependencies and shared locations with other bots using !startConversation.',
             'Keep conversations brief: exchange actionable information, call !endConversation, then resume physical work.',
             'Do not idle, duplicate claimed work, use cheats, or stop the colony goal. Issue exactly one useful command per response.',
         ].join('\n');
@@ -864,7 +977,10 @@ export class ColonyCoordinator {
             const description = `${title}. Completion criteria: ${acceptance}`;
             if (this.state.tasks[id]) {
                 this.state.tasks[id].required = true;
+                this.state.tasks[id].title = title;
                 this.state.tasks[id].description = description;
+                this.state.tasks[id].priority = priority;
+                this.state.tasks[id].role = role;
                 continue;
             }
             this.state.tasks[id] = {

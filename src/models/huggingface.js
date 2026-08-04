@@ -1,6 +1,7 @@
 import { toSinglePrompt } from '../utils/text.js';
 import { getKey } from '../utils/keys.js';
 import { HfInference } from "@huggingface/inference";
+import { handleModelRequestError } from './quota_guard.js';
 
 export class HuggingFace {
   static prefix = 'huggingface';
@@ -45,8 +46,7 @@ export class HuggingFace {
           res += (chunk.choices[0]?.delta?.content || "");
         }
       } catch (err) {
-        console.log(err);
-        res = 'My brain disconnected, try again.';
+        res = handleModelRequestError(err, { provider: 'huggingface', model: this.model_name });
         // Break out immediately; we only retry when handling partial <think> tags.
         break;
       }

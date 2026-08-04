@@ -305,7 +305,7 @@ async function createColonyAgent(name, role, storedProfile = null) {
     settings.profile.name = name;
     settings.profile.colony_role = role;
     settings.load_memory = true;
-    settings.init_message = `You are the colony ${role}. Read !colonyStatus, claim suitable work, coordinate, and progress continuously.`;
+    settings.init_message = `You are the colony ${role}. Stay well-rounded: always keep and upgrade a sword, shield, armor, food, and tools—role specialty never means skipping combat gear. Read !colonyStatus, claim suitable work, coordinate, and progress continuously.`;
     const result = await mindcraft.createAgent(settings);
     if (!result.success) throw new Error(result.error || `Failed to create ${name}`);
     return name;
@@ -359,6 +359,10 @@ function sendColonyDirective(agentName, connection) {
     connection.socket.emit('colony-directive', directive, result => {
         if (!result?.success) {
             console.warn(`Colony directive was rejected by ${agentName}: ${result?.error}`);
+            return;
+        }
+        if (result.status && result.status !== 'started') {
+            console.log(`Colony directive for ${agentName}: ${result.status}${result.detail ? ` (${result.detail})` : ''}`);
         }
     });
 }
@@ -490,11 +494,20 @@ async function runColonySupervisor() {
             if (!colonyAgent) continue;
             if (connection.in_game && connection.socket) {
                 const fullState = await requestFullState(connection);
-                const status = fullState?.action?.isIdle ? 'idle' : 'busy';
+                const phase = fullState?.action?.phase
+                    || (fullState?.action?.isIdle ? 'idle' : 'busy');
+                const status = phase === 'idle' ? 'idle' : 'busy';
                 await colonyCoordinator.heartbeat(agentName, status);
                 const latestState = colonyCoordinator.snapshot();
+                // Only nudge when the bot is truly available. Physically idle bots that are
+                // already thinking or self-prompting look "Idle" in old UI but are busy.
+                const available = fullState?.action?.available === true
+                    || (fullState?.action?.available == null
+                        && fullState?.action?.isIdle
+                        && !fullState?.selfPrompt?.active
+                        && !fullState?.action?.thinking);
                 if (!latestState.paused && latestState.agents[agentName]?.desired &&
-                    fullState?.action?.isIdle &&
+                    available &&
                     now - connection.last_directive_at >=
                     (colonySettings.idle_directive_ms ?? 15000)) {
                     sendColonyDirective(agentName, connection);

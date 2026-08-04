@@ -1,4 +1,5 @@
 import { strictFormat } from '../utils/text.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 export class Ollama {
     static prefix = 'ollama';
@@ -39,8 +40,7 @@ export class Ollama {
                     console.log('Context length exceeded, trying again with shorter context.');
                     return await this.sendRequest(turns.slice(1), systemMessage);
                 } else {
-                    console.log(err);
-                    res = 'My brain disconnected, try again.';
+                    res = handleModelRequestError(err, { provider: 'ollama', model: this.model_name });
                 }
             }
 

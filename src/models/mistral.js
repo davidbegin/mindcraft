@@ -1,6 +1,7 @@
 import { Mistral as MistralClient } from '@mistralai/mistralai';
 import { getKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 export class Mistral {
     static prefix = 'mistral';
@@ -60,9 +61,8 @@ export class Mistral {
             if (err.message.includes("A request containing images has been given to a model which does not have the 'vision' capability.")) {
                 result = "Vision is only supported by certain models.";
             } else {
-                result = "My brain disconnected, try again.";
+                result = handleModelRequestError(err, { provider: 'mistral', model: this.model_name });
             }
-            console.log(err);
         }
 
         return result;

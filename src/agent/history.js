@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { NPCData } from './npc/data.js';
 import settings from './settings.js';
+import { isModelFailureMessage } from '../models/quota_guard.js';
 
 
 export class History {
@@ -32,8 +33,16 @@ export class History {
 
     async summarizeMemories(turns) {
         console.log("Storing memories...");
-        this.memory = await this.agent.prompter.promptMemSaving(turns);
+        const summary = await this.agent.prompter.promptMemSaving(turns);
 
+        // Provider failure fallbacks must not overwrite real memory (seen when Cursor/API
+        // errors returned "My brain disconnected..." and that became the bot's memory).
+        if (isModelFailureMessage(summary)) {
+            console.warn('Skipping memory update: model failure response instead of a summary:', summary);
+            return;
+        }
+
+        this.memory = summary;
         if (this.memory.length > 500) {
             this.memory = this.memory.slice(0, 500);
             this.memory += '...(Memory truncated to 500 chars. Compress it more next time)';

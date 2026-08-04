@@ -1,3 +1,4 @@
+import { handleModelRequestError } from './quota_guard.js';
 import { getKey } from '../utils/keys.js';
 
 export class Hyperbolic {
@@ -75,8 +76,7 @@ export class Hyperbolic {
                     console.log('Context length exceeded, trying again with a shorter context...');
                     return await this.sendRequest(turns.slice(1), systemMessage, stopSeq);
                 } else {
-                    console.error(err);
-                    completionContent = 'My brain disconnected, try again.';
+                    completionContent = handleModelRequestError(err, { provider: 'hyperbolic', model: this.modelName });
                 }
             }
 

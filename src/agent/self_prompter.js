@@ -15,19 +15,31 @@ export class SelfPrompter {
     }
 
     start(prompt) {
-        console.log('Self-prompting started.');
         if (!prompt) {
             if (!this.prompt)
                 return 'No prompt specified. Ignoring request.';
             prompt = this.prompt;
         }
+        // Colony idle nudges often re-fire while the loop is already awaiting the model.
+        // Refresh the goal instead of pretending to restart, and say so clearly in logs.
+        if (this.state === ACTIVE && this.loop_active) {
+            this.prompt = prompt;
+            console.log('Self-prompt loop already active; refreshed goal without restarting.');
+            return 'Self-prompt already active; goal refreshed.';
+        }
+        console.log('Self-prompting started.');
         this.state = ACTIVE;
         this.prompt = prompt;
         this.startLoop();
+        return 'Self-prompting started.';
     }
 
     isActive() {
         return this.state === ACTIVE;
+    }
+
+    isLoopActive() {
+        return this.loop_active === true;
     }
 
     isStopped() {
@@ -57,7 +69,7 @@ export class SelfPrompter {
 
     async startLoop() {
         if (this.loop_active) {
-            console.warn('Self-prompt loop is already active. Ignoring request.');
+            console.warn('Self-prompt loop is already active. Ignoring duplicate startLoop.');
             return;
         }
         console.log('starting self-prompt loop')
@@ -77,7 +89,7 @@ export class SelfPrompter {
                         out += ' Re-reading the colony directive after a short recovery delay.';
                         this.agent.history.add(
                             'system',
-                            'You are an active colony worker. Read the shared plan with !colonyStatus, claim useful work, and issue exactly one command.'
+                            'You are an active colony worker. Stay well-rounded with a sword, shield, armor, food, and upgraded tools. Read the shared plan with !colonyStatus, claim useful work, and issue exactly one command.'
                         );
                         this.agent.openChat(out);
                         console.warn(out);

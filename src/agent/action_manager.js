@@ -1,3 +1,8 @@
+import assert from 'node:assert';
+
+const STOP_WAIT_MS = 10000;
+const STOP_POLL_MS = 300;
+
 export class ActionManager {
     constructor(agent) {
         this.agent = agent;
@@ -9,6 +14,8 @@ export class ActionManager {
         this.resume_name = '';
         this.last_action_time = 0;
         this.recent_action_counter = 0;
+        // Bumped on force-clear so a hung action finishing later cannot clear a newer one.
+        this._actionId = 0;
     }
 
     async resumeAction(actionFn, timeout) {
@@ -23,18 +30,47 @@ export class ActionManager {
         }
     }
 
+    /**
+     * Ask the current action to stop. If it does not yield within STOP_WAIT_MS,
+     * force-clear executing state — never kill the agent process.
+     * Process exits on stop timeouts were the main leave/rejoin disconnect loop.
+     */
     async stop() {
         if (!this.executing) return;
-        const timeout = setTimeout(() => {
-            this.agent.cleanKill('Code execution refused stop after 10 seconds. Killing process.');
-        }, 10000);
-        while (this.executing) {
+        const label = this.currentActionLabel || '(unknown)';
+        const deadline = Date.now() + STOP_WAIT_MS;
+        while (this.executing && Date.now() < deadline) {
             this.agent.requestInterrupt();
             console.log('waiting for code to finish executing...');
-            await new Promise(resolve => setTimeout(resolve, 300));
+            await new Promise(resolve => setTimeout(resolve, STOP_POLL_MS));
         }
-        clearTimeout(timeout);
-    } 
+        if (this.executing) {
+            console.warn(
+                `Action "${label}" did not stop after ${STOP_WAIT_MS / 1000}s; ` +
+                'force-clearing without killing process.'
+            );
+            this.forceClear(`stop timeout: ${label}`);
+        }
+    }
+
+    forceClear(reason = 'force clear') {
+        try {
+            this.agent.requestInterrupt();
+        } catch (err) {
+            console.warn('requestInterrupt during forceClear failed:', err?.message || err);
+        }
+        try {
+            this.agent.bot?.clearControlStates?.();
+        } catch (_) { /* bot may be mid-death */ }
+
+        this._actionId++;
+        this.executing = false;
+        this.currentActionLabel = '';
+        this.currentActionFn = null;
+        this.timedout = true;
+        this.cancelResume();
+        console.warn(`[actions] forceClear (${reason})`);
+    }
 
     cancelResume() {
         this.resume_func = null;
@@ -60,6 +96,7 @@ export class ActionManager {
 
     async _executeAction(actionLabel, actionFn, timeout = 10) {
         let TIMEOUT;
+        let actionId;
         try {
             if (this.last_action_time > 0) {
                 let time_diff = Date.now() - this.last_action_time;
@@ -74,9 +111,10 @@ export class ActionManager {
                     this.cancelResume(); // likely cause of repetition
                 }
                 if (this.recent_action_counter > 5) {
-                    console.error('Infinite action loop detected, shutting down.');
-                    this.agent.cleanKill('Infinite action loop detected, shutting down.');
-                    return { success: false, message: 'Infinite action loop detected, shutting down.', interrupted: false, timedout: false };
+                    console.error('Infinite action loop detected, force-clearing without killing process.');
+                    this.forceClear('infinite action loop');
+                    this.recent_action_counter = 0;
+                    return { success: false, message: 'Infinite action loop detected, force-cleared.', interrupted: false, timedout: false };
                 }
             }
             this.last_action_time = Date.now();
@@ -92,9 +130,11 @@ export class ActionManager {
             // clear bot logs and reset interrupt code
             this.agent.clearBotLogs();
 
+            actionId = ++this._actionId;
             this.executing = true;
             this.currentActionLabel = actionLabel;
             this.currentActionFn = actionFn;
+            this.timedout = false;
 
             // timeout in minutes
             if (timeout > 0) {
@@ -104,7 +144,12 @@ export class ActionManager {
             // start the action
             await actionFn();
 
-            // mark action as finished + cleanup
+            // mark action as finished + cleanup only if we still own the slot
+            if (actionId !== this._actionId) {
+                clearTimeout(TIMEOUT);
+                return { success: false, message: 'Action superseded by interrupt/force-clear.', interrupted: true, timedout: true };
+            }
+
             this.executing = false;
             this.currentActionLabel = '';
             this.currentActionFn = null;
@@ -124,9 +169,11 @@ export class ActionManager {
             // return action status report
             return { success: true, message: output, interrupted, timedout };
         } catch (err) {
-            this.executing = false;
-            this.currentActionLabel = '';
-            this.currentActionFn = null;
+            if (actionId == null || actionId === this._actionId) {
+                this.executing = false;
+                this.currentActionLabel = '';
+                this.currentActionFn = null;
+            }
             clearTimeout(TIMEOUT);
             this.cancelResume();
             console.error("Code execution triggered catch:", err);
@@ -170,7 +217,7 @@ export class ActionManager {
             console.warn(`Code execution timed out after ${TIMEOUT_MINS} minutes. Attempting force stop.`);
             this.timedout = true;
             this.agent.history.add('system', `Code execution timed out after ${TIMEOUT_MINS} minutes. Attempting force stop.`);
-            await this.stop(); // last attempt to stop
+            await this.stop(); // last attempt to stop (force-clears; never kills process)
         }, TIMEOUT_MINS * 60 * 1000);
     }
 

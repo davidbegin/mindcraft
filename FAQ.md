@@ -19,8 +19,8 @@
     ```
   - **Skip optional packages**: If you don't need the vision feature (disabled by default), you can skip the problematic `gl` package: `npm install --no-optional`
 
-- `My brain disconnected, try again`: Something is wrong with the LLM api. You may have the wrong API key, exceeded your rate limits, or other. Check the program outputs for more details.
-  
+- `My brain disconnected…` / `My brain hit a rate limit…` / similar: The LLM provider request failed. The chat line now names the failure class (rate limit, timeout, auth, quota, network, etc.). Check the process console for a greppable `[model-failure]` JSON line with status/code/hint. Common causes: wrong API key, rate limits, timeouts, billing/quota, or network issues.
+   
 - `I'm stuck!` or other issues with constantly getting stuck:
   - Mineflayer's pathfinder is imperfect. We have improved upon it with patches, but these might not have been applied properly. Make sure your code is up to date with main, delete the `node_modules` folder, and run `npm install`
   - The bot will still get stuck occasionally, but not constantly.

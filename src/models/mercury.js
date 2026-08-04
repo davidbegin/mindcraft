@@ -1,6 +1,7 @@
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 export class Mercury {
     static prefix = 'mercury';
@@ -53,8 +54,7 @@ export class Mercury {
                 console.log(err);
                 res = 'Vision is only supported by certain models.';
             } else {
-                console.log(err);
-                res = 'My brain disconnected, try again.';
+                res = handleModelRequestError(err, { provider: 'mercury', model: this.model_name });
             }
         }
         return res;

@@ -7,6 +7,8 @@ import test from 'node:test';
 import {
     COLONY_PHASES,
     ColonyCoordinator,
+    EPIC_MEGABASE_MISSION,
+    WELL_ROUNDED_KIT_RULE,
 } from '../src/mindcraft/colony/colony_coordinator.js';
 
 async function withColony(run, options = {}) {
@@ -25,11 +27,78 @@ async function withColony(run, options = {}) {
 }
 
 function validCompletion(task) {
-    if (task.id === 'bootstrap-first-food') {
-        return 'Built an irrigated farm with 20 planted wheat crops at x:1 y:64 z:1.';
+    switch (task.id) {
+        case 'epic-megabase-site-hub':
+            return 'Published hub at x:10 y:70 z:10 with a layout covering rooms and shared wings.';
+        case 'epic-megabase-shell':
+            return 'Finished megabase shell with walls, roof, floor, entrance, and lights.';
+        case 'epic-megabase-agent-rooms':
+            return 'Built uniquely decorated rooms with bed and chest for every agent.';
+        case 'epic-megabase-themed-rooms':
+            return 'Built a decorated chess room, treasure vault, trophy hall, and creative lounge.';
+        case 'epic-megabase-shared-halls':
+            return 'Shared crafting, storage, and armory halls are open at x:12 y:70 z:14.';
+        case 'epic-megabase-food-wing':
+            return 'Attached an irrigated planted crop farm wing to the megabase.';
+        case 'epic-megabase-gear-supply':
+            return 'Mined and smelted an iron reserve for full agent kits.';
+        case 'epic-megabase-gear-equip':
+            return 'Delivered the best available armor weapons and tools kit to every agent.';
+        case 'epic-megabase-defenses':
+            return 'Perimeter walls and torch lighting make the entrance night safe.';
+        case 'bootstrap-first-food':
+            return 'Built an irrigated farm with 20 planted wheat crops at x:1 y:64 z:1.';
+        default:
+            return `Finished ${task.title} at x:1 y:64 z:1.`;
     }
-    return `Finished ${task.title} at x:1 y:64 z:1.`;
 }
+
+test('starts on epic-megabase and seeds the megabase required tasks', async () => {
+    await withColony(async ({ coordinator }) => {
+        assert.equal(coordinator.snapshot().phase, 'epic-megabase');
+        const required = Object.values(coordinator.snapshot().tasks)
+            .filter(task => task.required);
+        assert.deepEqual(
+            required.map(task => task.id).sort(),
+            [
+                'epic-megabase-agent-rooms',
+                'epic-megabase-defenses',
+                'epic-megabase-food-wing',
+                'epic-megabase-gear-equip',
+                'epic-megabase-gear-supply',
+                'epic-megabase-shared-halls',
+                'epic-megabase-shell',
+                'epic-megabase-site-hub',
+                'epic-megabase-themed-rooms',
+            ]
+        );
+        assert.equal(coordinator.view().phase.title, 'Epic Megabase');
+    });
+});
+
+test('idle directives always restate the epic megabase standing mission', async () => {
+    await withColony(async ({ coordinator }) => {
+        await coordinator.registerAgent('alice', 'builder');
+        const directive = coordinator.directiveFor('alice');
+        assert.match(directive.prompt, new RegExp(EPIC_MEGABASE_MISSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+        assert.match(directive.prompt, /Standing colony mission/);
+        assert.equal(directive.phase, 'epic-megabase');
+    });
+});
+
+test('directives require every role to stay well-rounded with swords and upgrades', async () => {
+    await withColony(async ({ coordinator }) => {
+        await coordinator.registerAgent('miner', 'miner');
+        const directive = coordinator.directiveFor('miner');
+        assert.match(directive.prompt, new RegExp(WELL_ROUNDED_KIT_RULE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+        assert.match(directive.prompt, /sword/i);
+        assert.match(directive.prompt, /upgrade/i);
+        assert.match(
+            coordinator.snapshot().tasks['epic-megabase-gear-equip'].title,
+            /sword/i
+        );
+    });
+});
 
 test('persists state, plan, journal, and reloads a snapshot', async () => {
     await withColony(async ({ coordinator, root }) => {
@@ -46,7 +115,7 @@ test('persists state, plan, journal, and reloads a snapshot', async () => {
         const snapshot = reloaded.snapshot();
         assert.equal(snapshot.agents.alice.role, 'builder');
         assert.equal(snapshot.tasks['safe-house'].claimedBy, 'alice');
-        assert.equal(snapshot.phase, 'bootstrap');
+        assert.equal(snapshot.phase, 'epic-megabase');
 
         const stateOnDisk = JSON.parse(await readFile(path.join(root, 'state.json')));
         assert.deepEqual(stateOnDisk, snapshot);
@@ -70,6 +139,62 @@ test('persists state, plan, journal, and reloads a snapshot', async () => {
                 'artifact.written',
             ]
         );
+    });
+});
+
+test('migrates legacy bootstrap chicken-work onto the epic megabase mission', async () => {
+    await withColony(async ({ coordinator, root }) => {
+        await coordinator.registerAgent('farmer', 'farmer');
+        const statePath = path.join(root, 'state.json');
+        const onDisk = JSON.parse(await readFile(statePath, 'utf8'));
+        onDisk.phase = 'bootstrap';
+        onDisk.tasks = {
+            'bootstrap-first-food': {
+                id: 'bootstrap-first-food',
+                title: 'Secure a renewable early food source',
+                description: 'Chicken chase',
+                phase: 'bootstrap',
+                priority: 80,
+                role: 'farmer',
+                required: true,
+                status: 'claimed',
+                createdAt: 1,
+                updatedAt: 1,
+                claimedBy: 'farmer',
+                leaseExpiresAt: Date.now() + 60_000,
+                result: null,
+                error: null,
+                attempts: 1,
+            },
+            'chicken-uuid': {
+                id: 'chicken-uuid',
+                title: 'Establish chicken pen',
+                description: 'Find chickens',
+                phase: 'bootstrap',
+                priority: 50,
+                role: 'explorer',
+                required: false,
+                status: 'proposed',
+                createdAt: 1,
+                updatedAt: 1,
+                claimedBy: null,
+                leaseExpiresAt: null,
+                result: null,
+                error: null,
+                attempts: 0,
+            },
+        };
+        await writeFile(statePath, JSON.stringify(onDisk));
+
+        const reloaded = await ColonyCoordinator.load({ root });
+        const snapshot = reloaded.snapshot();
+        assert.equal(snapshot.phase, 'epic-megabase');
+        assert.equal(snapshot.tasks['bootstrap-first-food'].status, 'failed');
+        assert.equal(snapshot.tasks['chicken-uuid'].status, 'failed');
+        assert.ok(snapshot.tasks['epic-megabase-shell']);
+        assert.ok(snapshot.tasks['epic-megabase-agent-rooms']);
+        assert.ok(snapshot.tasks['epic-megabase-gear-equip']);
+        assert.match(await readFile(path.join(root, 'plan.md'), 'utf8'), /Epic Megabase/);
     });
 });
 
@@ -287,40 +412,40 @@ test('automatically advances after every required phase task completes', async (
     await withColony(async ({ coordinator }) => {
         await coordinator.registerAgent('alice', 'generalist');
         await coordinator.proposeTask({ id: 'optional-road', title: 'Mark a future road' });
-        const bootstrapTasks = Object.values(coordinator.snapshot().tasks)
+        const megabaseTasks = Object.values(coordinator.snapshot().tasks)
             .filter(task => task.required);
-        for (const task of bootstrapTasks) {
+        for (const task of megabaseTasks) {
             await coordinator.claimTask(task.id, 'alice');
             await coordinator.completeTask(task.id, 'alice', validCompletion(task));
         }
 
         const state = coordinator.snapshot();
-        assert.equal(state.phase, 'shelter');
+        assert.equal(state.phase, 'bootstrap');
         assert.ok(
             Object.values(state.tasks).some(task =>
-                task.phase === 'shelter' && task.status === 'proposed'
+                task.phase === 'bootstrap' && task.status === 'proposed'
             )
         );
-        assert.equal(coordinator.view().phase.title, 'Shelter and Logistics');
+        assert.equal(coordinator.view().phase.title, 'Bootstrap');
     });
 });
 
 test('reconciles back to the earliest incomplete required phase', async () => {
     await withColony(async ({ coordinator }) => {
         await coordinator.registerAgent('alice', 'generalist');
-        const bootstrapTasks = Object.values(coordinator.snapshot().tasks)
+        const megabaseTasks = Object.values(coordinator.snapshot().tasks)
             .filter(task => task.required);
-        for (const task of bootstrapTasks) {
+        for (const task of megabaseTasks) {
             await coordinator.claimTask(task.id, 'alice');
             await coordinator.completeTask(task.id, 'alice', validCompletion(task));
         }
-        assert.equal(coordinator.snapshot().phase, 'shelter');
-        const shelterTask = Object.values(coordinator.snapshot().tasks)
-            .find(task => task.phase === 'shelter');
-        await coordinator.claimTask(shelterTask.id, 'alice');
-        await coordinator.reopenTask(bootstrapTasks[0].id, 'Audit failed');
-        assert.equal(await coordinator.reconcilePhase(), 'bootstrap');
-        assert.equal(coordinator.snapshot().tasks[shelterTask.id].status, 'proposed');
+        assert.equal(coordinator.snapshot().phase, 'bootstrap');
+        const bootstrapTask = Object.values(coordinator.snapshot().tasks)
+            .find(task => task.phase === 'bootstrap' && task.required);
+        await coordinator.claimTask(bootstrapTask.id, 'alice');
+        await coordinator.reopenTask(megabaseTasks[0].id, 'Audit failed');
+        assert.equal(await coordinator.reconcilePhase(), 'epic-megabase');
+        assert.equal(coordinator.snapshot().tasks[bootstrapTask.id].status, 'proposed');
     });
 });
 

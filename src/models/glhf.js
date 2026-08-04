@@ -1,3 +1,4 @@
+import { handleModelRequestError } from './quota_guard.js';
 import OpenAIApi from 'openai';
 import { getKey } from '../utils/keys.js';
 
@@ -53,8 +54,7 @@ export class GLHF {
                     console.log('Context length exceeded, trying again with shorter context.');
                     return await this.sendRequest(turns.slice(1), systemMessage, stop_seq);
                 } else {
-                    console.error(err);
-                    finalRes = 'My brain disconnected, try again.';
+                    finalRes = handleModelRequestError(err, { provider: 'glhf', model: this.model_name });
                     break;
                 }
             }

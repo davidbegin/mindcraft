@@ -1,6 +1,7 @@
 import OpenAIApi from 'openai';
 import { getKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 // llama, mistral
 export class Novita {
@@ -46,8 +47,7 @@ export class Novita {
               console.log('Context length exceeded, trying again with shorter context.');
               return await sendRequest(turns.slice(1), systemMessage, stop_seq);
           } else {
-            console.log(err);
-              res = 'My brain disconnected, try again.';
+              res = handleModelRequestError(err, { provider: 'novita', model: this.model_name });
           }
       }
       if (res.includes('<think>')) {

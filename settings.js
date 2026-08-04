@@ -28,7 +28,7 @@ const settings = {
     ],
 
     "load_memory": true, // load memory from previous session
-    "init_message": "Colony reboot: get moving NOW. !colonyStatus, claim the highest-priority open build/base/farm/beds task, coordinate briefly, then dig, craft, place blocks, light, and expand. Prefer physical building over long chats. Keep progressing continuously.", // sends to all on spawn
+    "init_message": "Epic megabase mission: build a lavishly decorated base with private rooms for every agent plus themed public rooms (chess room, treasure vault, trophy hall, creative room), and the best armor/weapons/gear. Stay personally well-rounded: always keep and upgrade a sword, shield, armor, food, and tools—even as a miner/farmer/builder. Collaborate briefly with other agents, then dig, craft, place, light, and decorate. !colonyStatus, claim open megabase tasks, keep progressing.", // sends to all on spawn
     "only_chat_with": [], // users that the bots listen to and send general messages to. if empty it will chat publicly
 
     "speak": false,
@@ -61,7 +61,7 @@ const settings = {
 
     "colony": {
         "enabled": true,
-        "world_id": "mindcraft-colony-survival-v1",
+        "world_id": "mindcraft-colony-epic-megabase-v1",
         "state_dir": "./colony",
         "max_agents": 8,
         "min_agents": 3,

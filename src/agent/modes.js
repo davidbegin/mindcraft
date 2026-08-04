@@ -99,34 +99,74 @@ const modes_list = [
         last_time: Date.now(),
         max_stuck_time: 20,
         prev_dig_block: null,
+        fail_count: 0,
+        cooldown_until: 0,
         update: async function (agent) {
-            if (agent.isIdle()) { 
+            if (Date.now() < this.cooldown_until) {
+                return;
+            }
+            if (agent.isIdle()) {
                 this.prev_location = null;
                 this.stuck_time = 0;
+                this.prev_dig_block = null;
                 return; // don't get stuck when idle
             }
             const bot = agent.bot;
             const cur_dig_block = bot.targetDigBlock;
-            if (cur_dig_block && !this.prev_dig_block) {
+            // Digging keeps the bot planted on purpose; never treat active digs as stuck.
+            if (cur_dig_block) {
+                this.prev_location = bot.entity.position.clone();
+                this.stuck_time = 0;
                 this.prev_dig_block = cur_dig_block;
+                this.last_time = Date.now();
+                return;
             }
-            if (this.prev_location && this.prev_location.distanceTo(bot.entity.position) < this.distance && cur_dig_block == this.prev_dig_block) {
+            if (this.prev_location && this.prev_location.distanceTo(bot.entity.position) < this.distance) {
                 this.stuck_time += (Date.now() - this.last_time) / 1000;
             }
             else {
                 this.prev_location = bot.entity.position.clone();
                 this.stuck_time = 0;
-                this.prev_dig_block = null;
             }
-            const max_stuck_time = cur_dig_block?.name === 'obsidian' ? this.max_stuck_time * 2 : this.max_stuck_time;
-            if (this.stuck_time > max_stuck_time) {
-                say(agent, 'I\'m stuck!');
+            if (this.stuck_time > this.max_stuck_time) {
+                const pos = bot.entity.position;
+                const where = `${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`;
+                const interrupted = agent.actions.currentActionLabel || 'unknown action';
+                say(agent, `I'm stuck at ${where} during ${interrupted} — freeing myself.`);
+                console.warn(`[unstuck] ${agent.name} stuck at ${where} during ${interrupted}`);
                 this.stuck_time = 0;
                 execute(this, agent, async () => {
-                    const crashTimeout = setTimeout(() => { agent.cleanKill("Got stuck and couldn't get unstuck") }, 10000);
-                    await skills.moveAway(bot, 5);
-                    clearTimeout(crashTimeout);
-                    say(agent, 'I\'m free.');
+                    try {
+                        await Promise.race([
+                            skills.moveAway(bot, 5),
+                            new Promise((_, reject) => setTimeout(
+                                () => reject(new Error('unstuck move timed out after 8s')),
+                                8000
+                            )),
+                        ]);
+                        this.fail_count = 0;
+                        say(agent, "I'm free.");
+                        console.log(`[unstuck] ${agent.name} freed at ${where}`);
+                    }
+                    catch (err) {
+                        this.fail_count += 1;
+                        const cooldownMs = Math.min(90_000, 15_000 * this.fail_count);
+                        this.cooldown_until = Date.now() + cooldownMs;
+                        console.warn(
+                            `[unstuck] ${agent.name} could not free (${err.message}). ` +
+                            `Aborting action and cooling down ${Math.round(cooldownMs / 1000)}s. ` +
+                            `Will NOT restart the agent process.`
+                        );
+                        say(agent,
+                            `Still stuck after trying to move — stopping that action and cooling down ${Math.round(cooldownMs / 1000)}s (not leaving).`
+                        );
+                        try {
+                            bot.pathfinder?.setGoal?.(null);
+                        } catch (_) { /* ignore */ }
+                        bot.clearControlStates();
+                        // Do not cleanKill. Colony bots used to leave/rejoin forever when pathing
+                        // failed in tight builds; aborting the action is enough.
+                    }
                 });
             }
             this.last_time = Date.now();

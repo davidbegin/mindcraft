@@ -1,5 +1,6 @@
 import OpenAIApi from 'openai';
 import { strictFormat } from '../utils/text.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 export class LMStudio {
     static prefix = 'lmstudio';
@@ -39,8 +40,7 @@ export class LMStudio {
                 console.log('Context length exceeded, trying again with shorter context.');
                 return await this.sendRequest(turns.slice(1), systemMessage, stop_seq);
             } else {
-                console.log(err);
-                res = 'My brain disconnected, try again.';
+                res = handleModelRequestError(err, { provider: 'lmstudio', model: this.model_name });
             }
         }
         return res;

@@ -1,5 +1,6 @@
 import Groq from 'groq-sdk'
 import { getKey } from '../utils/keys.js';
+import { handleModelRequestError } from './quota_guard.js';
 
 // THIS API IS NOT TO BE CONFUSED WITH GROK!
 // Go to grok.js for that. :)
@@ -63,10 +64,10 @@ export class GroqCloudAPI {
         catch(err) {
             if (err.message.includes("content must be a string")) {
                 res = "Vision is only supported by certain models.";
+                console.log(err);
             } else {
-                res = "My brain disconnected, try again.";
+                res = handleModelRequestError(err, { provider: 'groq', model: this.model_name });
             }
-            console.log(err);
         }
         return res;
     }
