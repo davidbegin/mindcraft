@@ -2,6 +2,7 @@ export const CONTEST_BOT_CHARACTERS = Object.freeze([
     Object.freeze({
         name: 'billy',
         voice: 'Giggles',
+        profileId: 'gpt-5-6-luna-instant',
     }),
 ]);
 

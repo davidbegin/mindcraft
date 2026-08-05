@@ -3140,8 +3140,9 @@
                 : [];
             const rows = [];
             for (let i = 0; i < count; i++) {
-                const profile = profiles[i % profiles.length];
                 const character = characters[i] || null;
+                const profile = profiles.find(item => item.id === character?.profileId)
+                    || profiles[i % profiles.length];
                 const name = character
                     ? sanitizeMinecraftName(character.name)
                     : nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
