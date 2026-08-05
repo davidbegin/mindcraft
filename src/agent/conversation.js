@@ -307,7 +307,9 @@ async function _scheduleProcessInMessage(sender, received, convo) {
             scheduleResponse(fastDelay);
         }
         else {
-            let shouldRespond = await agent.prompter.promptShouldRespondToBot(received.message);
+            // Heuristic instead of an LLM "respond/ignore" call: spending a full billed
+            // model request on a binary gate was one of the colony's cost multipliers.
+            let shouldRespond = _shouldRespondWhileBusy(received.message);
             console.log(`${agent.name} decided to ${shouldRespond?'respond':'not respond'} to ${sender}`);
             if (shouldRespond)
                 scheduleResponse(fastDelay);
@@ -317,6 +319,17 @@ async function _scheduleProcessInMessage(sender, received, convo) {
         // neither are busy
         scheduleResponse(fastDelay);
     }
+}
+
+// While mid-action, only interrupt for messages that plausibly require changing course:
+// direct address, questions, or redirect/urgency cues. Everything else waits for the
+// current action to finish and gets handled in the queued bulk response.
+function _shouldRespondWhileBusy(message) {
+    const text = (message || '').toLowerCase();
+    if (text.includes(agent.name.toLowerCase())) return true;
+    if (text.includes('?')) return true;
+    const interruptCues = ['stop', 'wait', 'instead', "don't", 'help', 'come here', 'need you', 'danger', 'urgent'];
+    return interruptCues.some(cue => text.includes(cue));
 }
 
 function _processInMessageQueue(name) {

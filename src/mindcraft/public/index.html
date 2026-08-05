@@ -444,6 +444,73 @@
         .chip.planning,
         .chip.queued { color: #c4a5ff; background: rgba(196, 165, 255, 0.14); border-color: rgba(196, 165, 255, 0.32); }
         .chip.paused { color: var(--text-dim); background: rgba(255, 255, 255, 0.06); border-color: var(--border); }
+        .chip.rec {
+            color: #ff8a80;
+            background: rgba(239, 83, 80, 0.14);
+            border-color: rgba(239, 83, 80, 0.45);
+            animation: recPulse 1.4s ease-in-out infinite;
+        }
+        @keyframes recPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.45; }
+        }
+
+        .btn-rec {
+            background: rgba(239, 83, 80, 0.12);
+            border-color: rgba(239, 83, 80, 0.4);
+            color: #ff8a80;
+            white-space: nowrap;
+        }
+        .btn-rec:hover:not(:disabled) { background: rgba(239, 83, 80, 0.25); }
+        .btn-rec.active {
+            background: rgba(239, 83, 80, 0.3);
+            animation: recPulse 1.4s ease-in-out infinite;
+        }
+
+        .rec-group { margin-bottom: 18px; }
+        .rec-group h3 {
+            margin: 0 0 6px;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .rec-folder {
+            font-size: 0.7rem;
+            font-weight: 400;
+            color: var(--text-mute);
+            word-break: break-all;
+        }
+        .rec-row {
+            display: grid;
+            grid-template-columns: 1fr auto auto auto;
+            align-items: center;
+            gap: 12px;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-inset);
+            margin-bottom: 6px;
+            font-size: 0.85rem;
+        }
+        .rec-row a { color: var(--cyan); text-decoration: none; word-break: break-all; }
+        .rec-row a:hover { text-decoration: underline; }
+        .rec-row .rec-meta { color: var(--text-dim); font-size: 0.75rem; white-space: nowrap; }
+        .rec-row.live { border-color: rgba(239, 83, 80, 0.45); }
+        .rec-live-tag {
+            color: #ff8a80;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            animation: recPulse 1.4s ease-in-out infinite;
+        }
+        .recordings-hint {
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            margin-bottom: 12px;
+            word-break: break-all;
+        }
 
         .menu-wrap { position: relative; }
 
@@ -910,9 +977,16 @@
 
         .card-controls {
             display: grid;
-            grid-template-columns: 1fr auto;
+            grid-template-columns: 1fr auto auto;
             gap: 8px;
             margin-top: auto;
+        }
+
+        .rec-path {
+            margin-top: 6px;
+            color: var(--text-dim);
+            font-size: 0.72rem;
+            word-break: break-all;
         }
 
         .msg-input {
@@ -1158,6 +1232,7 @@
             <span class="broadcast-status" id="broadcastStatus"></span>
         </div>
         <div class="footer-actions">
+            <button class="btn btn-ghost" onclick="openRecordings()">🎥 Recordings</button>
             <button class="btn btn-ghost" onclick="disconnectAllAgents()">Disconnect All</button>
             <button class="btn btn-danger" onclick="confirmShutdown()">Full Shutdown</button>
         </div>
@@ -1183,6 +1258,22 @@
                     <button id="uploadProfileBtn" class="btn btn-ghost">Upload Profile</button>
                     <button id="submitCreateAgentBtn" class="btn btn-primary" disabled>Create Agent</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="recordingsModal" class="modal-backdrop">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>POV Recordings</h2>
+                <div class="footer-actions">
+                    <button class="btn btn-ghost" onclick="refreshRecordings()">Refresh</button>
+                    <button class="btn btn-danger" onclick="closeRecordings()">Close</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="recordings-hint" id="recordingsHint">Press ⏺ Rec on an agent card to record that bot's first-person view.</div>
+                <div id="recordingsList"></div>
             </div>
         </div>
     </div>
@@ -2441,6 +2532,9 @@
             const hist = (agentMessageHistory[agent.name] || []).slice(1, 4).join(' · ');
             const statusText = agent.in_game ? phase : 'offline';
             const doingText = actionLabel(st, agent.in_game);
+            const isRecording = agent.recording?.recording === true;
+            const recFile = agent.recording?.file || '';
+            const recFolder = agent.recording?.folder || agent.recordingsFolder || `bots/${agent.name}/recordings`;
 
             return `
                 <article class="agent-card ${focused} ${offline}" id="agent-${agent.name}" data-name="${esc(agent.name)}"
@@ -2459,6 +2553,7 @@
                             </h3>
                             <div class="chips">
                                 <span class="chip ${actionChipClass(phase)}" id="statusChip-${agent.name}">${esc(statusText)}</span>
+                                <span class="chip rec" id="recChip-${agent.name}" title="${esc(recFile)}" ${isRecording ? '' : 'hidden'}>● rec</span>
                                 <span class="chip role" id="roleChip-${agent.name}" ${role ? '' : 'hidden'}>${esc(role || '')}</span>
                                 <span class="chip" id="itemsHint-${agent.name}">${st?.inventory ? `${st.inventory.stacksUsed ?? 0}/${st.inventory.totalSlots ?? 0} slots` : '— slots'}</span>
                             </div>
@@ -2553,7 +2648,18 @@
                         <input class="msg-input" type="text" id="messageInput-${agent.name}" placeholder="Message…"
                             onkeydown="if(event.key==='Enter'){sendMessage('${esc(agent.name)}', this.value)}"
                             ${!agent.in_game ? 'disabled' : ''}>
+                        <button class="btn btn-rec ${isRecording ? 'active' : ''}" id="recBtn-${agent.name}"
+                            onclick="toggleRecording('${esc(agent.name)}')" ${!agent.in_game ? 'disabled' : ''}
+                            title="${isRecording ? `Stop recording and save the MP4 in ${esc(recFolder)}` : `Record this bot (third-person follow cam) to an MP4 in ${esc(recFolder)}`}">
+                            ${isRecording ? '⏹ Stop Rec' : '⏺ Rec'}
+                        </button>
                         <button class="btn btn-amber" onclick="sendMessage('${esc(agent.name)}', '!stop')" ${!agent.in_game ? 'disabled' : ''}>Stop</button>
+                    </div>
+
+                    <div class="rec-path" id="recPath-${agent.name}" title="${esc(isRecording && recFile ? recFile : recFolder)}">
+                        ${isRecording && recFile
+                            ? `⏺ recording → ${esc(recFile.split('/').pop())}`
+                            : `⏺ Rec saves to ${esc(recFolder)}`}
                     </div>
                 </article>`;
         }
@@ -2580,7 +2686,8 @@
             const prevAgents = currentAgents.reduce((acc, a) => ({ ...acc, [a.name]: a }), {});
             const changedAgents = agents.filter(a => {
                 const prev = prevAgents[a.name];
-                return !prev || prev.in_game !== a.in_game || prev.viewerPort !== a.viewerPort || prev.socket_connected !== a.socket_connected;
+                return !prev || prev.in_game !== a.in_game || prev.viewerPort !== a.viewerPort || prev.socket_connected !== a.socket_connected
+                    || (prev.recording?.recording === true) !== (a.recording?.recording === true);
             });
 
             changedAgents.forEach(agent => {
@@ -2621,7 +2728,8 @@
             const prevAgents = currentAgents.reduce((acc, a) => ({ ...acc, [a.name]: a }), {});
             const changedAgents = agents.filter(a => {
                 const prev = prevAgents[a.name];
-                return !prev || prev.in_game !== a.in_game || prev.viewerPort !== a.viewerPort || prev.socket_connected !== a.socket_connected;
+                return !prev || prev.in_game !== a.in_game || prev.viewerPort !== a.viewerPort || prev.socket_connected !== a.socket_connected
+                    || (prev.recording?.recording === true) !== (a.recording?.recording === true);
             });
 
             currentAgents = agents;
@@ -2730,6 +2838,98 @@
             inventoryOpen[name] = newVisible;
         }
 
+        // —— POV recording ——
+        const recordingBusy = {};
+
+        function rerenderAgentCard(name) {
+            const agent = currentAgents.find(a => a.name === name);
+            const el = document.getElementById(`agent-${name}`);
+            if (!agent || !el) return;
+            el.outerHTML = renderAgentCard(agent);
+            if (agent.in_game) {
+                updateAgentViewer(name);
+                if (lastStates[name]) patchAgentCard(name, lastStates[name]);
+            }
+        }
+
+        function toggleRecording(name) {
+            const agent = currentAgents.find(a => a.name === name);
+            if (!agent || recordingBusy[name]) return;
+            recordingBusy[name] = true;
+            const isRecording = agent.recording?.recording === true;
+            const btn = document.getElementById(`recBtn-${name}`);
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = isRecording ? 'Stopping…' : 'Starting…';
+            }
+            const done = (res) => {
+                recordingBusy[name] = false;
+                if (res && typeof res === 'object' && 'recording' in res) {
+                    agent.recording = res;
+                }
+                rerenderAgentCard(name);
+                if (res?.error) {
+                    alert(`Recording error for ${name}:\n${res.error}`);
+                } else if (isRecording && res?.file) {
+                    openRecordings();
+                }
+            };
+            if (isRecording) socket.emit('stop-recording', name, done);
+            else socket.emit('start-recording', name, {}, done);
+        }
+
+        const recordingsModal = document.getElementById('recordingsModal');
+
+        function fmtBytes(n) {
+            if (n == null) return '—';
+            if (n < 1024) return `${n} B`;
+            if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+            if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+            return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+        }
+
+        function openRecordings() {
+            recordingsModal.style.display = 'flex';
+            refreshRecordings();
+        }
+
+        function closeRecordings() {
+            recordingsModal.style.display = 'none';
+        }
+
+        function refreshRecordings() {
+            const list = document.getElementById('recordingsList');
+            const hint = document.getElementById('recordingsHint');
+            socket.emit('list-recordings', (res) => {
+                if (!res?.success) {
+                    list.innerHTML = `<div class="empty-agents">${esc(res?.error || 'Failed to load recordings')}</div>`;
+                    return;
+                }
+                hint.textContent = `Saved on disk under ${res.botsFolder}/<agent>/recordings — files still being recorded are marked LIVE and become playable once stopped.`;
+                if (!res.agents.length) {
+                    list.innerHTML = '<div class="empty-agents">No recordings yet. Press ⏺ Rec on an agent card to record that bot\'s point of view.</div>';
+                    return;
+                }
+                const liveFiles = new Set(currentAgents
+                    .filter(a => a.recording?.recording && a.recording?.file)
+                    .map(a => a.recording.file.split('/').pop()));
+                list.innerHTML = res.agents.map(group => `
+                    <div class="rec-group">
+                        <h3>${esc(group.agent)} <span class="rec-folder">${esc(group.folder)}</span></h3>
+                        ${group.files.map(f => {
+                            const live = liveFiles.has(f.file);
+                            return `
+                            <div class="rec-row ${live ? 'live' : ''}">
+                                <a href="${f.url}" target="_blank">${esc(f.file)}</a>
+                                ${live ? '<span class="rec-live-tag">● live</span>' : `<a class="rec-meta" href="${f.url}" download>download</a>`}
+                                <span class="rec-meta">${fmtBytes(f.size)}</span>
+                                <span class="rec-meta">${new Date(f.mtime).toLocaleString()}</span>
+                            </div>`;
+                        }).join('')}
+                    </div>`).join('');
+            });
+        }
+
         window.focusAgent = focusAgent;
         window.restartAgent = restartAgent;
         window.disconnectAgent = disconnectAgent;
@@ -2741,6 +2941,10 @@
         window.broadcastMessage = broadcastMessage;
         window.toggleDetails = toggleDetails;
         window.renderAgents = renderAgents;
+        window.toggleRecording = toggleRecording;
+        window.openRecordings = openRecordings;
+        window.closeRecordings = closeRecordings;
+        window.refreshRecordings = refreshRecordings;
     </script>
 </body>
 </html>

@@ -4,39 +4,42 @@
 - Objective: Build the most epic, complete base ever: uniquely decorated private rooms for every agent; lavish themed public rooms including a chess room, treasure vault, trophy hall, and at least one wild creative room; stocked with the best armor, weapons, and gear. Collaborate briefly with other agents, then keep building.
 - Civilization epoch: 1
 - Status: running
-- Agents: 8/8
+- Agents: 6
 
 ## Open Tasks
 
 - [claimed] epic-megabase-shell: Build the epic exterior shell: walls, roof, floor, entrance, and interior lighting [builder] (builder)
 - [claimed] epic-megabase-agent-rooms: Build a uniquely decorated private room for every active agent [builder] (miner)
-- [claimed] epic-megabase-themed-rooms: Build epic themed public rooms: chess room, treasure vault, trophy hall, and one wild creative room, all richly decorated [builder] (builder2)
+- [proposed] epic-megabase-themed-rooms: Build epic themed public rooms: chess room, treasure vault, trophy hall, and one wild creative room, all richly decorated [builder]
 - [claimed] epic-megabase-shared-halls: Build shared crafting, storage, armory, and meeting halls connected to the themed rooms [logistics] (logistics)
-- [claimed] epic-megabase-food-wing: Attach a renewable food wing to the megabase [farmer] (farmer)
-- [claimed] epic-megabase-gear-equip: Craft and deliver a well-rounded kit (sword, shield, armor, tools, food) at the best available tier to every agent [provisioner] (provisioner)
-- [claimed] 8a0bf570-a7b7-4580-b1de-e4066b4dc9b1: Build starter storage wing shell [generalist] (miner2)
-- [claimed] 4abafda1-1c48-42f5-b2d3-7b1cc6249532: Base Perimeter Survey [explorer] (explorer)
-- [proposed] be143861-9f6c-4bae-aed9-c3f200999b3b: Epic room layout plan [logistics]
+- [claimed] epic-megabase-food-wing: Attach a renewable food wing to the megabase [farmer] (farmer2)
+- [proposed] epic-megabase-gear-equip: Craft and deliver a well-rounded kit (sword, shield, armor, tools, food) at the best available tier to every agent [provisioner]
+- [proposed] 854c5b45-b6dd-46b4-9af9-eeae2180539f: Stock the Armory [logistics]
+- [proposed] 50bbeb9c-cb73-462e-ab96-c6de532748f7: Finish full gear distribution [provisioner]
+- [claimed] a20ecd45-7470-4b5e-988e-42bed7f89690: Gather oak logs and stone for a decorated generalist room [generalist] (sol_instant)
+- [proposed] 5aa5b2eb-40f3-4e85-95eb-434290a0332c: Armory and perimeter lighting [combat]
+- [claimed] d2d15012-d4ef-42c7-b581-7204c20b6915: Drainage-aware west wing layout [explorer] (explorer)
+- [proposed] aaf3bba7-d90b-4845-b71e-f80aedb72d3a: Survey core entrance markers [builder]
 
 ## Recent Progress
 
-- builder2: Treasure vault extended farther east; new 4x3 chamber built at ~21,63,-6 to 24,65,-4 with west side open, roof open, east wall doubled, and oak accents added.
-- explorer: Scouted to -17,68,-32. This edge has open surface, torch, cobblestone, oak logs, and a nearby water source, giving the expansion zone a natural landmark and another possible access point.
-- explorer: Scouted to -7,69,-35. This is another open surface edge with grass, torches, oak logs, cobblestone, and copper ore, so the megabase expansion zone extends farther than the original core.
-- explorer: Scout loop returned near the core edge at -8,68,-25. This spot is also surface-walkable and borders cobblestone, crafting, coal, and torches, confirming the core footprint extends into this side.
-- explorer: Scouted outward to -10,69,-36. New ground is open surface with grass, torch, oak logs, cobblestone, and nearby copper ore, so this edge looks suitable for further expansion beyond the core.
-- explorer: At the -11,69,-25 annex, the surrounding surface area has coal ore, cobblestone, logs, torches, and open grass/dirt, making it a good expansion point for the shared core and future room links.
-- miner: builder2 is extending the treasure vault east with a 4x3 cobble chamber at x 21-24, z -6 to -4; west doorway stays open, roof stays open, and 39 cobble is being used efficiently.
-- explorer: Reached storage/crafting annex at -11,69,-25. The core corridor-hall-annex network is fully surface-accessible and walkable from above; underground stone still blocks direct digging, so scout and build using the open surface route.
-- miner: Claimed epic-megabase-agent-rooms, but route attempts are still blocked near -118,63,49; regroup via safe hub 211,67,151/153 and keep the room build moving through other paths.
-- explorer: Reached meeting hall at -13,69,-28 via non-destructive surface path from the corridor core. Hall link is accessible from above; route scouting is confirming open walkways and item pickup activity in the area.
-- farmer: Returned to the food-wing anchor at -25,59,-5; path/torches still reach -31,60,-2, cobble border stays at -27/-29,60,-5, and irrigation remains unfinished. Existing hoed patches and water spots are intact; stay alert for phantoms and continue the farm build from anchor.
-- explorer: Reached corridor/storage core at -16,68,-22. Nearby route is surface-accessible from grass with torches and no overhead blockage here; hall/core area is walkable from above even though underground direct pathing was blocked by stone.
-- explorer: Recovered to surface at 4,69,-13 after blocked underground routing. Non-destructive route exists from the lower area to surface; next scout should approach the corridor/storage core from above and look for a safe descent into the hall link.
-- builder2: Treasure vault extended east of the chess room; compact 3x3 cobble section built at ~18,63,-6 to 20,65,-4, west doorway kept open, roof still open, interior lightly torched.
-- miner2: Builder says keep a 5-block buffer from the hub shell and a 3-block service gap between adjacent rooms; label starter storage chests by function: shell blocks, tools, food, gear, room supplies.
-- miner: builder2 private room saved at x:8, y:69, z:2 for the room roster; resume megabase room build from this marker.
-- logistics: Shared crafting/storage annex is now built off the corridor near -11,69,-25 with torch lighting and a marked starter-supply corner; meeting hall remains connected nearby.
-- logistics: Deposited 32 cobblestone into the chest at 8,70,-2; stockpile effort continues for the shared halls.
-- logistics: Collected 32 cobblestone and placed a torch at 0,64,1 while gathering near the colony base.
-- logistics: Deposited 21 cobblestone into the nearest chest at 8,70,-2; cobble stockpile effort continues for the storage hall.
+- logistics: Builder is handling the storage link now; accessible chest at -18,71,-25 remains the current empty storage point for shared halls, and I should keep depositing supplies there once the route is fixed.
+- logistics: Accessible chest at -18,71,-25 is empty; the main storage point still needs starter supplies and a proper deposit route from the shared halls.
+- logistics: Nearest chest at -18,71,-26 timed out again when depositing cobblestone; storage is still unreliable, so I need an alternate chest or a rebuilt, accessible storage point at the main hall.
+- miner: Route to the private-room build area is still blocked near -118,63,49; goToCoordinates to the area got me unstuck at -14,60,-26 but not through the blockage. Need route support or an alternate path.
+- explorer: West wing layout remains blocked at -48,64,-13 by stone; dry route from -36.4,64,-12.5 is still the safe anchor, with wet boundary at -29,61,-13. Miner is clearing the choke so I can mark the hall and room footprints next.
+- farmer2: Planted wheat seeds on newly tilled farmland at -26,62,-6 for the food wing; crop setup is now underway.
+- explorer: West hall advance is still blocked at -48,64,-13 by cobblestone; dry-line layout remains valid from west-wing-spine to the terminus, and logistics is staging torches/cobble while miner clears the choke.
+- explorer: Water boundary found at -29,61,-13 near the west spine; keep the west wing hall and room footprints on the higher dry stone line and avoid extending into that lower wet pocket.
+- explorer: West hall anchor is west-wing-spine at -36.4,64,-12.5; builder has the footprint from there toward -48,64,-13, and the terminus is still cobble-blocked until miner clears it.
+- explorer: West wing expansion zone stays dry from scout-edge-7/8 to -48,64,-13; next hall spine can extend here without flood risk, with room footprints kept on the dry stone line.
+- farmer2: Renewable crop farm is active at -25,62,-6 with farmland, water, and a harvest path in progress; wheat has been replanted and the food wing remains attached to the megabase.
+- logistics: Supply chest pinned at -31, 55, -25 near the food wing worksite; use this chest for routing food and farm supplies.
+- logistics: Still blocked at 5,65,-6 by the pathing trap; goToCoordinates and goToSurface both failed here, and the shared halls route toward -22,62,-33 remains unusable until the trap is cleared.
+- logistics: Claimed epic-megabase-shared-halls. Current blocker is the water/cobble trap at -22,62,-33; builder2 is continuing from -13,69,-28, and no extra miner can be spawned.
+- logistics: Shared halls task is claimed but currently blocked by the water/cobble trap at -22,62,-33; builder2 is continuing south wall/roof work from -13,69,-28, so the next move should avoid the trap and coordinate around the builder-side route.
+- farmer2: Farm at -25, 62, -6 is ready with water and farmland, but no tall_grass or seeds were found within 256 blocks; need another seed source.
+- builder: Logistics should bring torches, cobblestone, oak logs, and then doors or glass to core/storage at -9,69,-25 for the shell and lighting work.
+- logistics: Deposited 14 cobblestone into the core/storage chest at -9,69,-25. Chest remains mostly leaf litter; farmer2 still needs seeds or wheat for the farm at -25,62,-6.
+- explorer: West wing west terminus reached at -48,64,-13. Route from scout-edge-7/8 to the west spine is dry stone with torch-lit ground, so the hall can extend here without flood exposure.
+- builder: For shared halls, the most needed supplies right now are torches, oak logs, cobblestone, and doors or glass; stone would also help finish the shell and interior lighting.

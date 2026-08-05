@@ -76,7 +76,12 @@ class MindServerProxy {
                     return;
                 }
                 this.agent.colony_paused = Boolean(directive.paused);
-                this.agent.history.add('system', `COLONY DIRECTIVE\n${directive.prompt}`);
+                // Repeated identical directives used to spam history, dragging it to the
+                // summarization threshold (each summarization is a billed model call).
+                if (directive.prompt !== this.last_directive_prompt) {
+                    this.last_directive_prompt = directive.prompt;
+                    this.agent.history.add('system', `COLONY DIRECTIVE\n${directive.prompt}`);
+                }
                 if (directive.paused) {
                     await this.agent.self_prompter.pause();
                     callback?.({ success: true, status: 'paused' });
@@ -109,6 +114,32 @@ class MindServerProxy {
                 callback?.({ ok: await this.agent.prompter.checkModelHealth() });
             } catch (error) {
                 callback?.({ ok: false, error: error.message });
+            }
+        });
+
+        this.socket.on('start-recording', async (options, callback) => {
+            try {
+                if (!this.agent?.pov_recorder) {
+                    callback?.({ success: false, error: 'Agent has not spawned yet' });
+                    return;
+                }
+                const status = await this.agent.pov_recorder.start(options || {});
+                callback?.({ success: !status.error, error: status.error, ...status });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
+        this.socket.on('stop-recording', async (callback) => {
+            try {
+                if (!this.agent?.pov_recorder) {
+                    callback?.({ success: false, error: 'Agent has not spawned yet' });
+                    return;
+                }
+                const status = await this.agent.pov_recorder.stop();
+                callback?.({ success: true, ...status });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
             }
         });
 
@@ -158,6 +189,13 @@ class MindServerProxy {
 
     colonyReady() {
         this.socket.emit('colony-ready');
+    }
+
+    // Push POV recording state changes so the UI reflects auto-stops (bot death, ffmpeg failure)
+    sendRecordingUpdate(status) {
+        if (this.socket?.connected) {
+            this.socket.emit('recording-update', this.name, status);
+        }
     }
 
     shutdown() {

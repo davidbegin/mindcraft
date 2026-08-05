@@ -75,6 +75,16 @@ export class Prompter {
             this.vision_model = this.chat_model;
         }
 
+        // Memory summaries are frequent, short, and quality-insensitive; a cheap model
+        // here cuts a large share of total spend.
+        if (this.profile.memory_model) {
+            let memory_model_profile = selectAPI(this.profile.memory_model);
+            this.memory_model = createModel(memory_model_profile);
+        }
+        else {
+            this.memory_model = this.chat_model;
+        }
+
         
         let embedding_model_profile = null;
         if (this.profile.embedding) {
@@ -162,8 +172,14 @@ export class Prompter {
                 await this.skill_libary.getRelevantSkillDocs(code_task_content, settings.relevant_docs_count)
             );
         }
-        if (prompt.includes('$EXAMPLES') && examples !== null)
-            prompt = prompt.replaceAll('$EXAMPLES', await examples.createExampleMessage(messages));
+        if (prompt.includes('$EXAMPLES') && examples !== null) {
+            // Pin the selected examples for the whole session instead of re-selecting per
+            // turn: a byte-stable prompt prefix is what lets provider prompt caching bill
+            // repeated context at ~10% of the input price.
+            if (examples._pinned_message === undefined)
+                examples._pinned_message = await examples.createExampleMessage(messages);
+            prompt = prompt.replaceAll('$EXAMPLES', examples._pinned_message);
+        }
         if (prompt.includes('$MEMORY'))
             prompt = prompt.replaceAll('$MEMORY', this.agent.history.memory);
         if (prompt.includes('$TO_SUMMARIZE'))
@@ -215,7 +231,7 @@ export class Prompter {
         this.most_recent_msg_time = Date.now();
         let current_msg_time = this.most_recent_msg_time;
 
-        for (let i = 0; i < 3; i++) { // try 3 times to avoid hallucinations
+        for (let i = 0; i < 2; i++) { // retry once to avoid hallucinations; each retry is a billed model call
             await this.checkCooldown();
             if (current_msg_time !== this.most_recent_msg_time) {
                 return '';
@@ -239,10 +255,18 @@ export class Prompter {
                 continue;
             }
 
-            // Check for hallucination or invalid output
+            // Check for hallucination or invalid output. Strip hallucinated other-bot
+            // lines first; only re-prompt (another billed call) if nothing usable remains.
             if (generation?.includes('(FROM OTHER BOT)')) {
-                console.warn('LLM hallucinated message as another bot. Trying again...');
-                continue;
+                const stripped = generation.split('\n')
+                    .filter(line => !line.includes('(FROM OTHER BOT)'))
+                    .join('\n').trim();
+                if (!stripped) {
+                    console.warn('LLM hallucinated message as another bot. Trying again...');
+                    continue;
+                }
+                console.warn('Stripped hallucinated other-bot lines from response.');
+                generation = stripped;
             }
 
             if (current_msg_time !== this.most_recent_msg_time) {
@@ -281,7 +305,7 @@ export class Prompter {
         await this.checkCooldown();
         let prompt = this.profile.saving_memory;
         prompt = await this.replaceStrings(prompt, null, null, to_summarize);
-        let resp = await this.chat_model.sendRequest([], prompt);
+        let resp = await this.memory_model.sendRequest([], prompt);
         await this._saveLog(prompt, to_summarize, resp, 'memSaving');
         if (resp?.includes('</think>')) {
             const [_, afterThink] = resp.split('</think>')

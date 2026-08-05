@@ -40,8 +40,10 @@ export class Coder {
         let messages = agent_history.getHistory(); 
         messages.push({role: 'system', content: 'Code generation started. Write code in codeblock in your response:'});
 
-        const MAX_ATTEMPTS = 5;
-        const MAX_NO_CODE = 3;
+        // Each attempt is a billed model call; 3 attempts catches most lint/runtime
+        // fixes while bounding the cost of a task the model cannot solve.
+        const MAX_ATTEMPTS = 3;
+        const MAX_NO_CODE = 2;
 
         let code = null;
         let no_code_failures = 0;

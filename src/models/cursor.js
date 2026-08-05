@@ -1,4 +1,5 @@
 import { Agent, JsonlLocalAgentStore } from '@cursor/sdk';
+import { appendFile } from 'fs/promises';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -11,7 +12,12 @@ import { handleModelRequestError, noteModelSuccess } from './quota_guard.js';
 // adapter instance so Agent.create does not hammer GET /v1/models (30 RPM) on every turn.
 const DEFAULT_MODEL = 'composer-2.5';
 const DEFAULT_TIMEOUT_MS = 120000;
-const MAX_SENDS_PER_AGENT = 25;
+// Cursor re-sends the whole thread on every turn, and each of our sends is already a
+// self-contained prompt (full embedded conversation). Reusing one agent for N sends
+// therefore replays N-1 stale prompts as dead-weight input tokens. Keep N small: big
+// enough to amortize Agent.create spacing, small enough to bound the replay cost.
+const MAX_SENDS_PER_AGENT = 4;
+const USAGE_LOG_PATH = './bots/cursor-usage.jsonl';
 const MAX_RATE_LIMIT_RETRIES = 3;
 const CREATE_MIN_INTERVAL_MS = 2500;
 const RATE_LIMIT_BASE_MS = 20000;
@@ -154,6 +160,7 @@ export class CursorSDK {
             const run = await agent.send(images ? { text, images } : text);
             this._sends += 1;
             const result = await this.#wait(run);
+            logRunUsage(this.model_name || DEFAULT_MODEL, result?.usage ?? run?.usage, this._sends);
             if (result.status !== 'finished') {
                 throw new Error(`Cursor agent run ${result.status}: ${result.error?.message || 'no details'}`);
             }
@@ -378,4 +385,24 @@ function withCreateGate(fn) {
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Appends one JSONL line per run with token counts so cost changes are measurable
+ * (cache hit rate = cacheReadTokens vs inputTokens). Never throws: billing telemetry
+ * must not break gameplay.
+ */
+function logRunUsage(model, usage, sendIndex) {
+    if (!usage) return;
+    const line = JSON.stringify({
+        at: new Date().toISOString(),
+        pid: process.pid,
+        model,
+        sendIndex,
+        inputTokens: usage.inputTokens ?? null,
+        outputTokens: usage.outputTokens ?? null,
+        cacheReadTokens: usage.cacheReadTokens ?? null,
+        cacheWriteTokens: usage.cacheWriteTokens ?? null,
+    });
+    appendFile(USAGE_LOG_PATH, line + '\n').catch(() => {});
 }

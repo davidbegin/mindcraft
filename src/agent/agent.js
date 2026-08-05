@@ -12,6 +12,7 @@ import { SelfPrompter } from './self_prompter.js';
 import convoManager from './conversation.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
+import { PovRecorder } from './vision/pov_recorder.js';
 import { serverProxy, sendOutputToServer, requestColonyCommand } from './mindserver_proxy.js';
 import { setOutageHandler } from '../models/quota_guard.js';
 import settings from './settings.js';
@@ -118,6 +119,10 @@ export class Agent {
             try {
                 clearTimeout(spawnTimeout);
                 addBrowserViewer(this.bot, count_id);
+                this.pov_recorder = new PovRecorder(this.bot, this.name, (status) => serverProxy.sendRecordingUpdate(status));
+                if (settings.record_bot_view) {
+                    this.pov_recorder.start().catch(err => console.error('Failed to auto-start POV recording:', err));
+                }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
 
@@ -643,6 +648,9 @@ export class Agent {
             return;
         }
         this._cleanKilling = true;
+        // Fire-and-forget: even if the process exits first, ffmpeg sees EOF on
+        // its input pipe and finalizes a playable MP4 on its own.
+        try { this.pov_recorder?.stop(); } catch (_) { /* recorder may not exist yet */ }
         this.history.add('system', msg);
         // code === 1 restarts the agent process; other codes leave for good.
         // Say something reassuring so players don't worry when bots vanish for updates.

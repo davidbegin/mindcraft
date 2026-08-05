@@ -11,7 +11,9 @@ export class SelfPrompter {
         this.interrupt = false;
         this.prompt = '';
         this.idle_time = 0;
-        this.cooldown = 2000;
+        // Gap between self-prompt cycles. Each cycle costs at least one model call, so
+        // this is the colony's per-bot spend throttle; actions still run to completion.
+        this.cooldown = 20000;
     }
 
     start(prompt) {
@@ -96,7 +98,7 @@ export class SelfPrompter {
                         no_command_count = 0;
                         // Longer pause so a Cursor get_models / request burst can cool down
                         // instead of every idle bot immediately re-entering Agent.create.
-                        await new Promise(r => setTimeout(r, Math.max(this.cooldown * 15, 30000)));
+                        await new Promise(r => setTimeout(r, Math.max(this.cooldown * 2, 30000)));
                         continue;
                     }
                     out += ' Stopping auto-prompting.';

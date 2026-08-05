@@ -715,6 +715,16 @@ export function createMindServer(host_public = false, port = 8080) {
                     callback({ success: false, error: 'Agent already exists' });
                     return;
                 }
+                // An explicit create from the UI must override a sticky
+                // desired=false left by a previous stop/destroy of the same
+                // name, otherwise createAgent registers the agent but never
+                // starts its process and it stays offline forever.
+                if (colonyCoordinator?.snapshot().agents[settings.profile.name]?.desired === false) {
+                    await colonyCoordinator.updateAgent(settings.profile.name, {
+                        desired: true,
+                        status: 'spawning',
+                    });
+                }
                 let returned = await mindcraft.createAgent(settings);
                 callback({ success: returned.success, error: returned.error });
                 let name = settings.profile.name;
@@ -968,7 +978,10 @@ function agentsStatusUpdate(socket) {
             in_game: conn.in_game,
             viewerPort: conn.viewer_port,
             socket_connected: !!conn.socket,
-            recording: conn.recording
+            recording: conn.recording,
+            // Where PovRecorder will write MP4s, so the UI can show the
+            // destination before the first recording ever starts.
+            recordingsFolder: path.join(projectRoot, 'bots', agentName, 'recordings')
         });
     };
     socket.emit('agents-status', agents);

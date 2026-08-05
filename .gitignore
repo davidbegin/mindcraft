@@ -6,6 +6,13 @@ code_records/
 scratch.js
 bots/**/action-code/**
 bots/**/
+bots/*.jsonl
+
+# colony runtime state (generated while bots play)
+colony/journal.jsonl
+colony/state.json
+colony/notes/
+colony/blueprints/
 keys.json
 services/viaproxy/jars/**
 services/viaproxy/logs/**
