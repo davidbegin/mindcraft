@@ -39,7 +39,7 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
         durationLabel: '5 min cap',
         durationMs: 5 * 60_000,
         prompt:
-            'CONTEST: Self-Destruct Race. This is reverse survival: your only goal is to cause your own death before any rival causes theirs. PVP is off and another player killing you does not count as the intended strategy. Your survival instincts are disabled and the arena has a lava pit, so seek danger immediately and use the environment to eliminate yourself. Do not help anyone else die first. The game ends automatically the instant the first competitor dies. Keep saying what risky strategy you are trying and trade playful trash talk with every rival.',
+            'CONTEST: Self-Destruct Race. This is reverse survival: your only goal is to cause your own death before any rival causes theirs. PVP is off and another player killing you does not count as the intended strategy. Your survival instincts are disabled. Explore the arena, improvise with its terrain, materials, creatures, and hazards, and find your own fastest way to eliminate yourself. There is no prescribed solution, so act immediately and adapt if a strategy is too slow. Do not help anyone else die first. The game ends automatically the instant the first competitor dies. Keep saying what risky strategy you are trying and trade playful trash talk with every rival.',
         rules: Object.freeze({
             type: 'death_race',
             scoring: 'first-death-wins',

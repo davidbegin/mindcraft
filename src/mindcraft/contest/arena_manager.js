@@ -162,6 +162,36 @@ function addDogForest(commands) {
     }
 }
 
+function addDeathRaceHazards(commands) {
+    const x = ARENA.centerX;
+    const z = ARENA.centerZ;
+
+    commands.push(
+        // Keep lava available without making it the central, prescribed solution.
+        `fill ${x + 24} ${ARENA.floorY} ${z + 24} `
+        + `${x + 27} ${ARENA.floorY} ${z + 27} lava`,
+        // A deep pool supports drowning strategies.
+        `fill ${x - 27} ${ARENA.floorY - 3} ${z + 21} `
+        + `${x - 21} ${ARENA.floorY - 3} ${z + 27} stone`,
+        `fill ${x - 27} ${ARENA.floorY - 2} ${z + 21} `
+        + `${x - 21} ${ARENA.floorY} ${z + 27} water`,
+        // A climbable tower makes fall damage possible.
+        `fill ${x - 25} ${ARENA.floorY + 1} ${z - 25} `
+        + `${x - 24} ${ARENA.floorY + 27} ${z - 24} stone`,
+        `fill ${x - 25} ${ARENA.floorY + 27} ${z - 25} `
+        + `${x - 20} ${ARENA.floorY + 27} ${z - 20} stone`,
+        `fill ${x - 23} ${ARENA.floorY + 1} ${z - 25} `
+        + `${x - 23} ${ARENA.floorY + 27} ${z - 25} ladder[facing=east]`,
+        // Cactus and loose blocks leave room for slower or improvised approaches.
+        `fill ${x + 20} ${ARENA.floorY} ${z - 27} `
+        + `${x + 27} ${ARENA.floorY} ${z - 20} sand`,
+        `setblock ${x + 22} ${ARENA.floorY + 1} ${z - 25} cactus`,
+        `setblock ${x + 25} ${ARENA.floorY + 1} ${z - 22} cactus`,
+        `fill ${x - 3} ${ARENA.floorY + 1} ${z + 23} `
+        + `${x + 3} ${ARENA.floorY + 4} ${z + 27} gravel`
+    );
+}
+
 function buildWorldResetCommands(gameId) {
     const minX = ARENA.centerX - ARENA.halfSize;
     const maxX = ARENA.centerX + ARENA.halfSize;
@@ -329,17 +359,17 @@ function buildWorldResetCommands(gameId) {
         }
     } else if (gameId === 'death_race') {
         commands.push(
-            'gamerule doMobSpawning false',
-            'difficulty peaceful',
+            'gamerule doMobSpawning true',
+            'difficulty normal',
+            'time set midnight',
             `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
             + `${maxX} ${ARENA.floorY - 3} ${maxZ} bedrock`,
             `fill ${minX} ${ARENA.floorY - 2} ${minZ} `
             + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
             `fill ${minX} ${ARENA.floorY} ${minZ} `
-            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`,
-            `fill ${ARENA.centerX - 4} ${ARENA.floorY} ${ARENA.centerZ - 4} `
-            + `${ARENA.centerX + 4} ${ARENA.floorY} ${ARENA.centerZ + 4} lava`
+            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
         );
+        addDeathRaceHazards(commands);
     } else {
         commands.push(
             `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
@@ -383,6 +413,9 @@ function buildParticipantCommands(gameId, participants) {
         );
         if (gameId === 'dog_race') {
             commands.push(buildDogRaceResetCommand(name));
+        }
+        if (gameId === 'death_race') {
+            commands.push(`effect give ${name} weakness infinite 255 true`);
         }
         for (const item of GAME_KITS[gameId] || []) {
             commands.push(`give ${name} ${item}`);

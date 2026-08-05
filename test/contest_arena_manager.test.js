@@ -106,7 +106,7 @@ test('builds a blank tower arena with equal kits and no diamond ore', async () =
     }
 });
 
-test('builds a peaceful self-destruct arena with a lava hazard and no weapons', async () => {
+test('builds a varied self-destruct arena without a central lava shortcut', async () => {
     const commands = [];
     const manager = new ContestArenaManager({
         runCommand: async command => {
@@ -122,11 +122,19 @@ test('builds a peaceful self-destruct arena with a lava hazard and no weapons', 
         { spectators: [] }
     );
 
-    assert.ok(commands.some(command => command.endsWith(' lava')));
-    assert.ok(commands.includes('gamerule doMobSpawning false'));
-    assert.ok(commands.includes('difficulty peaceful'));
+    const lavaCommands = commands.filter(command => command.endsWith(' lava'));
+    assert.equal(lavaCommands.length, 1);
+    assert.match(lavaCommands[0], /100024 100 100024 100027 100 100027 lava$/);
+    assert.ok(commands.some(command => command.endsWith(' water')));
+    assert.ok(commands.some(command => command.includes(' ladder[')));
+    assert.ok(commands.some(command => command.endsWith(' cactus')));
+    assert.ok(commands.some(command => command.endsWith(' gravel')));
+    assert.ok(commands.includes('gamerule doMobSpawning true'));
+    assert.ok(commands.includes('difficulty normal'));
+    assert.ok(commands.includes('time set midnight'));
     for (const name of ['alice', 'bob']) {
         assert.ok(commands.includes(`clear ${name}`));
+        assert.ok(commands.includes(`effect give ${name} weakness infinite 255 true`));
         assert.equal(
             commands.some(command => command.startsWith(`give ${name} `)),
             false

@@ -61,6 +61,8 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(deathRace.metadata.pvp, false);
     assert.match(deathRace.prompt, /cause your own death/i);
     assert.match(deathRace.prompt, /survival instincts are disabled/i);
+    assert.match(deathRace.prompt, /no prescribed solution/i);
+    assert.doesNotMatch(deathRace.prompt, /lava pit/i);
     assert.match(deathRace.prompt, /ends automatically/i);
 
     const diamonds = getContestGamePreset('diamond_race');
