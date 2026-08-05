@@ -18,6 +18,7 @@ export function validateGameParticipants(participants, profiles, existingNames =
         const name = String(participant?.name || '').trim();
         const profileId = String(participant?.profileId || '').trim();
         const voice = String(participant?.voice || '').trim();
+        const systemPrompt = String(participant?.systemPrompt || '').trim();
         if (!AGENT_NAME_PATTERN.test(name)) {
             throw new Error(`Participant ${index + 1} name must be 3-16 letters, numbers, or underscores`);
         }
@@ -34,11 +35,15 @@ export function validateGameParticipants(participants, profiles, existingNames =
         if (voice.length > 128) {
             throw new Error(`Participant ${index + 1} voice must be 128 characters or fewer`);
         }
+        if (systemPrompt.length > 4000) {
+            throw new Error(`Participant ${index + 1} system prompt must be 4000 characters or fewer`);
+        }
         selectedNames.add(name);
         return {
             name,
             profileId,
             voice: voice || null,
+            systemPrompt,
             model: catalogProfile.model,
             provider: catalogProfile.provider,
             profile: clone(catalogProfile.profile),
@@ -125,10 +130,11 @@ export class GameSessionManager {
                 gameSession: {
                     temporary: true,
                     systemPrompt,
-                    participants: participants.map(({ name, profileId, voice, model, provider }) => ({
+                    participants: participants.map(({ name, profileId, voice, systemPrompt, model, provider }) => ({
                         name,
                         profileId,
                         voice,
+                        systemPrompt,
                         model,
                         provider,
                     })),
@@ -143,10 +149,11 @@ export class GameSessionManager {
             title: preset.title,
             status: 'provisioning',
             participantIds,
-            participants: participants.map(({ name, profileId, voice, model, provider }) => ({
+            participants: participants.map(({ name, profileId, voice, systemPrompt, model, provider }) => ({
                 name,
                 profileId,
                 voice,
+                systemPrompt,
                 model,
                 provider,
             })),
@@ -163,6 +170,14 @@ export class GameSessionManager {
                 profile.speak_model = participant.voice
                     ? { api: 'elevenlabs', voice: participant.voice }
                     : 'elevenlabs';
+                if (preset.rules?.type === 'death_race') {
+                    profile.modes = {
+                        ...(profile.modes || {}),
+                        self_preservation: false,
+                        cowardice: false,
+                        self_defense: false,
+                    };
+                }
                 const settings = this.buildAgentSettings(profile, {
                     contestId: contest.id,
                     sessionId: this.active.sessionId,
@@ -173,6 +188,7 @@ export class GameSessionManager {
                     model: participant.model,
                     provider: participant.provider,
                     systemPrompt,
+                    personalityPrompt: participant.systemPrompt,
                     winItem: preset.rules?.winItem ?? null,
                     contestType: preset.rules?.type ?? null,
                 });

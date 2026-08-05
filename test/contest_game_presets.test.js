@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    CONTEST_BOT_CHARACTERS,
     getContestGamePreset,
     listContestGamePresets,
 } from '../src/mindcraft/contest/game_presets.js';
@@ -27,13 +28,11 @@ test('lists the starter contest games for the UI', () => {
         name: 'narrator',
         voice: 'Narrator',
     });
-    assert.deepEqual(tower.defaultCharacters, [
-        {
-            name: 'billy',
-            voice: 'Giggles',
-            profileId: 'gpt-5-6-luna-instant',
-        },
-    ]);
+    assert.deepEqual(
+        tower.defaultCharacters,
+        CONTEST_BOT_CHARACTERS.map(character => ({ ...character }))
+    );
+    assert.equal(tower.defaultCharacters.length, 4);
 });
 
 test('contest presets include game-specific rules and judge metrics', () => {
@@ -49,8 +48,9 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(deathRace.rules.type, 'death_race');
     assert.equal(deathRace.rules.scoring, 'first-death-wins');
     assert.equal(deathRace.rules.metrics[0].direction, 'minimize');
-    assert.equal(deathRace.metadata.pvp, true);
-    assert.match(deathRace.prompt, /first competitor to die/i);
+    assert.equal(deathRace.metadata.pvp, false);
+    assert.match(deathRace.prompt, /cause your own death/i);
+    assert.match(deathRace.prompt, /survival instincts are disabled/i);
     assert.match(deathRace.prompt, /ends automatically/i);
 
     const diamonds = getContestGamePreset('diamond_race');

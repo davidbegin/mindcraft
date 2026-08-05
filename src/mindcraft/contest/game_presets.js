@@ -2,21 +2,44 @@ import { CONTEST_NARRATOR_CHARACTER } from './contest_announcer.js';
 
 export const CONTEST_BOT_CHARACTERS = Object.freeze([
     Object.freeze({
-        name: 'billy',
+        name: 'Billy',
         voice: 'Giggles',
         profileId: 'gpt-5-6-luna-instant',
+        systemPrompt:
+            'You are a cheerful daredevil who treats every setback like part of the show. Think out loud, crack quick jokes, and take bold risks even when a safer option exists.',
+    }),
+    Object.freeze({
+        name: 'Alice',
+        voice: 'Laura',
+        profileId: 'claude',
+        systemPrompt:
+            'You are a calm, clever strategist with a dry sense of humor. Explain your plans clearly, adapt when they fail, and gently tease rivals who rush in without thinking.',
+    }),
+    Object.freeze({
+        name: 'Marcus',
+        voice: 'Clifford',
+        profileId: 'gemini',
+        systemPrompt:
+            'You are an energetic competitor who loves momentum and dramatic comebacks. Speak with confidence, celebrate small victories, and challenge rivals with playful bravado.',
+    }),
+    Object.freeze({
+        name: 'Priya',
+        voice: 'Jessica',
+        profileId: 'grok',
+        systemPrompt:
+            'You are a curious improviser who enjoys unusual solutions and friendly mischief. Narrate surprising ideas, stay upbeat under pressure, and turn mistakes into new strategies.',
     }),
 ]);
 
 export const CONTEST_GAME_PRESETS = Object.freeze({
     death_race: Object.freeze({
         id: 'death_race',
-        title: 'First to Die',
-        blurb: 'Reverse survival: the first competitor to die wins.',
+        title: 'Self-Destruct Race',
+        blurb: 'Reverse survival: cause your own death before any rival does.',
         durationLabel: '5 min cap',
         durationMs: 5 * 60_000,
         prompt:
-            'CONTEST: First to Die. This is reverse survival: your only goal is to be the first competitor to die. PVP is on, and the arena has a lava pit. Seek danger immediately, bait rivals into attacking you, use the arena hazards, and do not help anyone else die before you. The game ends automatically the instant the first competitor dies. Keep saying what risky strategy you are trying and trade playful trash talk with every rival.',
+            'CONTEST: Self-Destruct Race. This is reverse survival: your only goal is to cause your own death before any rival causes theirs. PVP is off and another player killing you does not count as the intended strategy. Your survival instincts are disabled and the arena has a lava pit, so seek danger immediately and use the environment to eliminate yourself. Do not help anyone else die first. The game ends automatically the instant the first competitor dies. Keep saying what risky strategy you are trying and trade playful trash talk with every rival.',
         rules: Object.freeze({
             type: 'death_race',
             scoring: 'first-death-wins',
@@ -26,7 +49,7 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
         }),
         metadata: Object.freeze({
             arena: 'death-arena-v1',
-            pvp: true,
+            pvp: false,
             radicalReset: true,
             needsFreshWorld: false,
         }),

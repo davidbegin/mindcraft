@@ -43,7 +43,7 @@ const preset = {
     title: 'Tower',
     prompt: 'Build the tallest tower.',
     durationMs: 60_000,
-    rules: { metrics: [], winItem: 'diamond' },
+    rules: { type: 'diamond_race', metrics: [], winItem: 'diamond' },
     metadata: {},
 };
 
@@ -122,6 +122,7 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         assert.deepEqual(createdSettings.game_session.participantIds, ['speedy', 'thinker']);
         assert.deepEqual(createdSettings.game_session.rivalIds, ['thinker']);
         assert.equal(createdSettings.game_session.winItem, 'diamond');
+        assert.equal(createdSettings.game_session.contestType, 'diamond_race');
         assert.equal(createdSettings.game_session.voice, 'Trickster');
         assert.equal(createdSettings.profile.name, 'speedy');
         assert.deepEqual(createdSettings.profile.speak_model, {
@@ -158,6 +159,37 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         const announceResultIndex = calls.findIndex(([type]) => type === 'announce-result');
         assert.ok(announceResultIndex < stopIndex, 'winner is announced before recording stops');
         assert.ok(stopIndex < destroyIndex, 'recording stops before temporary agents are destroyed');
+    });
+});
+
+test('disables survival instincts for self-destruct race agents', async () => {
+    const deathPreset = {
+        ...preset,
+        id: 'death_race',
+        title: 'Self-Destruct Race',
+        rules: {
+            type: 'death_race',
+            metrics: [{ path: 'elapsedMs', direction: 'minimize' }],
+        },
+    };
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'death_race',
+            participants: [{ profileId: 'fast', name: 'speedy' }],
+        });
+
+        const settings = calls.find(([type]) => type === 'create')[1];
+        assert.equal(settings.game_session.contestType, 'death_race');
+        assert.deepEqual(settings.profile.modes, {
+            self_preservation: false,
+            cowardice: false,
+            self_defense: false,
+        });
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        getPreset: () => deathPreset,
     });
 });
 

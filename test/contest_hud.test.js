@@ -209,6 +209,38 @@ test('celebrates an automatic dog-race winner', async () => {
     assert.ok(commands.some(command => command.includes('1. alice — dog tamed')));
 });
 
+test('celebrates the first competitor to die', async () => {
+    const commands = [];
+    const contest = runningContest({
+        title: 'First to Die',
+        rules: { type: 'death_race', scoring: 'first-death-wins' },
+    });
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: async command => commands.push(command),
+    });
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    commands.length = 0;
+
+    const completed = {
+        ...contest,
+        status: 'completed',
+        winnerIds: ['bob'],
+        results: [
+            { participantId: 'bob', score: -9_000, rank: 1 },
+            { participantId: 'alice', score: 0, rank: null, disqualified: true },
+        ],
+    };
+    assert.equal(formatContestScore(completed, completed.results[0]), 'died first');
+    await hud.sync({ activeContest: null, contests: [completed] });
+
+    assert.ok(commands.some(command =>
+        command.includes('title @a title {"text":"FIRST DEATH!","color":"red"')
+    ));
+    assert.ok(commands.some(command => command.includes('"bob WINS!"')));
+    assert.ok(commands.some(command => command.includes('1. bob — died first')));
+});
+
 test('cleans up the HUD and explains cancellation', async () => {
     const commands = [];
     const contest = runningContest();

@@ -21,9 +21,7 @@ const DEPTH_RACE_KIT = Object.freeze([
 ]);
 
 const GAME_KITS = Object.freeze({
-    death_race: Object.freeze([
-        'wooden_sword 1',
-    ]),
+    death_race: Object.freeze([]),
     dog_race: Object.freeze([
         'stone_sword 1',
         'bread 16',
@@ -331,6 +329,8 @@ function buildWorldResetCommands(gameId) {
         }
     } else if (gameId === 'death_race') {
         commands.push(
+            'gamerule doMobSpawning false',
+            'difficulty peaceful',
             `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
             + `${maxX} ${ARENA.floorY - 3} ${maxZ} bedrock`,
             `fill ${minX} ${ARENA.floorY - 2} ${minZ} `

@@ -106,6 +106,34 @@ test('builds a blank tower arena with equal kits and no diamond ore', async () =
     }
 });
 
+test('builds a peaceful self-destruct arena with a lava hazard and no weapons', async () => {
+    const commands = [];
+    const manager = new ContestArenaManager({
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') return listReply(['alice', 'bob']);
+            return 'ok';
+        },
+    });
+
+    await manager.prepare(
+        getContestGamePreset('death_race'),
+        ['alice', 'bob'],
+        { spectators: [] }
+    );
+
+    assert.ok(commands.some(command => command.endsWith(' lava')));
+    assert.ok(commands.includes('gamerule doMobSpawning false'));
+    assert.ok(commands.includes('difficulty peaceful'));
+    for (const name of ['alice', 'bob']) {
+        assert.ok(commands.includes(`clear ${name}`));
+        assert.equal(
+            commands.some(command => command.startsWith(`give ${name} `)),
+            false
+        );
+    }
+});
+
 test('builds a deep enclosed mine with equal depth-race kits', async () => {
     const commands = [];
     const manager = new ContestArenaManager({
