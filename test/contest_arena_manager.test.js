@@ -106,6 +106,66 @@ test('builds a blank tower arena with equal kits and no diamond ore', async () =
     }
 });
 
+test('builds a deep enclosed mine with equal depth-race kits', async () => {
+    const commands = [];
+    const manager = new ContestArenaManager({
+        runCommand: command => {
+            commands.push(command);
+            return Promise.resolve(
+                command === 'list' ? listReply(['alice', 'bob']) : 'ok'
+            );
+        },
+    });
+
+    await manager.prepare(
+        getContestGamePreset('deepest_2_5'),
+        ['alice', 'bob'],
+        { spectators: [] }
+    );
+
+    assert.ok(commands.some(command => command.endsWith(' deepslate')));
+    assert.ok(commands.some(command => command.includes('-64') && command.endsWith(' bedrock')));
+    assert.ok(commands.includes('difficulty peaceful'));
+    for (const name of ['alice', 'bob']) {
+        assert.ok(commands.includes(`give ${name} diamond_pickaxe 1`));
+        assert.ok(commands.includes(`give ${name} ladder 128`));
+        assert.ok(commands.includes(`give ${name} torch 64`));
+    }
+});
+
+test('builds a dog forest that requires finding bones and taming a wolf', async () => {
+    const commands = [];
+    const manager = new ContestArenaManager({
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') return listReply(['alice', 'bob']);
+            return 'ok';
+        },
+    });
+
+    await manager.prepare(
+        getContestGamePreset('dog_race'),
+        ['alice', 'bob'],
+        { spectators: [] }
+    );
+
+    assert.ok(commands.some(command => command.startsWith('summon wolf ')));
+    assert.ok(commands.some(command => command.startsWith('summon skeleton ')));
+    assert.ok(commands.some(command => command.includes(' spruce_log')));
+    assert.ok(commands.some(command => command.includes(' spruce_leaves')));
+    assert.ok(commands.includes('time set midnight'));
+    for (const name of ['alice', 'bob']) {
+        assert.ok(commands.includes(`give ${name} stone_sword 1`));
+        assert.ok(commands.includes(
+            `advancement revoke ${name} only minecraft:husbandry/tame_an_animal`
+        ));
+        assert.equal(
+            commands.some(command => command.startsWith(`give ${name} bone`)),
+            false
+        );
+    }
+});
+
 test('rejects unsafe player names before issuing server commands', async () => {
     let commandCount = 0;
     const manager = new ContestArenaManager({

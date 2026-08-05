@@ -32,6 +32,13 @@ test('formats the countdown and game-specific scores', () => {
         formatContestBossbar(contest, { participantId: 'alice', score: 23 }, 10_000),
         'Tallest Tower · 1:00 · Leader: alice (23 blocks)'
     );
+    assert.equal(
+        formatContestScore(
+            runningContest({ rules: { type: 'depth_race' } }),
+            { score: 40.5 }
+        ),
+        '40.5 blocks deep'
+    );
 });
 
 test('announces a game and maintains a bossbar with timer and leader', async () => {
@@ -168,6 +175,38 @@ test('celebrates an automatic netherite-race winner', async () => {
     ));
     assert.ok(commands.some(command => command.includes('"bob WINS!"')));
     assert.ok(commands.some(command => command.includes('1. bob — netherite forged')));
+});
+
+test('celebrates an automatic dog-race winner', async () => {
+    const commands = [];
+    const contest = runningContest({
+        title: 'First Dog',
+        rules: { type: 'dog_race', winEntity: 'wolf' },
+    });
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: async command => commands.push(command),
+    });
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    commands.length = 0;
+
+    const completed = {
+        ...contest,
+        status: 'completed',
+        winnerIds: ['alice'],
+        results: [
+            { participantId: 'alice', score: -15_000, rank: 1 },
+            { participantId: 'bob', score: 0, rank: null, disqualified: true },
+        ],
+    };
+    assert.equal(formatContestScore(completed, completed.results[0]), 'dog tamed');
+    await hud.sync({ activeContest: null, contests: [completed] });
+
+    assert.ok(commands.some(command =>
+        command.includes('title @a title {"text":"DOG TAMED!","color":"gold"')
+    ));
+    assert.ok(commands.some(command => command.includes('"alice WINS!"')));
+    assert.ok(commands.some(command => command.includes('1. alice — dog tamed')));
 });
 
 test('cleans up the HUD and explains cancellation', async () => {

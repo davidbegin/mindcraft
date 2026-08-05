@@ -3,6 +3,11 @@ import { runMinecraftCommand } from '../minecraft_server.js';
 const BOSSBAR_ID = 'mindcraft:contest';
 const ALL_PLAYERS = '@a';
 const ITEM_RACE_PRESENTATIONS = Object.freeze({
+    dog_race: Object.freeze({
+        score: 'dog tamed',
+        winnerLabel: 'DOG TAMED!',
+        titleColor: 'gold',
+    }),
     diamond_race: Object.freeze({
         score: 'diamond found',
         winnerLabel: 'DIAMOND FOUND!',
@@ -30,6 +35,12 @@ export function formatContestScore(contest, result) {
     if (!result || !Number.isFinite(result.score)) return '';
     if (contest.rules?.type === 'tower_battle') {
         return `${result.score} blocks`;
+    }
+    if (contest.rules?.type === 'depth_race') {
+        const depth = Number.isInteger(result.score)
+            ? result.score
+            : result.score.toFixed(1);
+        return `${depth} blocks deep`;
     }
     const itemRace = ITEM_RACE_PRESENTATIONS[contest.rules?.type];
     if (itemRace) return itemRace.score;

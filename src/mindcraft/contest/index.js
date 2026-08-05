@@ -10,6 +10,12 @@ export {
 export { TowerHighScoreStore } from './tower_high_scores.js';
 export { ContestLoop } from './contest_loop.js';
 export {
+    CONTEST_NARRATOR_CHARACTER,
+    ContestAnnouncer,
+    buildContestResultAnnouncement,
+    buildContestStartAnnouncement,
+} from './contest_announcer.js';
+export {
     ContestHud,
     formatContestBossbar,
     formatContestScore,
@@ -21,6 +27,18 @@ export {
     getContestGamePreset,
     listContestGamePresets,
 } from './game_presets.js';
+export {
+    DOG_TAMING_ADVANCEMENT,
+    buildDogRaceProbeCommand,
+    buildDogRaceResetCommand,
+    dogTamingAdvancementEarned,
+    findDogRaceWinner,
+} from './dog_race.js';
+export {
+    buildDepthProbeCommand,
+    parsePlayerY,
+    scoreDepthRace,
+} from './depth_race.js';
 export {
     ContestArenaManager,
     getArenaJoinInfo,

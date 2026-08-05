@@ -78,6 +78,14 @@ async function withManager(run, overrides = {}) {
             },
             stopRecording: async contestId => calls.push(['record-stop', contestId]),
             sendDirective: async (name, prompt) => calls.push(['directive', name, prompt]),
+            announceStart: contest => {
+                calls.push(['announce-start', contest.id]);
+                return Promise.resolve();
+            },
+            announceResult: contest => {
+                calls.push(['announce-result', contest.id, contest.winnerIds]);
+                return Promise.resolve();
+            },
             ...overrides,
         });
         await run({ manager, coordinator, calls });
@@ -101,6 +109,9 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         assert.equal(result.contest.status, 'running');
         assert.equal(result.contest.durationMs, 150_000);
         assert.equal(manager.view().recording.enabled, true);
+        const announceStartIndex = calls.findIndex(([type]) => type === 'announce-start');
+        const directiveIndex = calls.findIndex(([type]) => type === 'directive');
+        assert.ok(announceStartIndex < directiveIndex, 'countdown finishes before directives are sent');
         assert.deepEqual(
             calls.filter(([type]) => type === 'directive').map(([, name]) => name),
             ['speedy', 'thinker']
@@ -144,6 +155,8 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         );
         const stopIndex = calls.findIndex(([type]) => type === 'record-stop');
         const destroyIndex = calls.findIndex(([type]) => type === 'destroy');
+        const announceResultIndex = calls.findIndex(([type]) => type === 'announce-result');
+        assert.ok(announceResultIndex < stopIndex, 'winner is announced before recording stops');
         assert.ok(stopIndex < destroyIndex, 'recording stops before temporary agents are destroyed');
     });
 });

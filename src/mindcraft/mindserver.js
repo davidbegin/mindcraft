@@ -15,7 +15,9 @@ import {
 import { TTSConfig as elevenLabsTTSConfig } from '../models/elevenlabs.js';
 import { ColonyCoordinator } from './colony/colony_coordinator.js';
 import {
+    CONTEST_NARRATOR_CHARACTER,
     ContestArenaManager,
+    ContestAnnouncer,
     ContestCoordinator,
     ContestHud,
     ContestLoop,
@@ -25,9 +27,11 @@ import {
     buildGameSystemPrompt,
     defaultJudge,
     filterRecordingManifest,
+    findDogRaceWinner,
     getArenaJoinInfo,
     getContestGamePreset,
     listContestGamePresets,
+    scoreDepthRace,
     scoreTowerBattle,
     serializeRecordingManifest,
 } from './contest/index.js';
@@ -66,10 +70,14 @@ let contestReady = null;
 let contestLoop = null;
 let gameSessionManager = null;
 let towerHighScores = null;
+let liveTowerAtlas = null;
 const contestArenaManager = new ContestArenaManager();
 const contestHud = new ContestHud({ getLeader: getContestLeader });
 const contestRecordingManager = new ContestRecordingManager({
     requestAgent: requestContestRecordingCommand,
+});
+const contestAnnouncer = new ContestAnnouncer({
+    speak: speakContestAnnouncement,
 });
 
 // Circuit breaker for non-retryable model provider failures (exhausted credits, revoked
@@ -218,6 +226,7 @@ function emitContestUpdate(socket = io) {
             ...contestCoordinator.view(),
             gameSession: gameSessionManager?.view() ?? null,
             towerHighScores: towerHighScores?.list() ?? [],
+            towerAtlas: liveTowerAtlas,
         });
     }
 }
@@ -262,12 +271,23 @@ async function ensureContest(options) {
                 startRecording: options => contestRecordingManager.start(options),
                 stopRecording: contestId => contestRecordingManager.stop(contestId),
                 sendDirective: sendGameDirective,
+                announceStart: contest => contestAnnouncer.announceStart(contest),
+                announceResult: contest => contestAnnouncer.announceResult(contest),
                 onUpdate: () => emitContestUpdate(),
             });
             contestLoop = new ContestLoop({
                 coordinator,
                 intervalMs: resolved.tick_interval_ms ?? 1000,
-                onTick: view => contestHud.sync(view),
+                onTick: async view => {
+                    const completed = await detectDogRaceWinner(view);
+                    if (!completed) {
+                        await Promise.all([
+                            contestHud.sync(view),
+                            refreshLiveTowerAtlas(view),
+                        ]);
+                        io?.emit('tower-atlas-update', liveTowerAtlas);
+                    }
+                },
                 onUpdate: async view => {
                     await recordTowerHighScores(view);
                     emitContestUpdate();
@@ -370,15 +390,39 @@ function sendGameDirective(agentName, prompt) {
     });
 }
 
-function requestGameTowerReport(agentName) {
+async function speakContestAnnouncement(text) {
+    const audio = await elevenLabsTTSConfig.sendAudioRequest(
+        text,
+        getVoicesConfig().elevenlabs_model,
+        resolveVoice(CONTEST_NARRATOR_CHARACTER.name, CONTEST_NARRATOR_CHARACTER.voice),
+        elevenLabsTTSConfig.baseUrl
+    );
+    const sessionId = gameSessionManager?.view()?.sessionId;
+    if (sessionId) {
+        broadcastContestSessionRecordingAudio(sessionId, {
+            sessionId,
+            speaker: CONTEST_NARRATOR_CHARACTER.name,
+            audio,
+            atMs: Date.now(),
+        });
+    }
+    dispatchBotVoice({
+        agentName: CONTEST_NARRATOR_CHARACTER.name,
+        text,
+        audio,
+    });
+}
+
+function requestGameTowerReport(agentName, options = {}) {
+    const { timeoutMs = 20000, warn = true } = options;
     const connection = agent_connections[agentName];
     if (!connection?.socket || !connection.in_game) {
         return Promise.resolve(null);
     }
     return new Promise(resolve => {
-        connection.socket.timeout(20000).emit('game-tower-report', (error, result) => {
+        connection.socket.timeout(timeoutMs).emit('game-tower-report', (error, result) => {
             if (error || !result?.success) {
-                console.warn(
+                if (warn) console.warn(
                     `Could not measure tower for ${agentName}: `
                     + (error ? 'timed out' : result?.error || 'unknown error')
                 );
@@ -390,14 +434,71 @@ function requestGameTowerReport(agentName) {
     });
 }
 
-async function collectTowerReports(participantIds) {
-    const reports = await Promise.all(participantIds.map(requestGameTowerReport));
+async function collectTowerReports(participantIds, options) {
+    const reports = await Promise.all(
+        participantIds.map(participantId => requestGameTowerReport(participantId, options))
+    );
     return reports
         .map((report, index) => report && {
             ...report,
             participantId: participantIds[index],
         })
         .filter(Boolean);
+}
+
+function measureDepthRace(contest) {
+    return scoreDepthRace({
+        participantIds: contest.participantIds,
+        runCommand: runMinecraftCommand,
+        startY: contest.rules.startY,
+    });
+}
+
+async function refreshLiveTowerAtlas(view) {
+    const contest = view?.activeContest;
+    if (
+        !contest
+        || contest.status !== 'running'
+        || contest.rules?.type !== 'tower_battle'
+    ) {
+        liveTowerAtlas = null;
+        return null;
+    }
+
+    const floorY = getArenaJoinInfo().arena.center.y;
+    const reports = await collectTowerReports(contest.participantIds, {
+        timeoutMs: 750,
+        warn: false,
+    });
+    const reportingParticipants = new Set(reports.map(report => report.participantId));
+    const scored = scoreTowerBattle({
+        reports,
+        floorY,
+        participantIds: contest.participantIds,
+    }).sort((left, right) =>
+        right.score - left.score || left.participantId.localeCompare(right.participantId)
+    );
+    let previousScore = null;
+    let previousRank = 0;
+    liveTowerAtlas = {
+        contestId: contest.id,
+        floorY,
+        updatedAt: Date.now(),
+        standings: scored.map((result, index) => {
+            const rank = result.score === previousScore ? previousRank : index + 1;
+            previousScore = result.score;
+            previousRank = rank;
+            return {
+                participantId: result.participantId,
+                height: result.details?.towerHeight ?? result.score ?? 0,
+                blocksStanding: result.details?.blocksStanding ?? 0,
+                measuredFrom: result.details?.measuredFrom ?? 'no-tower',
+                reporting: reportingParticipants.has(result.participantId),
+                rank,
+            };
+        }),
+    };
+    return liveTowerAtlas;
 }
 
 async function getContestLeader(contest) {
@@ -410,6 +511,9 @@ async function getContestLeader(contest) {
             floorY,
             participantIds: contest.participantIds,
         }).filter(result => result.score > 0);
+    } else if (contest.rules?.type === 'depth_race') {
+        results = (await measureDepthRace(contest))
+            .filter(result => !result.disqualified);
     } else {
         results = defaultJudge(contest).filter(result => !result.disqualified);
     }
@@ -424,22 +528,49 @@ async function getContestLeader(contest) {
     };
 }
 
+async function detectDogRaceWinner(view) {
+    const contest = view?.activeContest;
+    const participantId = await findDogRaceWinner(contest, runMinecraftCommand);
+    if (!participantId) return false;
+
+    const current = contestCoordinator?.snapshot().contests[contest.id];
+    if (current?.status !== 'running' || contestCoordinator.snapshot().activeContestId !== contest.id) {
+        return false;
+    }
+    await contestCoordinator.declareWinner(contest.id, participantId, {
+        goal: 'tamed_wolf',
+        advancement: contest.rules.winAdvancement,
+        elapsedMs: Date.now() - current.startedAt,
+    });
+    const completedView = contestCoordinator.view();
+    await contestHud.sync(completedView);
+    emitContestUpdate();
+    if (gameSessionManager?.view()?.contestId === contest.id) {
+        await gameSessionManager.syncWithContestView(completedView);
+    } else {
+        await contestRecordingManager.stop(contest.id);
+    }
+    return true;
+}
+
 /**
- * Tower battle winners are measured from what is standing in the arena when the
- * clock runs out, so a bot that builds and never announces it still wins.
+ * Timed spatial games are measured from the world when the clock runs out, so
+ * bots do not need to stop playing to submit a result.
  */
 async function judgeContest(contest) {
-    if (contest.rules?.type !== 'tower_battle') {
-        return defaultJudge(contest);
+    if (contest.rules?.type === 'depth_race') {
+        return measureDepthRace(contest);
     }
-    const floorY = getArenaJoinInfo().arena.center.y;
-    const reports = await collectTowerReports(contest.participantIds);
-    const results = scoreTowerBattle({
-        reports,
-        floorY,
-        participantIds: contest.participantIds,
-    });
-    return results;
+    if (contest.rules?.type === 'tower_battle') {
+        const floorY = getArenaJoinInfo().arena.center.y;
+        const reports = await collectTowerReports(contest.participantIds);
+        return scoreTowerBattle({
+            reports,
+            floorY,
+            participantIds: contest.participantIds,
+        });
+    }
+    return defaultJudge(contest);
 }
 
 function requestContestRecordingCommand(agentName, event, options) {
@@ -1110,7 +1241,17 @@ export function createMindServer(host_public = false, port = 8080) {
 
     // Serve static files
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    app.use(express.static(path.join(__dirname, 'public')));
+    const publicDir = path.join(__dirname, 'public');
+    const indexHtml = path.join(publicDir, 'index.html');
+    // index: false so `/` can redirect to `/colony` instead of silently serving index.html
+    app.use(express.static(publicDir, { index: false }));
+    // Client-side views share index.html; each has a real URL for copy/share/reload.
+    app.get(['/colony', '/games'], (_req, res) => {
+        res.sendFile(indexHtml);
+    });
+    app.get('/', (_req, res) => {
+        res.redirect(302, '/colony');
+    });
     // Serve bot data (POV recordings, screenshots) so the UI can play/download them
     app.use('/bots', express.static(path.join(projectRoot, 'bots')));
     // Generated bot skins (same /skins path the MC container sees them under)
@@ -1221,6 +1362,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     data: contestCoordinator ? {
                         ...contestCoordinator.view(),
                         gameSession: gameSessionManager?.view() ?? null,
+                        towerAtlas: liveTowerAtlas,
                     } : null,
                     games: listContestGamePresets(),
                     join: getMinecraftJoinInfo(),
@@ -1909,7 +2051,11 @@ function rememberUtterance(id, utterance) {
 function broadcastContestRecordingAudio(sourceConnection, payload) {
     const sessionId = sourceConnection?.settings?.game_session?.sessionId;
     if (!sessionId || payload?.sessionId !== sessionId || !payload.audio) return;
+    broadcastContestSessionRecordingAudio(sessionId, payload);
+}
 
+function broadcastContestSessionRecordingAudio(sessionId, payload) {
+    if (!sessionId || payload?.sessionId !== sessionId || !payload.audio) return;
     for (const connection of Object.values(agent_connections)) {
         if (connection.settings?.game_session?.sessionId !== sessionId) continue;
         if (!connection.socket?.connected) continue;

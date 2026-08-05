@@ -1,3 +1,5 @@
+import { CONTEST_NARRATOR_CHARACTER } from './contest_announcer.js';
+
 export const CONTEST_BOT_CHARACTERS = Object.freeze([
     Object.freeze({
         name: 'billy',
@@ -7,6 +9,29 @@ export const CONTEST_BOT_CHARACTERS = Object.freeze([
 ]);
 
 export const CONTEST_GAME_PRESETS = Object.freeze({
+    dog_race: Object.freeze({
+        id: 'dog_race',
+        title: 'First Dog',
+        blurb: 'Explore the forest, obtain bones, find a wolf, and tame it first.',
+        durationLabel: '20 min cap',
+        durationMs: 20 * 60_000,
+        prompt:
+            'CONTEST: First Dog. Your only goal is to become the first competitor to tame a wolf and get a dog. Explore the forest, obtain what you need through normal survival gameplay, find a wolf, and successfully tame it. You start without bones and must complete the real survival steps yourself. The game ends automatically the instant the first wolf is tamed. Do not help rivals. Move fast, keep saying what you are trying, and trade playful trash talk with every rival.',
+        rules: Object.freeze({
+            type: 'dog_race',
+            winAdvancement: 'minecraft:husbandry/tame_an_animal',
+            winEntity: 'wolf',
+            metrics: Object.freeze([
+                Object.freeze({ path: 'elapsedMs', weight: 1, direction: 'minimize' }),
+            ]),
+        }),
+        metadata: Object.freeze({
+            arena: 'dog-forest-v1',
+            pvp: false,
+            radicalReset: true,
+            needsFreshWorld: true,
+        }),
+    }),
     diamond_race: Object.freeze({
         id: 'diamond_race',
         title: 'First Diamond',
@@ -71,6 +96,46 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
             needsFreshWorld: false,
         }),
     }),
+    deepest_2_5: Object.freeze({
+        id: 'deepest_2_5',
+        title: 'Deepest Wins — 2:30',
+        blurb: 'Dig as deep as possible before the short timer expires.',
+        durationLabel: '2 min 30 sec',
+        durationMs: 2.5 * 60_000,
+        prompt:
+            'CONTEST: Deepest Wins. You have 2 minutes and 30 seconds to get as deep underground as possible. Your Y-coordinate is measured automatically when the timer expires, and the competitor at the lowest Y-coordinate wins. You start at Y=101 above a solid mining field with a diamond pickaxe, ladders, torches, and food. Nothing is submitted: keep digging and make sure you are alive and as low as possible at the buzzer. Do not help rivals. Keep saying what digging strategy you are using and trade playful trash talk with every rival.',
+        rules: Object.freeze({
+            type: 'depth_race',
+            scoring: 'lowest-y-at-deadline',
+            startY: 101,
+        }),
+        metadata: Object.freeze({
+            arena: 'depth-mine-v1',
+            pvp: false,
+            radicalReset: true,
+            needsFreshWorld: true,
+        }),
+    }),
+    deepest_5: Object.freeze({
+        id: 'deepest_5',
+        title: 'Deepest Wins — 5:00',
+        blurb: 'Dig as deep as possible before the five-minute timer expires.',
+        durationLabel: '5 min',
+        durationMs: 5 * 60_000,
+        prompt:
+            'CONTEST: Deepest Wins. You have 5 minutes to get as deep underground as possible. Your Y-coordinate is measured automatically when the timer expires, and the competitor at the lowest Y-coordinate wins. You start at Y=101 above a solid mining field with a diamond pickaxe, ladders, torches, and food. Nothing is submitted: keep digging and make sure you are alive and as low as possible at the buzzer. Do not help rivals. Keep saying what digging strategy you are using and trade playful trash talk with every rival.',
+        rules: Object.freeze({
+            type: 'depth_race',
+            scoring: 'lowest-y-at-deadline',
+            startY: 101,
+        }),
+        metadata: Object.freeze({
+            arena: 'depth-mine-v1',
+            pvp: false,
+            radicalReset: true,
+            needsFreshWorld: true,
+        }),
+    }),
 });
 
 export function listContestGamePresets() {
@@ -83,6 +148,7 @@ export function listContestGamePresets() {
         pvp: Boolean(preset.metadata?.pvp),
         radicalReset: Boolean(preset.metadata?.radicalReset),
         needsFreshWorld: Boolean(preset.metadata?.needsFreshWorld),
+        narrator: { ...CONTEST_NARRATOR_CHARACTER },
         defaultCharacters: CONTEST_BOT_CHARACTERS.map(character => ({ ...character })),
     }));
 }

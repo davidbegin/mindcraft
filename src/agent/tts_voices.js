@@ -5,6 +5,7 @@ import path from 'path';
 // the colony sounds like a cartoon ensemble rather than a newsroom. Every ID
 // was verified to generate with the account's API key.
 const VOICES = [
+    ['Narrator', 'nPczCjzI2devNBz1zQrb', 'deep booming game announcer'],
     ['Giggles', 'VE5rsMNTeE1frCCSXNIC', 'wacky cartoon goofball'],
     ['Sasquatch', 'a8p00hpqmTpR1cLnk76X', 'sassy Australian sasquatch'],
     ['Grimblewood', 'ouL9IsyrSnUkCmfnD02u', 'grumpy old gnome'],

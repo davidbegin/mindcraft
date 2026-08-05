@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Mindcraft Spy</title>
     <script src="/socket.io/socket.io.js"></script>
-    <script src="bot_voice.js"></script>
+    <script src="/bot_voice.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -145,17 +145,18 @@
             border: 1px solid var(--border);
         }
 
-        .view-nav button {
+        .view-nav a {
             padding: 6px 12px;
             border-radius: 8px;
             font-weight: 600;
+            text-decoration: none;
             font-size: 0.85rem;
             color: var(--text-dim);
         }
 
-        .view-nav button:hover { color: var(--text); }
+        .view-nav a:hover { color: var(--text); }
 
-        .view-nav button.active {
+        .view-nav a.active {
             background: var(--lime-dim);
             color: var(--lime);
             border: 1px solid rgba(159, 232, 112, 0.28);
@@ -1514,6 +1515,147 @@
             font-size: 0.95rem;
         }
 
+        .contest-live-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 260px;
+            gap: 16px;
+            align-items: start;
+        }
+
+        .contest-live-main { min-width: 0; }
+
+        .tower-atlas {
+            min-width: 0;
+            padding: 12px;
+            border-radius: 11px;
+            border: 1px solid rgba(94, 200, 192, 0.32);
+            background:
+                radial-gradient(circle at 50% 0%, rgba(94, 200, 192, 0.13), transparent 55%),
+                var(--bg-inset);
+        }
+
+        .tower-atlas[hidden] { display: none; }
+
+        .tower-atlas-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .tower-atlas-head strong {
+            color: var(--cyan);
+            font-size: 0.78rem;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+        }
+
+        .tower-atlas-head span {
+            color: var(--text-mute);
+            font-family: var(--mono);
+            font-size: 0.66rem;
+        }
+
+        .tower-skyline {
+            position: relative;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-around;
+            gap: 8px;
+            height: 150px;
+            padding: 12px 8px 0;
+            overflow: hidden;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background:
+                linear-gradient(rgba(94, 200, 192, 0.06) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(94, 200, 192, 0.06) 1px, transparent 1px),
+                linear-gradient(180deg, rgba(94, 200, 192, 0.08), rgba(0, 0, 0, 0.18));
+            background-size: 16px 16px, 16px 16px, auto;
+        }
+
+        .tower-skyline::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            height: 5px;
+            background: #65724f;
+            border-top: 1px solid #8f9e72;
+        }
+
+        .tower-column {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex: 1;
+            min-width: 24px;
+            max-width: 54px;
+            height: 100%;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+        }
+
+        .tower-height-label {
+            margin-bottom: 4px;
+            color: var(--text);
+            font: 700 0.72rem var(--mono);
+        }
+
+        .tower-bar {
+            width: min(30px, 80%);
+            min-height: 3px;
+            border: 1px solid color-mix(in srgb, var(--tower-color) 75%, white);
+            border-radius: 3px 3px 0 0;
+            box-shadow: 0 0 12px color-mix(in srgb, var(--tower-color) 28%, transparent);
+            background:
+                linear-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+                var(--tower-color);
+            background-size: 8px 8px;
+            transition: height 350ms ease;
+        }
+
+        .tower-atlas-list {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-top: 9px;
+        }
+
+        .tower-standing {
+            display: grid;
+            grid-template-columns: 24px minmax(0, 1fr) auto;
+            gap: 7px;
+            align-items: center;
+            color: var(--text-dim);
+            font: 0.72rem var(--mono);
+        }
+
+        .tower-standing.leader { color: var(--lime); }
+        .tower-standing-rank { color: var(--text-mute); }
+        .tower-standing-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .tower-standing-height { color: var(--text); font-weight: 700; }
+        .tower-report-dot {
+            display: inline-block;
+            width: 5px;
+            height: 5px;
+            margin-right: 5px;
+            border-radius: 50%;
+            background: var(--text-mute);
+        }
+        .tower-report-dot.live {
+            background: var(--lime);
+            box-shadow: 0 0 6px var(--lime);
+        }
+
         .contest-live-row {
             display: flex;
             flex-wrap: wrap;
@@ -1822,6 +1964,11 @@
             text-decoration: none;
         }
 
+        @media (max-width: 900px) {
+            .contest-live-layout { grid-template-columns: 1fr; }
+            .tower-atlas { max-width: none; }
+        }
+
         @media (max-width: 720px) {
             body { padding: 14px 12px 120px; }
             .card-top { grid-template-columns: 56px 1fr auto; }
@@ -1843,8 +1990,8 @@
             <span class="tag">spy</span>
         </div>
         <nav class="view-nav" aria-label="Main views">
-            <button type="button" id="viewColonyBtn" class="active" data-view="colony">Colony</button>
-            <button type="button" id="viewGamesBtn" data-view="games">Games</button>
+            <a href="/colony" id="viewColonyBtn" class="active" data-view="colony">Colony</a>
+            <a href="/games" id="viewGamesBtn" data-view="games">Games</a>
         </nav>
         <span id="msStatus" class="status-pill offline">mindserver offline</span>
         <div class="topbar-meta">
@@ -1897,19 +2044,31 @@
             <div id="gameGrid" class="game-grid"></div>
             <div id="contestLive" class="contest-live idle">
                 <h3 id="contestLiveTitle">No active contest</h3>
-                <div class="contest-live-row" id="contestLiveRow">
-                    Pick a game above and choose model profiles to start.
+                <div class="contest-live-layout">
+                    <div class="contest-live-main">
+                        <div class="contest-live-row" id="contestLiveRow">
+                            Pick a game above and choose model profiles to start.
+                        </div>
+                        <div id="contestParticipantChips" class="contest-participant-chips" hidden></div>
+                        <div id="gamePlayers" class="game-players" hidden></div>
+                        <div id="contestResults" class="contest-results" hidden></div>
+                        <div class="contest-live-row" style="margin-top:10px;">
+                            <button id="cancelContestBtn" class="btn btn-danger" hidden>Cancel contest</button>
+                            <button id="warpSpectatorsBtn" class="btn btn-ghost" hidden>Warp me to arena</button>
+                            <a id="watchLiveBtn" class="btn btn-primary contest-watch-link" hidden href="/live.html" target="_blank" rel="noopener">Watch Live</a>
+                            <button id="exportGameSessionBtn" class="btn btn-ghost" hidden>Export session</button>
+                        </div>
+                        <div id="contestStatusMsg" class="contest-status-msg"></div>
+                    </div>
+                    <aside id="towerAtlas" class="tower-atlas" aria-label="Live tower heights" aria-live="polite" hidden>
+                        <div class="tower-atlas-head">
+                            <strong>Tower Atlas</strong>
+                            <span id="towerAtlasUpdated">Live</span>
+                        </div>
+                        <div id="towerSkyline" class="tower-skyline"></div>
+                        <div id="towerAtlasList" class="tower-atlas-list"></div>
+                    </aside>
                 </div>
-                <div id="contestParticipantChips" class="contest-participant-chips" hidden></div>
-                <div id="gamePlayers" class="game-players" hidden></div>
-                <div id="contestResults" class="contest-results" hidden></div>
-                <div class="contest-live-row" style="margin-top:10px;">
-                    <button id="cancelContestBtn" class="btn btn-danger" hidden>Cancel contest</button>
-                    <button id="warpSpectatorsBtn" class="btn btn-ghost" hidden>Warp me to arena</button>
-                    <a id="watchLiveBtn" class="btn btn-primary contest-watch-link" hidden href="/live.html" target="_blank" rel="noopener">Watch Live</a>
-                    <button id="exportGameSessionBtn" class="btn btn-ghost" hidden>Export session</button>
-                </div>
-                <div id="contestStatusMsg" class="contest-status-msg"></div>
             </div>
         </section>
     </div>
@@ -2094,7 +2253,7 @@
     </div>
 
     <script>
-        const socket = io({ path: window.location.pathname + 'socket.io' });
+        const socket = io({ path: '/socket.io' });
         initBotVoice(socket);
         const agentsDiv = document.getElementById('agents');
         let settingsSpec = {};
@@ -2119,6 +2278,9 @@
         let gameSetupParticipants = [];
         let focusedAgent = null;
         let lastStates = {};
+
+        const VIEW_PATHS = { colony: '/colony', games: '/games' };
+        const VIEW_TITLES = { colony: 'Mindcraft Spy — Colony', games: 'Mindcraft Spy — Games' };
 
         const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
         const MAX_GAME_SYSTEM_PROMPT = 4000;
@@ -2604,18 +2766,56 @@
         socket.on('connect_error', () => updateStatus(false));
         socket.on('colony-update', renderColonyState);
         socket.on('contest-update', renderContestState);
+        socket.on('tower-atlas-update', atlas => {
+            if (contestState) contestState.towerAtlas = atlas;
+            const active = contestState?.activeContest
+                || (contestState?.contests || []).find(contest =>
+                    contest.status === 'running' || contest.status === 'judging'
+                )
+                || null;
+            renderTowerAtlas(active, atlas);
+        });
 
-        function setView(view) {
+        function viewFromPath(pathname) {
+            const path = (pathname || '/').replace(/\/+$/, '') || '/';
+            if (path === '/games') return 'games';
+            return 'colony';
+        }
+
+        function setView(view, { syncUrl = true, replace = false } = {}) {
             currentView = view === 'games' ? 'games' : 'colony';
             document.getElementById('colonyView').hidden = currentView !== 'colony';
             document.getElementById('gamesView').hidden = currentView !== 'games';
             document.getElementById('viewColonyBtn').classList.toggle('active', currentView === 'colony');
             document.getElementById('viewGamesBtn').classList.toggle('active', currentView === 'games');
+            document.getElementById('viewColonyBtn').setAttribute('aria-current', currentView === 'colony' ? 'page' : 'false');
+            document.getElementById('viewGamesBtn').setAttribute('aria-current', currentView === 'games' ? 'page' : 'false');
+            document.title = VIEW_TITLES[currentView];
+            if (syncUrl) {
+                const path = VIEW_PATHS[currentView];
+                if (location.pathname !== path) {
+                    const state = { view: currentView };
+                    if (replace) history.replaceState(state, '', path);
+                    else history.pushState(state, '', path);
+                }
+            }
             if (currentView === 'games') loadContestState();
         }
 
-        document.getElementById('viewColonyBtn').addEventListener('click', () => setView('colony'));
-        document.getElementById('viewGamesBtn').addEventListener('click', () => setView('games'));
+        document.getElementById('viewColonyBtn').addEventListener('click', (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            setView('colony');
+        });
+        document.getElementById('viewGamesBtn').addEventListener('click', (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            setView('games');
+        });
+        window.addEventListener('popstate', () => {
+            setView(viewFromPath(location.pathname), { syncUrl: false });
+        });
+        setView(viewFromPath(location.pathname), { replace: true });
 
         function loadColonyState() {
             socket.emit('colony-status', (result) => {
@@ -2753,11 +2953,16 @@
                 row.className = 'contest-result-row';
                 const rank = result.rank == null ? '—' : `#${result.rank}`;
                 const height = result.details?.towerHeight;
+                const elapsedMs = result.details?.breakdown?.find(
+                    metric => metric.path === 'elapsedMs'
+                )?.value;
                 const score = result.score == null
                     ? 'DQ'
                     : Number.isFinite(height)
                         ? `${result.score} blocks tall`
-                        : result.score;
+                        : Number.isFinite(elapsedMs)
+                            ? fmtElapsed(elapsedMs)
+                            : result.score;
                 row.innerHTML = `
                     <span class="rank">${esc(String(rank))}</span>
                     <span>${esc(result.participantId)}</span>
@@ -2765,6 +2970,54 @@
                 `;
                 box.appendChild(row);
             }
+        }
+
+        function renderTowerAtlas(activeContest, atlas) {
+            const panel = document.getElementById('towerAtlas');
+            const skyline = document.getElementById('towerSkyline');
+            const list = document.getElementById('towerAtlasList');
+            const isLiveTowerContest = activeContest?.status === 'running'
+                && activeContest.rules?.type === 'tower_battle'
+                && atlas?.contestId === activeContest.id;
+            if (!isLiveTowerContest) {
+                panel.hidden = true;
+                skyline.replaceChildren();
+                list.replaceChildren();
+                return;
+            }
+
+            const standings = Array.isArray(atlas.standings) ? atlas.standings : [];
+            const maxHeight = Math.max(1, ...standings.map(item => Number(item.height) || 0));
+            const colors = ['#9fe870', '#5ec8c0', '#f0b429', '#ce93d8', '#64b5f6', '#ff7043'];
+            skyline.innerHTML = standings.map((item, index) => {
+                const height = Math.max(0, Number(item.height) || 0);
+                const percentage = height > 0 ? Math.max(3, (height / maxHeight) * 88) : 2;
+                const color = colors[index % colors.length];
+                return `
+                    <div class="tower-column" title="${esc(item.participantId)} · ${esc(String(height))} blocks tall">
+                        <span class="tower-height-label">${esc(String(height))}</span>
+                        <div class="tower-bar" style="height:${percentage.toFixed(1)}%;--tower-color:${color}"></div>
+                    </div>
+                `;
+            }).join('');
+            list.innerHTML = standings.map(item => {
+                const height = Math.max(0, Number(item.height) || 0);
+                const leader = item.rank === 1 && height > 0;
+                return `
+                    <div class="tower-standing${leader ? ' leader' : ''}"
+                        title="${esc(String(item.blocksStanding || 0))} tracked blocks · ${esc(item.measuredFrom || 'scanning')}">
+                        <span class="tower-standing-rank">#${esc(String(item.rank || '—'))}</span>
+                        <span class="tower-standing-name">
+                            <i class="tower-report-dot${item.reporting ? ' live' : ''}"></i>${esc(item.participantId)}
+                        </span>
+                        <span class="tower-standing-height">${esc(String(height))} blk</span>
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('towerAtlasUpdated').textContent = standings.some(item => item.reporting)
+                ? '● live'
+                : 'scanning…';
+            panel.hidden = false;
         }
 
         function renderContestParticipantChips(participants) {
@@ -2953,7 +3206,8 @@
             const sessionParticipants = gameSession?.participants
                 || active?.metadata?.gameSession?.participants
                 || null;
-            const provisioning = gameSession && ['provisioning', 'preparing', 'recording'].includes(gameSession.status);
+            const provisioning = gameSession
+                && ['provisioning', 'preparing', 'recording', 'announcing-start'].includes(gameSession.status);
 
             if (provisioning && !active) {
                 live.classList.remove('idle');
@@ -3017,7 +3271,15 @@
                 live.classList.toggle('idle', latestDone.status !== 'completed');
                 title.textContent = `${latestDone.title} · ${latestDone.status}`;
                 const winners = (latestDone.winnerIds || []).join(', ') || 'none';
-                row.innerHTML = `<span>Winners: <strong>${esc(winners)}</strong></span>`;
+                const elapsedMs = latestDone.winnerIds?.length
+                    ? latestDone.submissions?.[latestDone.winnerIds[0]]?.payload?.elapsedMs
+                    : null;
+                row.innerHTML = `
+                    <span>Winners: <strong>${esc(winners)}</strong></span>
+                    ${Number.isFinite(elapsedMs)
+                        ? `<span>Winning time: <strong>${esc(fmtElapsed(elapsedMs))}</strong></span>`
+                        : ''}
+                `;
                 renderContestParticipantChips(
                     latestDone.metadata?.gameSession?.participants || null
                 );
@@ -3038,6 +3300,7 @@
                 renderContestResults(null);
             }
             renderGamePlayers(provisioning || active ? sessionParticipants : null);
+            renderTowerAtlas(active, state?.towerAtlas);
             renderGameCards();
         }
 

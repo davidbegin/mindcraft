@@ -19,6 +19,8 @@ test('every pool voice has a description', () => {
     for (const name of Object.keys(VOICE_POOL)) {
         assert.ok(VOICE_DESCRIPTIONS[name], `missing description for ${name}`);
     }
+    assert.equal(VOICE_POOL.Narrator, 'nPczCjzI2devNBz1zQrb');
+    assert.match(VOICE_DESCRIPTIONS.Narrator, /deep booming/i);
 });
 
 test('defaults when no config file exists', () => {

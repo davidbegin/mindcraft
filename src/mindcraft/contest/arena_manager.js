@@ -1,4 +1,5 @@
 import { runMinecraftCommand } from '../minecraft_server.js';
+import { buildDogRaceResetCommand } from './dog_race.js';
 
 const ARENA = Object.freeze({
     centerX: 100000,
@@ -7,10 +8,23 @@ const ARENA = Object.freeze({
     halfSize: 32,
     clearTopY: 220,
     mineBottomY: 68,
+    depthBottomY: -60,
+    worldBottomY: -64,
     spectatorY: 140,
 });
 
+const DEPTH_RACE_KIT = Object.freeze([
+    'diamond_pickaxe 1',
+    'bread 16',
+    'torch 64',
+    'ladder 128',
+]);
+
 const GAME_KITS = Object.freeze({
+    dog_race: Object.freeze([
+        'stone_sword 1',
+        'bread 16',
+    ]),
     diamond_race: Object.freeze([
         'iron_pickaxe 1',
         'bread 16',
@@ -32,7 +46,13 @@ const GAME_KITS = Object.freeze({
         'wooden_sword 1',
         'bread 16',
     ]),
+    deepest_2_5: DEPTH_RACE_KIT,
+    deepest_5: DEPTH_RACE_KIT,
 });
+
+function isDepthRaceGame(gameId) {
+    return gameId === 'deepest_2_5' || gameId === 'deepest_5';
+}
 
 function assertPlayerName(name) {
     if (!/^[A-Za-z0-9_]{1,16}$/.test(name)) {
@@ -95,6 +115,52 @@ function spawnPositions(participantCount) {
     });
 }
 
+function addDogForest(commands) {
+    const treeOffsets = [
+        [-27, -25], [-26, -8], [-25, 14], [-22, 27],
+        [-14, -18], [-12, 4], [-10, 22],
+        [0, -27], [2, -10], [4, 13], [1, 28],
+        [13, -20], [15, 1], [12, 23],
+        [25, -27], [27, -9], [24, 11], [27, 26],
+    ];
+    for (const [dx, dz] of treeOffsets) {
+        const x = ARENA.centerX + dx;
+        const z = ARENA.centerZ + dz;
+        commands.push(
+            `fill ${x - 2} ${ARENA.floorY + 3} ${z - 2} `
+            + `${x + 2} ${ARENA.floorY + 5} ${z + 2} spruce_leaves`,
+            `fill ${x} ${ARENA.floorY + 1} ${z} `
+            + `${x} ${ARENA.floorY + 5} ${z} spruce_log`,
+            `setblock ${x} ${ARENA.floorY + 6} ${z} spruce_leaves`
+        );
+    }
+
+    const wolfOffsets = [
+        [-28, -17], [-20, 19], [-8, -26], [-4, 17],
+        [9, -14], [16, 27], [24, 6], [29, -24],
+    ];
+    for (const [dx, dz] of wolfOffsets) {
+        commands.push(
+            `summon wolf ${ARENA.centerX + dx} ${ARENA.floorY + 1} ${ARENA.centerZ + dz}`
+        );
+    }
+
+    const skeletonOffsets = [
+        [-30, -29], [-30, -13], [-29, 3], [-30, 20],
+        [-22, -22], [-21, -4], [-20, 12], [-19, 29],
+        [-11, -30], [-10, -15], [-9, 8], [-8, 25],
+        [0, -21], [1, -3], [0, 20], [7, 30],
+        [10, -29], [11, -11], [10, 6], [12, 24],
+        [20, -20], [21, -2], [20, 15], [22, 29],
+        [29, -29], [30, -12], [29, 5], [30, 22],
+    ];
+    for (const [dx, dz] of skeletonOffsets) {
+        commands.push(
+            `summon skeleton ${ARENA.centerX + dx} ${ARENA.floorY + 1} ${ARENA.centerZ + dz}`
+        );
+    }
+}
+
 function buildWorldResetCommands(gameId) {
     const minX = ARENA.centerX - ARENA.halfSize;
     const maxX = ARENA.centerX + ARENA.halfSize;
@@ -107,6 +173,8 @@ function buildWorldResetCommands(gameId) {
         'gamerule doWeatherCycle false',
         'gamerule keepInventory false',
         'gamerule doImmediateRespawn true',
+        'gamerule doMobSpawning true',
+        'difficulty normal',
         'time set noon',
         'weather clear',
     ];
@@ -119,12 +187,67 @@ function buildWorldResetCommands(gameId) {
         'air'
     );
     commands.push(
-        `kill @e[type=!player,x=${minX},y=${ARENA.mineBottomY},z=${minZ},`
-        + `dx=${maxX - minX},dy=${ARENA.clearTopY - ARENA.mineBottomY},`
+        `kill @e[type=!player,x=${minX},y=${ARENA.worldBottomY},z=${minZ},`
+        + `dx=${maxX - minX},dy=${ARENA.clearTopY - ARENA.worldBottomY},`
         + `dz=${maxZ - minZ}]`
     );
 
-    if (gameId === 'diamond_race') {
+    if (gameId === 'dog_race') {
+        commands.push(
+            'gamerule doMobSpawning false',
+            'difficulty normal',
+            'time set midnight'
+        );
+        commands.push(
+            `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
+            + `${maxX} ${ARENA.floorY - 3} ${maxZ} bedrock`,
+            `fill ${minX} ${ARENA.floorY - 2} ${minZ} `
+            + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
+            `fill ${minX} ${ARENA.floorY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
+        );
+        addDogForest(commands);
+    } else if (isDepthRaceGame(gameId)) {
+        commands.push(
+            'gamerule doMobSpawning false',
+            'difficulty peaceful'
+        );
+        fillLayers(
+            commands,
+            bounds,
+            ARENA.worldBottomY,
+            ARENA.depthBottomY - 1,
+            'bedrock'
+        );
+        fillLayers(
+            commands,
+            bounds,
+            ARENA.depthBottomY,
+            -1,
+            'deepslate'
+        );
+        fillLayers(
+            commands,
+            bounds,
+            0,
+            ARENA.floorY - 2,
+            'stone'
+        );
+        commands.push(
+            `fill ${minX} ${ARENA.floorY - 1} ${minZ} `
+            + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
+            `fill ${minX} ${ARENA.floorY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`,
+            `fill ${minX} ${ARENA.worldBottomY} ${minZ} `
+            + `${minX} ${ARENA.floorY} ${maxZ} bedrock`,
+            `fill ${maxX} ${ARENA.worldBottomY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} bedrock`,
+            `fill ${minX} ${ARENA.worldBottomY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${minZ} bedrock`,
+            `fill ${minX} ${ARENA.worldBottomY} ${maxZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} bedrock`
+        );
+    } else if (gameId === 'diamond_race') {
         fillLayers(
             commands,
             bounds,
@@ -244,6 +367,9 @@ function buildParticipantCommands(gameId, participants) {
             `spawnpoint ${name} ${position.x} ${ARENA.floorY + 1} ${position.z}`,
             `effect give ${name} saturation 2 10 true`
         );
+        if (gameId === 'dog_race') {
+            commands.push(buildDogRaceResetCommand(name));
+        }
         for (const item of GAME_KITS[gameId] || []) {
             commands.push(`give ${name} ${item}`);
         }

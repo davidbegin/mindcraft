@@ -10,11 +10,22 @@ test('lists the starter contest games for the UI', () => {
     const games = listContestGamePresets();
     assert.deepEqual(
         games.map(game => game.id).sort(),
-        ['diamond_race', 'netherite_race', 'tower_battle']
+        [
+            'deepest_2_5',
+            'deepest_5',
+            'diamond_race',
+            'dog_race',
+            'netherite_race',
+            'tower_battle',
+        ]
     );
     const tower = games.find(game => game.id === 'tower_battle');
     assert.equal(tower.durationLabel, '2 min 30 sec');
     assert.equal(tower.durationMs, 150_000);
+    assert.deepEqual(tower.narrator, {
+        name: 'narrator',
+        voice: 'Narrator',
+    });
     assert.deepEqual(tower.defaultCharacters, [
         {
             name: 'billy',
@@ -37,6 +48,14 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(diamonds.rules.winItem, 'diamond');
     assert.equal(diamonds.rules.metrics[0].direction, 'minimize');
 
+    const dog = getContestGamePreset('dog_race');
+    assert.equal(dog.rules.type, 'dog_race');
+    assert.equal(dog.rules.winEntity, 'wolf');
+    assert.equal(dog.rules.winAdvancement, 'minecraft:husbandry/tame_an_animal');
+    assert.equal(dog.rules.metrics[0].direction, 'minimize');
+    assert.match(dog.prompt, /start without bones/i);
+    assert.match(dog.prompt, /ends automatically/i);
+
     const netherite = getContestGamePreset('netherite_race');
     assert.equal(netherite.rules.type, 'netherite_race');
     assert.equal(netherite.rules.winItem, 'netherite_ingot');
@@ -44,6 +63,16 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.match(netherite.prompt, /three diamonds/i);
     assert.match(netherite.prompt, /diamond pickaxe/i);
     assert.match(netherite.prompt, /four ancient debris/i);
+
+    const shortDepth = getContestGamePreset('deepest_2_5');
+    assert.equal(shortDepth.durationMs, 150_000);
+    assert.equal(shortDepth.rules.type, 'depth_race');
+    assert.equal(shortDepth.rules.startY, 101);
+    assert.match(shortDepth.prompt, /Y-coordinate is measured automatically/i);
+
+    const longDepth = getContestGamePreset('deepest_5');
+    assert.equal(longDepth.durationMs, 300_000);
+    assert.equal(longDepth.rules.scoring, 'lowest-y-at-deadline');
 });
 
 test('unknown contest game ids throw', () => {

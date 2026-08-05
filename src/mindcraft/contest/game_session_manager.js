@@ -76,6 +76,10 @@ export class GameSessionManager {
         this.readyTimeoutMs = options.readyTimeoutMs ?? 90000;
         this.readyPollMs = options.readyPollMs ?? 500;
         this.onUpdate = options.onUpdate || (() => {});
+        this.announceStart = options.announceStart || (() => {});
+        this.announceResult = options.announceResult || (() => {});
+        this.onAnnouncementError = options.onAnnouncementError
+            || (error => console.warn(`Contest announcement failed: ${error.message}`));
         this.active = null;
     }
 
@@ -196,6 +200,9 @@ export class GameSessionManager {
             });
             this.active.recording = { enabled: true, ...recording };
 
+            this.active.status = 'announcing-start';
+            this._emit();
+            await this._announce(this.announceStart, contest);
             const started = await this.coordinator.startContest(contest.id);
             await Promise.all(participantIds.map(name =>
                 this.sendDirective(
@@ -252,6 +259,12 @@ export class GameSessionManager {
         if (!this.active) return null;
         const contest = (view?.contests || []).find(item => item.id === this.active.contestId);
         if (contest && ['completed', 'cancelled'].includes(contest.status)) {
+            if (['announcing-result', 'cleaning-up'].includes(this.active.status)) return null;
+            if (contest.status === 'completed') {
+                this.active.status = 'announcing-result';
+                this._emit();
+                await this._announce(this.announceResult, contest);
+            }
             return this.finish(contest.id);
         }
         return null;
@@ -279,5 +292,13 @@ export class GameSessionManager {
 
     _emit() {
         this.onUpdate(this.view());
+    }
+
+    async _announce(announce, contest) {
+        try {
+            await announce(contest);
+        } catch (error) {
+            this.onAnnouncementError(error);
+        }
     }
 }
