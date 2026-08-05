@@ -116,7 +116,6 @@ export class Agent {
 
         this.bot.on('login', () => {
             console.log(this.name, 'logged in!');
-            serverProxy.login();
             this._skin_attempts = 0;
             this._applyProfileSkin();
         });
@@ -153,6 +152,10 @@ export class Agent {
                 
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
+                // Mark in-game only after a successful spawn. Login alone is too early —
+                // contest arena prep issues /clear and /tp, which fail if the player
+                // never finishes spawning (or crashes mid-setup).
+                serverProxy.login();
               
                 await this._setupEventHandlers(save_data, init_message);
                 this.startEvents();

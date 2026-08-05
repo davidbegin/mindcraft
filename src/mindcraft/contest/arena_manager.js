@@ -85,7 +85,7 @@ function spawnPositions(participantCount) {
     });
 }
 
-function buildResetCommands(gameId, participants) {
+function buildWorldResetCommands(gameId) {
     const minX = ARENA.centerX - ARENA.halfSize;
     const maxX = ARENA.centerX + ARENA.halfSize;
     const minZ = ARENA.centerZ - ARENA.halfSize;
@@ -162,6 +162,11 @@ function buildResetCommands(gameId, participants) {
         + `${maxX} ${ARENA.clearTopY} ${maxZ} barrier`
     );
 
+    return commands;
+}
+
+function buildParticipantCommands(gameId, participants) {
+    const commands = [];
     const positions = spawnPositions(participants.length);
     participants.forEach((name, index) => {
         assertPlayerName(name);
@@ -180,8 +185,14 @@ function buildResetCommands(gameId, participants) {
             commands.push(`give ${name} ${item}`);
         }
     });
-
     return commands;
+}
+
+function buildResetCommands(gameId, participants) {
+    return [
+        ...buildWorldResetCommands(gameId),
+        ...buildParticipantCommands(gameId, participants),
+    ];
 }
 
 function spectatorWarpCommands(spectatorNames) {
@@ -199,11 +210,29 @@ function spectatorWarpCommands(spectatorNames) {
 export class ContestArenaManager {
     constructor(options = {}) {
         this.runCommand = options.runCommand || runMinecraftCommand;
+        this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+        this.playerWaitTimeoutMs = options.playerWaitTimeoutMs ?? 60_000;
+        this.playerWaitPollMs = options.playerWaitPollMs ?? 500;
     }
 
     async listOnlinePlayers() {
         const output = await this.runCommand('list');
         return parseOnlinePlayers(output);
+    }
+
+    async waitForPlayersOnline(participants) {
+        const needed = [...new Set(participants)];
+        const deadline = Date.now() + this.playerWaitTimeoutMs;
+        let missing = needed;
+        while (Date.now() < deadline) {
+            const online = new Set(await this.listOnlinePlayers());
+            missing = needed.filter(name => !online.has(name));
+            if (missing.length === 0) return;
+            await this.sleep(this.playerWaitPollMs);
+        }
+        throw new Error(
+            `Timed out waiting for Minecraft players before arena setup: ${missing.join(', ')}`
+        );
     }
 
     async prepare(preset, participants, options = {}) {
@@ -212,11 +241,22 @@ export class ContestArenaManager {
             throw new Error('Arena reset requires at least one participant');
         }
 
-        const commands = buildResetCommands(preset.id, participants);
-        for (const command of commands) {
+        const worldCommands = buildWorldResetCommands(preset.id);
+        for (const command of worldCommands) {
             await this.runCommand(command);
         }
 
+        // Player-targeted commands (/clear, /tp, /give) fail with
+        // "No player was found" if bots dropped between MindServer ready and
+        // RCON setup — wait on `list` so the error is clear and early.
+        await this.waitForPlayersOnline(participants);
+
+        const participantCommands = buildParticipantCommands(preset.id, participants);
+        for (const command of participantCommands) {
+            await this.runCommand(command);
+        }
+
+        const commands = [...worldCommands, ...participantCommands];
         const participantSet = new Set(participants);
         let spectators = Array.isArray(options.spectators)
             ? [...new Set(options.spectators)]
@@ -261,4 +301,4 @@ export class ContestArenaManager {
     }
 }
 
-export { buildResetCommands, spectatorWarpCommands };
+export { buildResetCommands, buildWorldResetCommands, buildParticipantCommands, spectatorWarpCommands };
