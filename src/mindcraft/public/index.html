@@ -1750,6 +1750,7 @@
 
         .game-setup-row select,
         .game-setup-row input[type="text"],
+        .game-setup-row textarea,
         .game-setup-prompt textarea {
             width: 100%;
             background: var(--bg-card);
@@ -1762,6 +1763,7 @@
 
         .game-setup-row select:focus,
         .game-setup-row input[type="text"]:focus,
+        .game-setup-row textarea:focus,
         .game-setup-prompt textarea:focus {
             outline: none;
             border-color: var(--border-strong);
@@ -1800,6 +1802,15 @@
 
         .game-setup-row .name-hint.error {
             color: var(--red);
+        }
+
+        .game-setup-row .personality-prompt {
+            grid-column: 1 / -1;
+            min-height: 72px;
+            resize: vertical;
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            line-height: 1.4;
         }
 
         .game-setup-actions {
@@ -2234,7 +2245,7 @@
                     <span id="gameSetupDurationHint" class="games-sub">0.5–60 minutes</span>
                 </div>
                 <div class="game-setup-prompt">
-                    <label for="gameSetupSystemPrompt">System prompt (optional)</label>
+                    <label for="gameSetupSystemPrompt">Match-wide system prompt (optional)</label>
                     <textarea id="gameSetupSystemPrompt" maxlength="4000" rows="4"
                         placeholder="Extra instructions for every temporary contest bot…"
                         spellcheck="true"></textarea>
@@ -3395,12 +3406,12 @@
 
         function defaultGameSetupParticipants(gameId) {
             const profiles = configuredGameProfiles();
-            const count = profiles.length >= 2 ? 2 : Math.min(1, profiles.length);
             const reserved = new Set(currentAgents.map(agent => agent.name));
             const game = contestGames.find(item => item.id === gameId);
             const characters = Array.isArray(game?.defaultCharacters)
                 ? game.defaultCharacters
                 : [];
+            const count = characters.length || Math.min(2, profiles.length);
             const rows = [];
             for (let i = 0; i < count; i++) {
                 const character = characters[i] || null;
@@ -3414,6 +3425,7 @@
                     profileId: profile.id,
                     name,
                     voice: character?.voice || null,
+                    systemPrompt: character?.systemPrompt || '',
                 });
             }
             return rows;
@@ -3460,6 +3472,9 @@
                     </div>
                     <button type="button" class="btn btn-ghost" data-action="remove" ${gameSetupParticipants.length <= 1 ? 'disabled' : ''}>Remove</button>
                     <div class="name-hint ${nameValid && !duplicate ? '' : 'error'}">${esc(hint)}</div>
+                    <textarea data-field="systemPrompt" class="personality-prompt" maxlength="${MAX_GAME_SYSTEM_PROMPT}"
+                        rows="3" aria-label="System prompt for ${esc(participant.name || `participant ${index + 1}`)}"
+                        placeholder="Give this bot a personality…">${esc(participant.systemPrompt || '')}</textarea>
                 `;
 
                 row.querySelector('[data-field="profileId"]').addEventListener('change', (event) => {
@@ -3509,6 +3524,10 @@
 
                 row.querySelector('[data-field="voice"]').addEventListener('change', (event) => {
                     gameSetupParticipants[index].voice = event.target.value || null;
+                });
+
+                row.querySelector('[data-field="systemPrompt"]').addEventListener('input', (event) => {
+                    gameSetupParticipants[index].systemPrompt = event.target.value;
                 });
 
                 row.querySelector('[data-action="preview-voice"]').addEventListener('click', (event) => {
@@ -3586,6 +3605,9 @@
                 if (!participant.profileId || !profileIds.has(participant.profileId)) {
                     return `Participant ${i + 1} needs a configured profile`;
                 }
+                if (String(participant.systemPrompt || '').length > MAX_GAME_SYSTEM_PROMPT) {
+                    return `Participant ${i + 1} system prompt must be ${MAX_GAME_SYSTEM_PROMPT} characters or fewer`;
+                }
                 seenNames.add(name);
             }
             const prompt = document.getElementById('gameSetupSystemPrompt')?.value || '';
@@ -3609,10 +3631,11 @@
                 return;
             }
             const gameId = gameSetupGameId;
-            const participants = gameSetupParticipants.map(({ profileId, name, voice }) => ({
+            const participants = gameSetupParticipants.map(({ profileId, name, voice, systemPrompt }) => ({
                 profileId,
                 name,
                 voice: voice || null,
+                systemPrompt: String(systemPrompt || '').trim(),
             }));
             const systemPrompt = String(document.getElementById('gameSetupSystemPrompt')?.value || '').trim();
             const durationMs =
@@ -3662,6 +3685,7 @@
                 profileId: profile.id,
                 name: nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved),
                 voice: null,
+                systemPrompt: '',
             });
             renderGameSetupParticipants();
         });

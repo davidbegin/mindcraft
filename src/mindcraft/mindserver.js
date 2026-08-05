@@ -342,6 +342,14 @@ function defaultSettingsForProfile(profile) {
 
 function buildGameAgentSettings(profile, gameSession) {
     const settings = defaultSettingsForProfile(profile);
+    const promptAddenda = [
+        gameSession.personalityPrompt
+            ? `YOUR PERSONALITY\n${gameSession.personalityPrompt}`
+            : '',
+        gameSession.systemPrompt
+            ? `MATCH-WIDE INSTRUCTIONS\n${gameSession.systemPrompt}`
+            : '',
+    ].filter(Boolean).join('\n\n');
     settings.profile.speak_model = gameSession.voice
         ? { api: 'elevenlabs', voice: gameSession.voice }
         : 'elevenlabs';
@@ -360,7 +368,7 @@ function buildGameAgentSettings(profile, gameSession) {
         speakAll: true,
         serverBroadcastVoice: true,
         talkOverMining: true,
-        systemPrompt: buildGameSystemPrompt(gameSession.systemPrompt),
+        systemPrompt: buildGameSystemPrompt(promptAddenda),
     };
     return settings;
 }
