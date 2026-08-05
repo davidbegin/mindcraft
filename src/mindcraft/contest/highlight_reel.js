@@ -20,6 +20,7 @@ const FALLBACK_SECONDS = 7;
 const DEDUPE_WINDOW_MS = 5000;
 
 function finiteNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
 }
