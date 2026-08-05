@@ -45,7 +45,7 @@ export class History {
         this.memory = summary;
         if (this.memory.length > 500) {
             this.memory = this.memory.slice(0, 500);
-            this.memory += '...(Memory truncated to 500 chars. Compress it more next time)';
+            this.memory += '...(Memory truncated to 500 chars. Prefer transferable rules over excess coordinates next time)';
         }
 
         console.log("Memory updated to: ", this.memory);
