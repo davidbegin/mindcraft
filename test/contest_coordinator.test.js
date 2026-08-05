@@ -131,6 +131,7 @@ test('rejects late submissions after finalizing the contest', async () => {
 test('contest loop waits for each tick before scheduling the next one', async () => {
     const scheduled = [];
     let releaseTick;
+    let ticks = 0;
     let updates = 0;
     const coordinator = {
         tick: () => new Promise(resolve => {
@@ -141,6 +142,9 @@ test('contest loop waits for each tick before scheduling the next one', async ()
     const loop = new ContestLoop({
         coordinator,
         intervalMs: 10,
+        onTick: () => {
+            ticks += 1;
+        },
         onUpdate: () => {
             updates += 1;
         },
@@ -157,7 +161,31 @@ test('contest loop waits for each tick before scheduling the next one', async ()
     assert.equal(scheduled.length, 0);
     releaseTick();
     await firstRun;
+    assert.equal(ticks, 1);
     assert.equal(updates, 1);
     assert.equal(scheduled.length, 1);
     loop.stop();
+});
+
+test('contest loop reports unchanged ticks for live HUD updates', async () => {
+    let ticks = 0;
+    let updates = 0;
+    const coordinator = {
+        tick: async () => ({ changed: false, reason: 'waiting' }),
+        view: () => ({ activeContest: { status: 'running' } }),
+    };
+    const loop = new ContestLoop({
+        coordinator,
+        onTick: () => {
+            ticks += 1;
+        },
+        onUpdate: () => {
+            updates += 1;
+        },
+    });
+
+    await loop.runOnce();
+
+    assert.equal(ticks, 1);
+    assert.equal(updates, 0);
 });

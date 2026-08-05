@@ -16,12 +16,21 @@ import { addBrowserViewer } from './vision/browser_viewer.js';
 import { PovRecorder } from './vision/pov_recorder.js';
 import { ActionRecorder } from './vision/action_recorder.js';
 import { PovSnapshotter } from './vision/pov_snapshotter.js';
-import { serverProxy, sendOutputToServer, requestColonyCommand } from './mindserver_proxy.js';
+import {
+    serverProxy,
+    sendOutputToServer,
+    requestColonyCommand,
+    requestContestSpeech,
+} from './mindserver_proxy.js';
 import { setOutageHandler } from '../models/quota_guard.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { generateSpeech, playSpeech, isSystemSpeakModel } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
+import { Vec3 } from 'vec3';
+
+const MAX_TRACKED_PLACEMENTS = 20000;
+const MAX_PILLAR_PROBE = 256;
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
@@ -133,6 +142,9 @@ export class Agent {
                 serverProxy.sendRecordingUpdate(this.recordingStatus());
                 this.pov_snapshotter = new PovSnapshotter(this.bot, this.name, this.pov_recorder);
                 this.pov_snapshotter.start();
+                if (settings.game_session) {
+                    this._trackGameBlockPlacements();
+                }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
 
@@ -555,6 +567,17 @@ export class Agent {
         console.log(`[${this.name}] voice: ${audible ? `speaking at volume ${volume}` : `silent (${silentReason})`}${recording ? ', recording' : ''}: "${text.trim().slice(0, 60)}"`);
         if (!audible && !recording) return;
 
+        if (audible && settings.game_session?.serverBroadcastVoice) {
+            requestContestSpeech(text).then(audio => {
+                if (audio && this.pov_recorder?.recording) {
+                    this.pov_recorder.addAudio(audio);
+                }
+            }).catch(err => {
+                console.error(`[${this.name}] Server contest TTS failed:`, err.message);
+            });
+            return;
+        }
+
         if (isSystemSpeakModel(model)) {
             // System TTS has no audio data to record; playback only.
             if (audible) playSpeech({ text, model, botName: this.name, volume });
@@ -908,6 +931,63 @@ export class Agent {
         }
         serverProxy.sendRecordingUpdate(this.recordingStatus());
         return { sessionId, recordings: statuses };
+    }
+
+    /**
+     * Game contests are scored from the world at the deadline instead of from
+     * bot submissions, so remember every block this bot places while a game
+     * session is running.
+     */
+    _trackGameBlockPlacements() {
+        this.game_block_placements = new Map();
+        // Cheat-mode placements go out as /setblock chat, so skills report those
+        // through this hook instead of mineflayer's blockPlaced event.
+        this.bot.recordPlacedBlock = (x, y, z) => {
+            if (this.game_block_placements.size >= MAX_TRACKED_PLACEMENTS) return;
+            const block = { x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
+            if (!Number.isFinite(block.x) || !Number.isFinite(block.y) || !Number.isFinite(block.z)) {
+                return;
+            }
+            this.game_block_placements.set(`${block.x},${block.y},${block.z}`, block);
+        };
+        this.bot.on('blockPlaced', (oldBlock, newBlock) => {
+            const position = newBlock?.position;
+            if (!position) return;
+            this.bot.recordPlacedBlock(position.x, position.y, position.z);
+        });
+    }
+
+    _isSolidAt(x, y, z) {
+        const block = this.bot.blockAt(new Vec3(x, y, z));
+        return Boolean(block) && block.boundingBox === 'block';
+    }
+
+    /**
+     * What this bot actually built and left standing, plus the pillar it ends
+     * the game on, so the contest judge can measure tower height and credit
+     * each tower to whoever placed most of its blocks.
+     */
+    gameTowerReport() {
+        const placements = [...(this.game_block_placements?.values() ?? [])];
+        const blocks = placements.filter(block => this._isSolidAt(block.x, block.y, block.z));
+        return {
+            participantId: this.name,
+            blocks,
+            placementsTracked: placements.length,
+            standingOn: this._solidBlockUnderBot(),
+        };
+    }
+
+    _solidBlockUnderBot() {
+        const position = this.bot.entity?.position;
+        if (!position) return null;
+        const x = Math.floor(position.x);
+        const z = Math.floor(position.z);
+        const feetY = Math.floor(position.y);
+        for (let y = feetY - 1; y >= feetY - MAX_PILLAR_PROBE; y -= 1) {
+            if (this._isSolidAt(x, y, z)) return { x, y, z };
+        }
+        return null;
     }
 
     isAutoRecording() {

@@ -163,6 +163,18 @@ class MindServerProxy {
             }
         });
 
+        this.socket.on('game-tower-report', (callback) => {
+            try {
+                if (!this.agent?.bot?.entity) {
+                    callback?.({ success: false, error: 'Agent has not spawned yet' });
+                    return;
+                }
+                callback?.({ success: true, report: this.agent.gameTowerReport() });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
         this.socket.on('start-contest-recording', async (options, callback) => {
             try {
                 const result = await this.agent.startContestRecording(options || {});
@@ -279,6 +291,26 @@ export function sendBotChatToServer(agentName, json) {
 // for sending general output to server for display
 export function sendOutputToServer(agentName, message) {
     serverProxy.getSocket().emit('bot-output', agentName, message);
+}
+
+export function requestContestSpeech(text) {
+    const socket = serverProxy.getSocket();
+    if (!socket?.connected) {
+        return Promise.reject(new Error('MindServer is not connected'));
+    }
+    return new Promise((resolve, reject) => {
+        socket.timeout(30000).emit('contest-speech', { text }, (error, result) => {
+            if (error) {
+                reject(new Error('Contest speech request timed out'));
+                return;
+            }
+            if (!result?.success) {
+                reject(new Error(result?.error || 'Contest speech request failed'));
+                return;
+            }
+            resolve(result.audio);
+        });
+    });
 }
 
 export function requestColonyCommand(type, payload = {}) {

@@ -3,6 +3,7 @@ export class ContestLoop {
         const {
             coordinator,
             intervalMs = 1000,
+            onTick = () => {},
             onUpdate = () => {},
             onError = error => console.error('Contest loop failed:', error),
             setTimer = setTimeout,
@@ -18,12 +19,16 @@ export class ContestLoop {
         if (typeof onUpdate !== 'function') {
             throw new TypeError('onUpdate must be a function');
         }
+        if (typeof onTick !== 'function') {
+            throw new TypeError('onTick must be a function');
+        }
         if (typeof onError !== 'function') {
             throw new TypeError('onError must be a function');
         }
 
         this.coordinator = coordinator;
         this.intervalMs = intervalMs;
+        this.onTick = onTick;
         this.onUpdate = onUpdate;
         this.onError = onError;
         this.setTimer = setTimer;
@@ -51,8 +56,10 @@ export class ContestLoop {
 
     async runOnce() {
         const result = await this.coordinator.tick();
+        const view = this.coordinator.view();
+        await this.onTick(view, result);
         if (result.changed) {
-            await this.onUpdate(this.coordinator.view(), result);
+            await this.onUpdate(view, result);
         }
         return result;
     }

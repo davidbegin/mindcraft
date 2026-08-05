@@ -17,16 +17,20 @@ import { ColonyCoordinator } from './colony/colony_coordinator.js';
 import {
     ContestArenaManager,
     ContestCoordinator,
+    ContestHud,
     ContestLoop,
     ContestRecordingManager,
     GameSessionManager,
     buildGameSystemPrompt,
+    defaultJudge,
     filterRecordingManifest,
     getArenaJoinInfo,
     getContestGamePreset,
     listContestGamePresets,
+    scoreTowerBattle,
     serializeRecordingManifest,
 } from './contest/index.js';
+import { runMinecraftCommand } from './minecraft_server.js';
 import { getGpt56Profiles } from './model_profiles.js';
 import { ensureSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
@@ -50,6 +54,7 @@ let contestReady = null;
 let contestLoop = null;
 let gameSessionManager = null;
 const contestArenaManager = new ContestArenaManager();
+const contestHud = new ContestHud({ getLeader: getContestLeader });
 const contestRecordingManager = new ContestRecordingManager({
     requestAgent: requestContestRecordingCommand,
 });
@@ -208,7 +213,7 @@ async function ensureContest(options) {
     if (!resolved?.enabled) return null;
     if (!contestReady) {
         const root = getContestRoot(resolved);
-        const coordinatorOptions = { root };
+        const coordinatorOptions = { root, judge: judgeContest };
         contestReady = (existsSync(path.join(root, 'state.json'))
             ? ContestCoordinator.load(coordinatorOptions)
             : ContestCoordinator.create(coordinatorOptions)
@@ -235,6 +240,7 @@ async function ensureContest(options) {
             contestLoop = new ContestLoop({
                 coordinator,
                 intervalMs: resolved.tick_interval_ms ?? 1000,
+                onTick: view => contestHud.sync(view),
                 onUpdate: async view => {
                     emitContestUpdate();
                     if (gameSessionManager) {
@@ -288,6 +294,7 @@ function defaultSettingsForProfile(profile) {
 
 function buildGameAgentSettings(profile, gameSession) {
     const settings = defaultSettingsForProfile(profile);
+    settings.profile.speak_model = 'elevenlabs';
     settings.load_memory = false;
     settings.init_message = null;
     settings.speak = true;
@@ -301,6 +308,8 @@ function buildGameAgentSettings(profile, gameSession) {
     settings.game_session = {
         ...gameSession,
         speakAll: true,
+        serverBroadcastVoice: true,
+        talkOverMining: true,
         systemPrompt: buildGameSystemPrompt(gameSession.systemPrompt),
     };
     return settings;
@@ -331,6 +340,78 @@ function sendGameDirective(agentName, prompt) {
     });
 }
 
+function requestGameTowerReport(agentName) {
+    const connection = agent_connections[agentName];
+    if (!connection?.socket || !connection.in_game) {
+        return Promise.resolve(null);
+    }
+    return new Promise(resolve => {
+        connection.socket.timeout(20000).emit('game-tower-report', (error, result) => {
+            if (error || !result?.success) {
+                console.warn(
+                    `Could not measure tower for ${agentName}: `
+                    + (error ? 'timed out' : result?.error || 'unknown error')
+                );
+                resolve(null);
+                return;
+            }
+            resolve(result.report);
+        });
+    });
+}
+
+async function collectTowerReports(participantIds) {
+    const reports = await Promise.all(participantIds.map(requestGameTowerReport));
+    return reports
+        .map((report, index) => report && {
+            ...report,
+            participantId: participantIds[index],
+        })
+        .filter(Boolean);
+}
+
+async function getContestLeader(contest) {
+    let results;
+    if (contest.rules?.type === 'tower_battle') {
+        const floorY = getArenaJoinInfo().arena.center.y;
+        const reports = await collectTowerReports(contest.participantIds);
+        results = scoreTowerBattle({
+            reports,
+            floorY,
+            participantIds: contest.participantIds,
+        }).filter(result => result.score > 0);
+    } else {
+        results = defaultJudge(contest).filter(result => !result.disqualified);
+    }
+    if (results.length === 0) return null;
+    results.sort((left, right) =>
+        right.score - left.score || left.participantId.localeCompare(right.participantId)
+    );
+    const leaders = results.filter(result => result.score === results[0].score);
+    return {
+        ...results[0],
+        participantId: leaders.map(result => result.participantId).join(' & '),
+    };
+}
+
+/**
+ * Tower battle winners are measured from what is standing in the arena when the
+ * clock runs out, so a bot that builds and never announces it still wins.
+ */
+async function judgeContest(contest) {
+    if (contest.rules?.type !== 'tower_battle') {
+        return defaultJudge(contest);
+    }
+    const floorY = getArenaJoinInfo().arena.center.y;
+    const reports = await collectTowerReports(contest.participantIds);
+    const results = scoreTowerBattle({
+        reports,
+        floorY,
+        participantIds: contest.participantIds,
+    });
+    return results;
+}
+
 function requestContestRecordingCommand(agentName, event, options) {
     const connection = agent_connections[agentName];
     if (!connection?.socket || !connection.in_game) {
@@ -349,6 +430,9 @@ function requestContestRecordingCommand(agentName, event, options) {
 }
 
 async function startContestGame(gameId, options = {}) {
+    if (!hasKey('ELEVENLABS_API_KEY')) {
+        throw new Error('ELEVENLABS_API_KEY is required for globally audible contest voices');
+    }
     await ensureContest();
     if (!gameSessionManager) {
         throw new Error('Game session manager is not enabled');
@@ -359,6 +443,7 @@ async function startContestGame(gameId, options = {}) {
         systemPrompt: options.systemPrompt,
         durationMs: options.durationMs,
     });
+    await contestHud.sync(contestCoordinator.view());
     return {
         ...result,
         game: listContestGamePresets().find(game => game.id === gameId),
@@ -1206,6 +1291,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     default:
                         throw new Error(`Unknown contest control: ${request?.action}`);
                 }
+                await contestHud.sync(contestCoordinator.view());
                 emitContestUpdate();
                 callback({ success: true, data });
             } catch (error) {
@@ -1227,6 +1313,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     curAgentName,
                     request?.payload
                 );
+                await contestHud.sync(contestCoordinator.view());
                 if (!contestCoordinator.snapshot().activeContestId) {
                     await contestRecordingManager.stop(request?.contestId);
                 }
@@ -1512,6 +1599,33 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('bot-output', (agentName, message) => {
             io.emit('bot-output', agentName, message);
+        });
+
+        socket.on('contest-speech', async (options, callback) => {
+            try {
+                const connection = agent_connections[curAgentName];
+                if (!curAgentName || !connection?.settings?.game_session?.serverBroadcastVoice) {
+                    throw new Error('Contest voice broadcast is only available to active game agents');
+                }
+                if (!hasKey('ELEVENLABS_API_KEY')) {
+                    throw new Error('ELEVENLABS_API_KEY is not configured');
+                }
+                const text = String(options?.text || '').trim().slice(0, 500);
+                if (!text) {
+                    throw new Error('Contest voice text is required');
+                }
+                const voiceId = resolveVoice(curAgentName);
+                const audio = await elevenLabsTTSConfig.sendAudioRequest(
+                    text,
+                    getVoicesConfig().elevenlabs_model,
+                    voiceId,
+                    elevenLabsTTSConfig.baseUrl
+                );
+                io.emit('bot-voice', { agentName: curAgentName, text, audio });
+                callback?.({ success: true, audio });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
         });
 
         socket.on('start-recording', (agentName, options, callback) => {

@@ -14,7 +14,10 @@ import {
     filterRecordingManifest,
     serializeRecordingManifest,
 } from '../src/mindcraft/contest/recording_exports.js';
-import { buildGameSystemPrompt } from '../src/mindcraft/contest/game_content.js';
+import {
+    buildGameSystemPrompt,
+    buildParticipantGameDirective,
+} from '../src/mindcraft/contest/game_content.js';
 
 const profiles = [
     {
@@ -101,7 +104,14 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         );
         const createdSettings = calls.find(([type]) => type === 'create')[1];
         assert.equal(createdSettings.game_session.systemPrompt, 'Be entertaining.');
+        assert.deepEqual(createdSettings.game_session.participantIds, ['speedy', 'thinker']);
+        assert.deepEqual(createdSettings.game_session.rivalIds, ['thinker']);
         assert.equal(createdSettings.profile.name, 'speedy');
+        const speedyDirective = calls.find(
+            ([type, name]) => type === 'directive' && name === 'speedy'
+        )[2];
+        assert.match(speedyDirective, /COMPETITORS: speedy, thinker/);
+        assert.match(speedyDirective, /Your rivals are thinker/);
 
         await coordinator.submit('game-1', 'speedy', {});
         await coordinator.submit('game-1', 'thinker', {});
@@ -173,10 +183,25 @@ test('system addendum remains separate and optional', () => {
 test('game content prompt requires audible, playful competitive banter', () => {
     const prompt = buildGameSystemPrompt('Use pirate slang.');
     assert.match(prompt, /Keep speaking/);
+    assert.match(prompt, /current strategy/);
     assert.match(prompt, /trash/);
     assert.match(prompt, /!startConversation/);
+    assert.match(prompt, /every rival/);
     assert.match(prompt, /no slurs/);
     assert.match(prompt, /SESSION-SPECIFIC ADDENDUM\nUse pirate slang\./);
+});
+
+test('participant game directives identify every rival and require strategy talk', () => {
+    const directive = buildParticipantGameDirective(
+        'Find a diamond.',
+        ['speedy', 'thinker', 'miner'],
+        'thinker'
+    );
+    assert.match(directive, /COMPETITORS: speedy, thinker, miner/);
+    assert.match(directive, /Your rivals are speedy, miner/);
+    assert.match(directive, /narrating your strategy/);
+    assert.match(directive, /!startConversation/);
+    assert.doesNotMatch(directive, /Your rivals are .*thinker/);
 });
 
 test('recording manifests filter by session without unrelated clips', () => {

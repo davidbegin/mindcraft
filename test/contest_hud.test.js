@@ -1,0 +1,125 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+    ContestHud,
+    formatContestBossbar,
+    formatContestScore,
+    formatContestTime,
+} from '../src/mindcraft/contest/contest_hud.js';
+
+function runningContest(overrides = {}) {
+    return {
+        id: 'game-1',
+        title: 'Tallest Tower',
+        durationMs: 60_000,
+        deadlineAt: 70_000,
+        status: 'running',
+        participantIds: ['alice', 'bob'],
+        rules: { type: 'tower_battle' },
+        results: [],
+        winnerIds: [],
+        ...overrides,
+    };
+}
+
+test('formats the countdown and game-specific scores', () => {
+    const contest = runningContest();
+    assert.equal(formatContestTime(60_001), '1:01');
+    assert.equal(formatContestTime(-1), '0:00');
+    assert.equal(formatContestScore(contest, { score: 23 }), '23 blocks');
+    assert.equal(
+        formatContestBossbar(contest, { participantId: 'alice', score: 23 }, 10_000),
+        'Tallest Tower · 1:00 · Leader: alice (23 blocks)'
+    );
+});
+
+test('announces a game and maintains a bossbar with timer and leader', async () => {
+    let now = 10_000;
+    const commands = [];
+    const contest = runningContest();
+    const hud = new ContestHud({
+        clock: () => now,
+        leaderRefreshMs: 10_000,
+        getLeader: async () => ({ participantId: 'alice', score: 23 }),
+        runCommand: async command => commands.push(command),
+    });
+
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.ok(commands.includes('bossbar add mindcraft:contest {"text":"Tallest Tower","color":"gold","bold":true}'));
+    assert.ok(commands.some(command => command.includes('title @a title {"text":"GAME ON!"')));
+    assert.ok(commands.some(command => command.includes('Tallest Tower · 1:00 · No leader yet')));
+
+    now = 11_000;
+    await hud.sync({ activeContest: contest, contests: [contest] });
+
+    assert.ok(commands.includes('bossbar set mindcraft:contest value 59'));
+    assert.ok(commands.some(command => command.includes('Leader: alice (23 blocks)')));
+});
+
+test('makes the final ten seconds visually and audibly urgent', async () => {
+    const commands = [];
+    const contest = runningContest({ deadlineAt: 19_000 });
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: async command => commands.push(command),
+    });
+
+    await hud.sync({ activeContest: contest, contests: [contest] });
+
+    assert.ok(commands.some(command =>
+        command.includes('title @a actionbar {"text":"9 SECONDS!"')
+    ));
+    assert.ok(commands.some(command => command.startsWith('playsound block.note_block.hat')));
+});
+
+test('announces ranked winners and removes the bossbar', async () => {
+    const commands = [];
+    const contest = runningContest();
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: async command => commands.push(command),
+    });
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    commands.length = 0;
+
+    const completed = {
+        ...contest,
+        status: 'completed',
+        winnerIds: ['bob'],
+        results: [
+            { participantId: 'bob', score: 31, rank: 1 },
+            { participantId: 'alice', score: 23, rank: 2 },
+        ],
+    };
+    await hud.sync({ activeContest: null, contests: [completed] });
+
+    assert.equal(commands[0], 'bossbar remove mindcraft:contest');
+    assert.ok(commands.some(command => command.includes('title @a title {"text":"WINNER!"')));
+    assert.ok(commands.some(command => command.includes('bob · 31 blocks')));
+    assert.ok(commands.some(command => command.includes('1. bob — 31 blocks')));
+});
+
+test('cleans up the HUD and explains cancellation', async () => {
+    const commands = [];
+    const contest = runningContest();
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: async command => commands.push(command),
+    });
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    commands.length = 0;
+
+    const cancelled = {
+        ...contest,
+        status: 'cancelled',
+        cancellationReason: 'Stopped by host',
+    };
+    await hud.sync({ activeContest: null, contests: [cancelled] });
+
+    assert.ok(commands.includes('bossbar remove mindcraft:contest'));
+    assert.ok(commands.some(command => command.includes('GAME CANCELLED')));
+    assert.ok(commands.some(command => command.includes('Stopped by host')));
+});

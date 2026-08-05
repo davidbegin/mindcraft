@@ -1,8 +1,19 @@
 export {
     CONTEST_STATUSES,
     ContestCoordinator,
+    defaultJudge,
 } from './contest_coordinator.js';
+export {
+    measureTowers,
+    scoreTowerBattle,
+} from './tower_scoring.js';
 export { ContestLoop } from './contest_loop.js';
+export {
+    ContestHud,
+    formatContestBossbar,
+    formatContestScore,
+    formatContestTime,
+} from './contest_hud.js';
 export {
     CONTEST_GAME_PRESETS,
     getContestGamePreset,
@@ -25,5 +36,6 @@ export {
 } from './recording_exports.js';
 export {
     GAME_CONTENT_SYSTEM_PROMPT,
+    buildParticipantGameDirective,
     buildGameSystemPrompt,
 } from './game_content.js';

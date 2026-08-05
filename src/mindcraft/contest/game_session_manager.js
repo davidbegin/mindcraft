@@ -1,3 +1,5 @@
+import { buildParticipantGameDirective } from './game_content.js';
+
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 
 function clone(value) {
@@ -146,6 +148,8 @@ export class GameSessionManager {
                 const settings = this.buildAgentSettings(profile, {
                     contestId: contest.id,
                     sessionId: this.active.sessionId,
+                    participantIds,
+                    rivalIds: participantIds.filter(name => name !== participant.name),
                     profileId: participant.profileId,
                     model: participant.model,
                     provider: participant.provider,
@@ -178,7 +182,10 @@ export class GameSessionManager {
 
             const started = await this.coordinator.startContest(contest.id);
             await Promise.all(participantIds.map(name =>
-                this.sendDirective(name, preset.prompt)
+                this.sendDirective(
+                    name,
+                    buildParticipantGameDirective(preset.prompt, participantIds, name)
+                )
             ));
             this.active.status = 'running';
             this.active.arenaReset = arenaReset;

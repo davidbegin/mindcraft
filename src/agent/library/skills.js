@@ -675,6 +675,7 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
         if (blockType.includes('bed'))
             if (useDelay) { await new Promise(resolve => setTimeout(resolve, blockPlaceDelay)); }
             bot.chat('/setblock ' + Math.floor(x) + ' ' + Math.floor(y) + ' ' + Math.floor(z-1) + ' ' + blockType + '[part=head]');
+        bot.recordPlacedBlock?.(target_dest.x, target_dest.y, target_dest.z);
         log(bot, `Used /setblock to place ${blockType} at ${target_dest}.`);
         return true;
     }

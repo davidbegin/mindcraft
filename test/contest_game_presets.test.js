@@ -18,8 +18,9 @@ test('lists the starter contest games for the UI', () => {
 test('tower battle and diamond race presets include judge metrics', () => {
     const tower = getContestGamePreset('tower_battle');
     assert.equal(tower.rules.type, 'tower_battle');
-    assert.equal(tower.rules.metrics[0].path, 'height');
+    assert.equal(tower.rules.scoring, 'tallest-standing-tower');
     assert.equal(tower.metadata.pvp, true);
+    assert.match(tower.prompt, /Nothing is submitted/);
 
     const diamonds = getContestGamePreset('diamond_race');
     assert.equal(diamonds.rules.winItem, 'diamond');

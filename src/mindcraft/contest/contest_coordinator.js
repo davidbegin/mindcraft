@@ -96,7 +96,7 @@ function scoreSubmission(contest, submission) {
     };
 }
 
-function defaultJudge(contest) {
+export function defaultJudge(contest) {
     return contest.participantIds.map(participantId => {
         const submission = contest.submissions[participantId];
         return {

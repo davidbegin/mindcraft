@@ -289,8 +289,16 @@ The logic is as follows:
 - New messages received during the delay will reset the delay following this logic, and be queued to respond in bulk
 */
 const talkOverActions = ['stay', 'followPlayer', 'mode:']; // all mode actions
+const contestTalkOverActions = ['digDown', 'collectBlocks', 'mine'];
 const fastDelay = 200;
 const longDelay = 5000;
+function canTalkOverCurrentAction() {
+    const allowed = settings.game_session?.talkOverMining
+        ? [...talkOverActions, ...contestTalkOverActions]
+        : talkOverActions;
+    return allowed.some(action => agent.actions.currentActionLabel.includes(action));
+}
+
 async function _scheduleProcessInMessage(sender, received, convo) {
     if (convo.inMessageTimer)
         clearTimeout(convo.inMessageTimer);
@@ -300,8 +308,7 @@ async function _scheduleProcessInMessage(sender, received, convo) {
 
     if (!agent.isIdle() && otherAgentBusy) {
         // both are busy
-        let canTalkOver = talkOverActions.some(a => agent.actions.currentActionLabel.includes(a));
-        if (canTalkOver)
+        if (canTalkOverCurrentAction())
             scheduleResponse(fastDelay)
         // otherwise don't respond
     }
@@ -310,8 +317,7 @@ async function _scheduleProcessInMessage(sender, received, convo) {
         scheduleResponse(longDelay);
     else if (!agent.isIdle()) {
         // I'm busy but other bot isn't
-        let canTalkOver = talkOverActions.some(a => agent.actions.currentActionLabel.includes(a));
-        if (canTalkOver) {
+        if (canTalkOverCurrentAction()) {
             scheduleResponse(fastDelay);
         }
         else {
