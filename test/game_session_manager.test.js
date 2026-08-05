@@ -99,7 +99,12 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         const result = await manager.start({
             gameId: 'tower',
             participants: [
-                { profileId: 'fast', name: 'speedy', voice: 'Trickster' },
+                {
+                    profileId: 'fast',
+                    name: 'speedy',
+                    voice: 'Trickster',
+                    systemPrompt: 'Be a reckless optimist.',
+                },
                 { profileId: 'smart', name: 'thinker' },
             ],
             systemPrompt: 'Be entertaining.',
@@ -124,6 +129,7 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         assert.equal(createdSettings.game_session.winItem, 'diamond');
         assert.equal(createdSettings.game_session.contestType, 'diamond_race');
         assert.equal(createdSettings.game_session.voice, 'Trickster');
+        assert.equal(createdSettings.game_session.personalityPrompt, 'Be a reckless optimist.');
         assert.equal(createdSettings.profile.name, 'speedy');
         assert.deepEqual(createdSettings.profile.speak_model, {
             api: 'elevenlabs',
@@ -240,6 +246,12 @@ test('participant validation rejects catalog, name, and collision errors', () =>
             { profileId: 'fast', name: 'valid_name', voice: 'v'.repeat(129) },
         ], profiles),
         /voice must be 128/
+    );
+    assert.throws(
+        () => validateGameParticipants([
+            { profileId: 'fast', name: 'valid_name', systemPrompt: 'p'.repeat(4001) },
+        ], profiles),
+        /system prompt must be 4000/
     );
 });
 
