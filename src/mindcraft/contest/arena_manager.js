@@ -240,6 +240,7 @@ export class ContestArenaManager {
         if (!Array.isArray(participants) || participants.length === 0) {
             throw new Error('Arena reset requires at least one participant');
         }
+        participants.forEach(assertPlayerName);
 
         const worldCommands = buildWorldResetCommands(preset.id);
         for (const command of worldCommands) {

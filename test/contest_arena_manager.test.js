@@ -4,10 +4,18 @@ import test from 'node:test';
 import { ContestArenaManager, getArenaJoinInfo, parseOnlinePlayers } from '../src/mindcraft/contest/arena_manager.js';
 import { getContestGamePreset } from '../src/mindcraft/contest/game_presets.js';
 
+function listReply(names) {
+    return `There are ${names.length} of a max of 20 players online: ${names.join(', ')}`;
+}
+
 test('radically resets the arena and every diamond-race participant', async () => {
     const commands = [];
     const manager = new ContestArenaManager({
-        runCommand: async command => commands.push(command),
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') return listReply(['alice', 'bob']);
+            return 'ok';
+        },
     });
 
     const result = await manager.prepare(
@@ -18,7 +26,7 @@ test('radically resets the arena and every diamond-race participant', async () =
 
     assert.equal(result.id, 'simple-arena-v1');
     assert.equal(result.size, 65);
-    assert.equal(result.resetCommandCount, commands.length);
+    assert.equal(result.resetCommandCount, commands.filter(command => command !== 'list').length);
     assert.ok(commands.some(command => command.startsWith('forceload add ')));
     assert.ok(commands.some(command => command.includes(' diamond_ore')));
     assert.ok(commands.includes('clear alice'));
@@ -27,6 +35,10 @@ test('radically resets the arena and every diamond-race participant', async () =
     assert.ok(commands.includes('gamemode survival bob'));
     assert.ok(commands.some(command => command.startsWith('tp alice ')));
     assert.ok(commands.some(command => command.startsWith('spawnpoint bob ')));
+    assert.ok(
+        commands.indexOf('list') < commands.indexOf('clear alice'),
+        'must confirm players are online before clear/tp'
+    );
 
     for (const command of commands.filter(command => command.startsWith('fill '))) {
         const [, x1, y1, z1, x2, y2, z2] = command.split(' ').map(Number);
@@ -40,7 +52,11 @@ test('radically resets the arena and every diamond-race participant', async () =
 test('builds a blank tower arena with equal kits and no diamond ore', async () => {
     const commands = [];
     const manager = new ContestArenaManager({
-        runCommand: async command => commands.push(command),
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') return listReply(['alice', 'bob', 'charlie']);
+            return 'ok';
+        },
     });
 
     await manager.prepare(
@@ -74,6 +90,46 @@ test('rejects unsafe player names before issuing server commands', async () => {
         /Invalid Minecraft player name/
     );
     assert.equal(commandCount, 0);
+});
+
+test('waits for missing Minecraft players before clear/tp and times out clearly', async () => {
+    const commands = [];
+    let lists = 0;
+    const manager = new ContestArenaManager({
+        playerWaitTimeoutMs: 50,
+        playerWaitPollMs: 10,
+        sleep: async () => {},
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') {
+                lists += 1;
+                return listReply(lists >= 3 ? ['alice', 'bob'] : ['alice']);
+            }
+            return 'ok';
+        },
+    });
+
+    await manager.prepare(
+        getContestGamePreset('tower_battle'),
+        ['alice', 'bob'],
+        { spectators: [] }
+    );
+    assert.ok(lists >= 3);
+    assert.ok(commands.indexOf('list') < commands.indexOf('clear bob'));
+
+    const failing = new ContestArenaManager({
+        playerWaitTimeoutMs: 30,
+        playerWaitPollMs: 5,
+        sleep: async () => {},
+        runCommand: async command => {
+            if (command === 'list') return listReply(['alice']);
+            return 'ok';
+        },
+    });
+    await assert.rejects(
+        failing.prepare(getContestGamePreset('tower_battle'), ['alice', 'bob'], { spectators: [] }),
+        /Timed out waiting for Minecraft players before arena setup: bob/
+    );
 });
 
 test('parses online players and strips team suffixes from list output', async () => {
