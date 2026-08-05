@@ -1,7 +1,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { mkdirSync, writeFileSync } from 'fs';
-import { createCanvas } from 'canvas';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
+import { createCanvas, Image } from 'canvas';
 
 // Generates deterministic 64x64 Minecraft skins so every bot is visually unique
 // and its LLM model is identifiable at a glance:
@@ -12,6 +12,7 @@ import { createCanvas } from 'canvas';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const SKINS_DIR = path.resolve(__dirname, '../../skins');
+export const LOGOS_DIR = path.resolve(__dirname, '../../assets/model-logos');
 // The MC container bind-mounts SKINS_DIR at /skins, and the mindserver serves
 // it at /skins, so one path string works for both FabricTailor and the web UI.
 export const SKINS_MOUNT = '/skins';
@@ -23,8 +24,30 @@ const MODEL_FAMILIES = [
     { match: /luna/i,  key: 'luna',  word: 'LUNA', color: '#c77dff', mcColor: 'light_purple' },
 ];
 
-const PROVIDER_LOGOS = {
-    // 8x8 approximation of the OpenAI hexagonal knot, used for gpt-* models.
+// Maps model names (and API providers as a fallback) to the company whose
+// logo goes on the skin. Order matters: model-maker patterns come first so
+// e.g. a llama model served through groq still shows Meta's logo.
+const PROVIDER_PATTERNS = [
+    [/gpt|davinci|openai|^o[0-9]/i, 'openai'],
+    [/claude|anthropic/i, 'anthropic'],
+    [/gemini|gemma|palm|bard/i, 'gemini'],
+    [/mistral|mixtral|codestral|ministral/i, 'mistral'],
+    [/llama|meta/i, 'meta'],
+    [/deepseek/i, 'deepseek'],
+    [/qwen|qwq/i, 'qwen'],
+    [/grok|xai/i, 'xai'],
+    [/groq/i, 'groq'],
+    [/huggingface/i, 'huggingface'],
+    [/cerebras/i, 'cerebras'],
+    [/replicate/i, 'replicate'],
+    [/ollama/i, 'ollama'],
+    [/cursor|composer/i, 'cursor'],
+    [/google/i, 'gemini'],
+];
+
+// Hand-drawn 8x8 fallbacks, used when no downloaded logo asset is available.
+const FALLBACK_LOGOS = {
+    // Approximation of the OpenAI hexagonal knot.
     openai: [
         '..####..',
         '.#....#.',
@@ -51,18 +74,41 @@ const PROVIDER_LOGOS = {
 // 3x5 pixel font ('I' is 1px wide so 4-letter words fit across the chest).
 const FONT = {
     A: ['.#.', '#.#', '###', '#.#', '#.#'],
+    B: ['##.', '#.#', '##.', '#.#', '##.'],
+    C: ['.##', '#..', '#..', '#..', '.##'],
+    D: ['##.', '#.#', '#.#', '#.#', '##.'],
     E: ['###', '#..', '##.', '#..', '###'],
+    F: ['###', '#..', '##.', '#..', '#..'],
     G: ['.##', '#..', '#.#', '#.#', '.##'],
+    H: ['#.#', '#.#', '###', '#.#', '#.#'],
     I: ['#', '#', '#', '#', '#'],
+    J: ['..#', '..#', '..#', '#.#', '.#.'],
+    K: ['#.#', '#.#', '##.', '#.#', '#.#'],
     L: ['#..', '#..', '#..', '#..', '###'],
     M: ['#.#', '###', '###', '#.#', '#.#'],
     N: ['#.#', '###', '###', '###', '#.#'],
     O: ['.#.', '#.#', '#.#', '#.#', '.#.'],
     P: ['##.', '#.#', '##.', '#..', '#..'],
+    Q: ['.#.', '#.#', '#.#', '.#.', '..#'],
     R: ['##.', '#.#', '##.', '#.#', '#.#'],
     S: ['.##', '#..', '.#.', '..#', '##.'],
     T: ['###', '.#.', '.#.', '.#.', '.#.'],
     U: ['#.#', '#.#', '#.#', '#.#', '###'],
+    V: ['#.#', '#.#', '#.#', '#.#', '.#.'],
+    W: ['#.#', '#.#', '###', '###', '#.#'],
+    X: ['#.#', '#.#', '.#.', '#.#', '#.#'],
+    Y: ['#.#', '#.#', '.#.', '.#.', '.#.'],
+    Z: ['###', '..#', '.#.', '#..', '###'],
+    0: ['###', '#.#', '#.#', '#.#', '###'],
+    1: ['.#.', '##.', '.#.', '.#.', '###'],
+    2: ['##.', '..#', '.#.', '#..', '###'],
+    3: ['###', '..#', '.##', '..#', '###'],
+    4: ['#.#', '#.#', '###', '..#', '..#'],
+    5: ['###', '#..', '##.', '..#', '##.'],
+    6: ['.##', '#..', '###', '#.#', '###'],
+    7: ['###', '..#', '.#.', '.#.', '.#.'],
+    8: ['###', '#.#', '###', '#.#', '###'],
+    9: ['###', '#.#', '###', '..#', '##.'],
 };
 
 const SKIN_TONES = ['#f2c79c', '#e6ac73', '#c98d5a', '#a06a3d', '#8d5524', '#ffd9b3'];
@@ -83,6 +129,22 @@ function modelString(model) {
     return model.model || 'unknown';
 }
 
+export function detectProvider(model) {
+    const label = modelString(model);
+    // The model name identifies the maker; the api field is only a fallback
+    // (e.g. {api: 'cursor', model: 'gpt-5.4-mini'} is an OpenAI model).
+    for (const [pattern, provider] of PROVIDER_PATTERNS) {
+        if (pattern.test(label)) return provider;
+    }
+    const api = typeof model === 'object' && model?.api ? model.api : null;
+    if (api) {
+        for (const [pattern, provider] of PROVIDER_PATTERNS) {
+            if (pattern.test(api)) return provider;
+        }
+    }
+    return null;
+}
+
 export function modelInfo(model) {
     const label = modelString(model);
     const family = MODEL_FAMILIES.find(f => f.match.test(label));
@@ -93,9 +155,69 @@ export function modelInfo(model) {
         word,
         color: family?.color || '#e8e8e8',
         mcColor: family?.mcColor || 'white',
-        logo: /gpt/i.test(label) ? 'openai' : 'generic',
+        provider: detectProvider(model),
         teamId: 'model_' + (family?.key || label.replace(/[^a-z0-9]/gi, '').slice(0, 12).toLowerCase() || 'other'),
     };
+}
+
+const logoBitmapCache = new Map();
+
+/**
+ * Converts a downloaded official logo PNG (assets/model-logos/<provider>.png)
+ * into a pixel-art bitmap of `size`x`size` by sampling its alpha silhouette.
+ * Falls back to a hand-drawn glyph when the asset is missing or unusable.
+ */
+export function logoBitmap(provider, size = 8) {
+    const key = `${provider}:${size}`;
+    if (logoBitmapCache.has(key)) return logoBitmapCache.get(key);
+
+    let bitmap = null;
+    const file = provider ? path.join(LOGOS_DIR, `${provider}.png`) : null;
+    if (file && existsSync(file)) {
+        try {
+            const img = new Image();
+            img.src = readFileSync(file); // synchronous decode in node-canvas
+            const canvas = createCanvas(size, size);
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            const scale = Math.min(size / img.width, size / img.height);
+            const w = img.width * scale, h = img.height * scale;
+            ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+            const data = ctx.getImageData(0, 0, size, size).data;
+            const rasterize = (threshold) => {
+                const rows = [];
+                let set = 0;
+                for (let y = 0; y < size; y++) {
+                    let row = '';
+                    for (let x = 0; x < size; x++) {
+                        const on = data[(y * size + x) * 4 + 3] >= threshold;
+                        row += on ? '#' : '.';
+                        if (on) set++;
+                    }
+                    rows.push(row);
+                }
+                return { rows, set };
+            };
+            // Dense marks (e.g. the OpenAI knot) become blobs at low thresholds
+            // and fragments at strict ones. Pick the threshold whose ink
+            // coverage is closest to a typical logo mark (~40% of the tile).
+            const targetSet = Math.round(size * size * 0.4);
+            let best = null;
+            for (const threshold of [224, 192, 160, 128, 96, 64, 48]) {
+                const candidate = rasterize(threshold);
+                if (candidate.set < 4 || candidate.set > size * size - 4) continue;
+                if (!best || Math.abs(candidate.set - targetSet) < Math.abs(best.set - targetSet)) {
+                    best = candidate;
+                }
+            }
+            if (best) bitmap = best.rows;
+        } catch (error) {
+            console.warn(`Could not rasterize logo for ${provider}: ${error.message}`);
+        }
+    }
+    if (!bitmap) bitmap = FALLBACK_LOGOS[provider] || FALLBACK_LOGOS.generic;
+    logoBitmapCache.set(key, bitmap);
+    return bitmap;
 }
 
 function shade(hex, factor) {
@@ -196,10 +318,11 @@ export function renderSkin(name, model) {
     box(20, 16, 8, 4, shirt, 0.08);   // top
     box(28, 16, 8, 4, shirt, 0.08);   // bottom
 
-    // Model band (rows 21-25) around front + sides; front carries the word.
-    box(20, 21, 8, 5, info.color);
-    box(16, 21, 4, 5, info.color);
-    box(28, 21, 4, 5, info.color);
+    // Model band (rows 20-26) around front + sides; front carries the word
+    // (letters occupy rows 21-25, leaving a 1px color margin above and below).
+    box(20, 20, 8, 7, info.color);
+    box(16, 20, 4, 7, info.color);
+    box(28, 20, 4, 7, info.color);
     // Word split: first letter on right arm, middle on torso, last on left arm.
     const word = info.word;
     const middle = word.length <= 2 ? word : word.slice(1, -1);
@@ -208,8 +331,8 @@ export function renderSkin(name, model) {
     box(20, 30, 8, 1, boots);
     px(23, 30, info.color); px(24, 30, info.color);
 
-    // Back: provider logo on the shirt.
-    drawBitmap(PROVIDER_LOGOS[info.logo], 32, 22, '#ffffff');
+    // Back: official model-provider logo on the shirt.
+    drawBitmap(logoBitmap(info.provider), 32, 22, '#ffffff');
     box(32, 31, 8, 1, info.color);
 
     // --- Arms (right base at 40..55,16..31; left at 32..47,48..63) ---
@@ -221,7 +344,7 @@ export function renderSkin(name, model) {
         box(bx + 4, by, 4, 4, shirt, 0.08);        // top
         box(bx + 8, by, 4, 4, skinTone, 0.06);     // bottom (hand)
         // band wraps the whole arm
-        for (const fx of [bx, bx + 4, bx + 8, bx + 12]) box(fx, by + 5, 4, 5, info.color);
+        for (const fx of [bx, bx + 4, bx + 8, bx + 12]) box(fx, by + 4, 4, 7, info.color);
         // hands
         for (const fx of [bx, bx + 4, bx + 8, bx + 12]) box(fx, by + 13, 4, 3, skinTone, 0.06);
         if (letter && FONT[letter]) drawWordRow(letter, bx + 4, 4, by + 5, bandText);
@@ -255,11 +378,14 @@ export function ensureSkin(name, model) {
     const file = path.join(SKINS_DIR, `${name}.png`);
     writeFileSync(file, canvas.toBuffer('image/png'));
     const rel = `${SKINS_MOUNT}/${name}.png`;
+    const info = modelInfo(model);
     return {
         model: 'classic',   // skin variant (classic 4px arms), not the LLM
         file: rel,          // path inside the MC server container (FabricTailor)
         path: rel,          // URL path served by the mindserver (web UI)
         generated: true,
-        label: modelInfo(model).label,
+        label: info.label,  // full model name, e.g. gpt-5.4-mini
+        word: info.word,    // short word drawn on the chest
+        color: info.color,  // family color, for UI badges
     };
 }

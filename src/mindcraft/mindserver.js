@@ -8,8 +8,15 @@ import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, mkdtempSync
 import { tmpdir } from 'os';
 import { spawn } from 'child_process';
 import { hasKey } from '../utils/keys.js';
+import {
+    VOICE_POOL, VOICE_DESCRIPTIONS, DEFAULT_ELEVENLABS_MODEL,
+    getVoicesConfig, saveVoicesConfig, autoVoiceName, resolveVoice,
+} from '../agent/tts_voices.js';
+import { TTSConfig as elevenLabsTTSConfig } from '../models/elevenlabs.js';
 import { ColonyCoordinator } from './colony/colony_coordinator.js';
 import { getGpt56Profiles } from './model_profiles.js';
+import { ensureSkin, SKINS_DIR } from './skins.js';
+import { assignModelTeam } from './nametags.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Mindserver is:
@@ -533,6 +540,15 @@ class AgentConnection {
 }
 
 export async function registerAgent(settings, viewer_port) {
+    // Every bot gets a generated skin keyed to its name + model so it is
+    // visually unique in-game. Hand-authored profile skins are left alone.
+    try {
+        if (!settings.profile.skin || settings.profile.skin.generated) {
+            settings.profile.skin = ensureSkin(settings.profile.name, settings.profile.model);
+        }
+    } catch (error) {
+        console.error(`Failed to generate skin for ${settings.profile.name}:`, error);
+    }
     let agentConnection = new AgentConnection(settings, viewer_port);
     const coordinator = await ensureColony(settings.colony);
     let registeredColonyAgent = null;
@@ -622,6 +638,33 @@ function listRecordings() {
     }
 }
 
+// Everything the Voices modal needs: the editable config, the voice pool,
+// and every known bot (connected agents + bots already pinned in voices.json).
+function voicesOverview() {
+    const config = getVoicesConfig();
+    const botNames = new Set([
+        ...Object.keys(agent_connections),
+        ...Object.keys(config.bots),
+    ]);
+    return {
+        success: true,
+        config,
+        defaultModel: DEFAULT_ELEVENLABS_MODEL,
+        pool: Object.keys(VOICE_POOL).map(name => ({
+            name,
+            id: VOICE_POOL[name],
+            description: VOICE_DESCRIPTIONS[name] || '',
+        })),
+        bots: [...botNames].sort().map(name => ({
+            name,
+            connected: Boolean(agent_connections[name]),
+            assigned: config.bots[name] || null,
+            autoVoice: autoVoiceName(name),
+        })),
+        previewAvailable: Boolean(hasKey('ELEVENLABS_API_KEY')),
+    };
+}
+
 // —— Recording export (zip download / folder copy) ——
 
 function parseExportWindow(query) {
@@ -689,6 +732,8 @@ export function createMindServer(host_public = false, port = 8080) {
     app.use(express.static(path.join(__dirname, 'public')));
     // Serve bot data (POV recordings, screenshots) so the UI can play/download them
     app.use('/bots', express.static(path.join(projectRoot, 'bots')));
+    // Generated bot skins (same /skins path the MC container sees them under)
+    app.use('/skins', express.static(SKINS_DIR));
 
     // What an export window would contain, so the UI can preview before downloading.
     app.get('/api/recordings/export-info', (req, res) => {
@@ -892,6 +937,9 @@ export function createMindServer(host_public = false, port = 8080) {
                 agent_connections[agentName].in_game = true;
                 curAgentName = agentName;
                 agentsStatusUpdate();
+                // Colored nametag + model suffix, visible from any distance.
+                assignModelTeam(agentName, agent_connections[agentName].settings?.profile?.model)
+                    .catch(error => console.warn(`Nametag assignment failed for ${agentName}:`, error));
                 if (colonyCoordinator) {
                     const colonyAgent = colonyCoordinator.snapshot().agents[agentName];
                     if (colonyAgent?.desired === false) {
@@ -1083,6 +1131,45 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('list-recordings', (callback) => {
             callback(listRecordings());
+        });
+
+        socket.on('get-voices', (callback) => {
+            try {
+                callback(voicesOverview());
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('set-voices', (config, callback) => {
+            try {
+                saveVoicesConfig(config || {});
+                // Broadcast so other open dashboards refresh their Voices modal data.
+                io.emit('voices-update');
+                callback(voicesOverview());
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        // Generates a short ElevenLabs sample and returns base64 mp3 for
+        // in-browser playback. `voice` previews a specific pool name / raw ID;
+        // omitting it previews what `botName` would actually sound like.
+        socket.on('preview-voice', async (options, callback) => {
+            const { voice = null, botName = null, text = null } = options || {};
+            try {
+                if (!hasKey('ELEVENLABS_API_KEY')) {
+                    throw new Error('ELEVENLABS_API_KEY is not configured');
+                }
+                const voiceId = resolveVoice(botName || 'preview', voice);
+                const sample = String(text || `Hi, I'm ${botName || 'a Mindcraft bot'}. This is how I sound in the colony.`).slice(0, 220);
+                const audio = await elevenLabsTTSConfig.sendAudioRequest(
+                    sample, getVoicesConfig().elevenlabs_model, voiceId, elevenLabsTTSConfig.baseUrl
+                );
+                callback({ success: true, audio });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
         });
 
         socket.on('listen-to-agents', () => {

@@ -8,6 +8,9 @@ bots/**/action-code/**
 bots/**/
 bots/*.jsonl
 
+# generated bot skins (recreated on agent registration)
+skins/
+
 # colony runtime state (generated while bots play)
 colony/journal.jsonl
 colony/state.json

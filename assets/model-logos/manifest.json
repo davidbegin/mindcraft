@@ -1,0 +1,16 @@
+{
+    "openai": { "source": "https://upload.wikimedia.org/wikipedia/commons/6/66/OpenAI_logo_2025_%28symbol%29.svg" },
+    "anthropic": { "source": "https://cdn.simpleicons.org/anthropic" },
+    "gemini": { "source": "https://cdn.simpleicons.org/googlegemini" },
+    "mistral": { "source": "https://cdn.simpleicons.org/mistralai" },
+    "meta": { "source": "https://cdn.simpleicons.org/meta" },
+    "deepseek": { "source": "https://cdn.simpleicons.org/deepseek" },
+    "qwen": { "source": "https://cdn.simpleicons.org/qwen" },
+    "xai": { "source": "https://upload.wikimedia.org/wikipedia/commons/9/93/XAI_Logo.svg" },
+    "groq": { "source": "https://upload.wikimedia.org/wikipedia/commons/c/cc/Groq_logo.svg" },
+    "huggingface": { "source": "https://cdn.simpleicons.org/huggingface" },
+    "cerebras": { "source": "https://upload.wikimedia.org/wikipedia/commons/1/15/Cerebras_logo.svg" },
+    "replicate": { "source": "https://cdn.simpleicons.org/replicate" },
+    "ollama": { "source": "https://cdn.simpleicons.org/ollama" },
+    "cursor": { "source": "https://cdn.simpleicons.org/cursor" }
+}

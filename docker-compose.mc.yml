@@ -9,7 +9,11 @@ services:
       ONLINE_MODE: "FALSE"
       MODE: survival
       DIFFICULTY: normal
+      # Fabric + FabricTailor provide per-bot custom skins on this offline server.
+      TYPE: FABRIC
       VERSION: "1.21.6"
+      MODRINTH_PROJECTS: fabrictailor
+      MODRINTH_DOWNLOAD_DEPENDENCIES: required
       LEVEL: mindcraft-colony-survival-v1
       MEMORY: 2G
       SPAWN_PROTECTION: 0
@@ -17,6 +21,8 @@ services:
       MOTD: "Mindcraft Persistent Survival Colony"
     volumes:
       - mindcraft-mc-data:/data
+      # Generated bot skins; FabricTailor reads them via `/skin set upload`.
+      - ./skins:/skins:ro
     restart: unless-stopped
 
 volumes:

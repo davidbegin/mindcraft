@@ -52,7 +52,10 @@ export function getFullState(agent) {
     const skin = agent.prompter?.profile?.skin
         ? {
             model: agent.prompter.profile.skin.model || null,
-            path: agent.prompter.profile.skin.path || null
+            path: agent.prompter.profile.skin.path || null,
+            file: agent.prompter.profile.skin.file || null,
+            label: agent.prompter.profile.skin.label || null,
+            color: agent.prompter.profile.skin.color || null
         }
         : null;
 

@@ -389,6 +389,12 @@
             image-rendering: pixelated;
         }
 
+        .avatar-wrap canvas.skin-avatar {
+            width: 44px;
+            height: 88px;
+            image-rendering: pixelated;
+        }
+
         .identity h3 {
             margin: 0;
             font-size: 1.15rem;
@@ -576,6 +582,99 @@
             word-break: break-all;
             flex-basis: 100%;
         }
+
+        /* —— Voices —— */
+        .voices-hint {
+            color: var(--text-dim);
+            font-size: 0.82rem;
+            margin-bottom: 12px;
+        }
+        .voices-global {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .voices-global select,
+        .voices-global input[type="text"] {
+            flex: 1;
+            min-width: 0;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            padding: 5px 7px;
+        }
+        .voice-row {
+            display: grid;
+            grid-template-columns: minmax(110px, 150px) 1fr auto;
+            align-items: center;
+            gap: 10px;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-inset);
+            margin-bottom: 6px;
+            font-size: 0.85rem;
+        }
+        .voice-name {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .voice-dot {
+            flex-shrink: 0;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--text-mute);
+        }
+        .voice-dot.on { background: var(--lime); box-shadow: 0 0 6px var(--lime); }
+        .voice-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex-wrap: wrap;
+        }
+        .voice-controls select,
+        .voice-controls input[type="text"] {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            padding: 5px 7px;
+            min-width: 0;
+        }
+        .voice-controls select { flex: 1 1 220px; }
+        .voice-controls input[type="text"] { flex: 1 1 180px; font-family: var(--mono); font-size: 0.78rem; }
+        .voice-hint {
+            color: var(--text-mute);
+            font-size: 0.75rem;
+            white-space: nowrap;
+        }
+        .btn-preview {
+            padding: 5px 10px;
+            white-space: nowrap;
+        }
+        .voices-add {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .voices-add .msg-input { flex: 1 1 220px; max-width: 320px; }
+        .voices-status {
+            margin-top: 8px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            min-height: 1.2em;
+        }
+        .voices-status.error { color: var(--red); }
 
         .menu-wrap { position: relative; }
 
@@ -1291,6 +1390,7 @@
         </div>
         <div class="footer-actions">
             <button class="btn btn-ghost" onclick="window.open('/live.html', '_blank')">📺 Live Wall</button>
+            <button class="btn btn-ghost" onclick="openVoices()">🎙 Voices</button>
             <button class="btn btn-ghost" onclick="openRecordings()">🎥 Recordings</button>
             <button class="btn btn-ghost" onclick="disconnectAllAgents()">Disconnect All</button>
             <button class="btn btn-danger" onclick="confirmShutdown()">Full Shutdown</button>
@@ -1340,6 +1440,55 @@
                     <span class="rec-export-status" id="recExportStatus"></span>
                 </div>
                 <div id="recordingsList"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="voicesModal" class="modal-backdrop">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Voices</h2>
+                <div class="footer-actions">
+                    <button class="btn btn-ghost" onclick="refreshVoices()">Refresh</button>
+                    <button class="btn btn-danger" onclick="closeVoices()">Close</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="voices-hint">
+                    Bots speak with ElevenLabs voices. Pin a voice per bot, or leave bots on the default —
+                    “Auto” gives every bot its own stable voice from the pool.
+                </div>
+                <div class="voices-global">
+                    <div class="setting-wrapper">
+                        <label title="ElevenLabs TTS model used by every bot">TTS model</label>
+                        <input type="text" id="voicesModelInput" list="voicesModelOptions" spellcheck="false">
+                        <datalist id="voicesModelOptions">
+                            <option value="eleven_flash_v2_5"></option>
+                            <option value="eleven_turbo_v2_5"></option>
+                            <option value="eleven_multilingual_v2"></option>
+                            <option value="eleven_v3"></option>
+                        </datalist>
+                    </div>
+                    <div class="setting-wrapper">
+                        <label title="Voice for bots without an individual assignment">Default voice</label>
+                        <select id="voicesDefaultSelect"></select>
+                        <input type="text" id="voicesDefaultCustom" placeholder="ElevenLabs voice ID" spellcheck="false" hidden>
+                        <button class="btn btn-ghost btn-preview" id="voicesDefaultPreview" title="Preview the default voice">▶</button>
+                    </div>
+                </div>
+                <div id="voicesBotList"></div>
+                <div class="voices-add">
+                    <input type="text" id="voicesAddInput" class="msg-input" placeholder="Add a bot by name (e.g. explorer4)…"
+                        onkeydown="if(event.key==='Enter') addVoiceBot()">
+                    <button class="btn btn-ghost" onclick="addVoiceBot()">+ Add bot</button>
+                </div>
+                <div id="voicesStatus" class="voices-status"></div>
+            </div>
+            <div class="modal-footer">
+                <div class="footer-left">Saved to voices.json — bots use the new voice on their next spoken line, no restart needed.</div>
+                <div class="footer-actions">
+                    <button id="saveVoicesBtn" class="btn btn-primary" disabled>Save Voices</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1758,9 +1907,60 @@
             return s.slice(0, max - 1) + '…';
         }
 
-        function avatarUrl(name, skin) {
-            if (skin?.path) return skin.path;
+        function avatarUrl(name) {
+            // Fallback body render; generated skins are drawn onto the canvas instead.
             return `https://mc-heads.net/body/${encodeURIComponent(name)}/left`;
+        }
+
+        // Composites a front-facing body view (head/torso/arms/legs) from a
+        // 64x64 skin texture so the model band and colors are visible in the UI.
+        const skinAvatarImages = {};
+        function drawSkinAvatar(canvas, url) {
+            const draw = (img) => {
+                const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingEnabled = false;
+                ctx.clearRect(0, 0, 16, 32);
+                const p = (sx, sy, sw, sh, dx, dy) => ctx.drawImage(img, sx, sy, sw, sh, dx, dy, sw, sh);
+                p(8, 8, 8, 8, 4, 0);                          // head
+                p(40, 8, 8, 8, 4, 0);                         // hat layer
+                p(20, 20, 8, 12, 4, 8);                       // torso
+                p(44, 20, 4, 12, 0, 8);                       // right arm
+                p(36, 52, 4, 12, 12, 8);                      // left arm
+                p(4, 20, 4, 12, 4, 20);                       // right leg
+                p(20, 52, 4, 12, 8, 20);                      // left leg
+                canvas.hidden = false;
+                const fallback = canvas.parentElement?.querySelector('img');
+                if (fallback) fallback.hidden = true;
+            };
+            const cached = skinAvatarImages[url];
+            if (cached?.complete && cached.naturalWidth > 0) {
+                draw(cached);
+                return;
+            }
+            const img = new Image();
+            skinAvatarImages[url] = img;
+            img.onload = () => draw(img);
+            img.src = url + (url.includes('?') ? '&' : '?') + 'v=' + pageLoadId;
+        }
+        const pageLoadId = Date.now();
+
+        function updateAvatar(name, skin) {
+            const canvas = document.getElementById(`avatarSkin-${name}`);
+            if (canvas && skin?.path) {
+                if (canvas.dataset.src !== skin.path || canvas.hidden) {
+                    canvas.dataset.src = skin.path;
+                    drawSkinAvatar(canvas, skin.path);
+                }
+            }
+            const chip = document.getElementById(`modelChip-${name}`);
+            if (chip && skin?.label) {
+                chip.hidden = false;
+                chip.textContent = skin.label;
+                if (skin.color) {
+                    chip.style.color = skin.color;
+                    chip.style.borderColor = skin.color;
+                }
+            }
         }
 
         function colonyRoleFor(name) {
@@ -2257,10 +2457,7 @@
                 }
             }
 
-            const avatar = document.getElementById(`avatar-${name}`);
-            if (avatar && st.skin?.path) {
-                avatar.src = st.skin.path;
-            }
+            updateAvatar(name, st.skin);
 
             const modelErrEl = document.getElementById(`modelError-${name}`);
             if (modelErrEl) {
@@ -2585,14 +2782,18 @@
             const recFile = agent.recording?.file || '';
             const recFolder = agent.recording?.folder || agent.recordingsFolder || `bots/${agent.name}/recordings`;
 
+            // Card HTML is swapped wholesale, so repaint the skin avatar once it lands.
+            queueMicrotask(() => updateAvatar(agent.name, st?.skin));
+
             return `
                 <article class="agent-card ${focused} ${offline}" id="agent-${agent.name}" data-name="${esc(agent.name)}"
                     onclick="if(!event.target.closest('button,input,a,.menu-wrap,.slot,.inventory-panel')) focusAgent('${esc(agent.name)}')">
                     <div class="card-top">
                         <div class="avatar-wrap">
-                            <img id="avatar-${agent.name}" src="${esc(avatarUrl(agent.name, st?.skin))}"
+                            <img id="avatar-${agent.name}" src="${esc(avatarUrl(agent.name))}"
                                 alt="${esc(agent.name)}"
                                 onerror="this.src='https://mc-heads.net/body/MHF_Steve/left'">
+                            <canvas class="skin-avatar" id="avatarSkin-${agent.name}" width="16" height="32" hidden></canvas>
                         </div>
                         <div class="identity">
                             <h3>
@@ -2604,6 +2805,8 @@
                                 <span class="chip ${actionChipClass(phase)}" id="statusChip-${agent.name}">${esc(statusText)}</span>
                                 <span class="chip rec" id="recChip-${agent.name}" title="${esc(recFile)}" ${isRecording ? '' : 'hidden'}>● rec</span>
                                 <span class="chip role" id="roleChip-${agent.name}" ${role ? '' : 'hidden'}>${esc(role || '')}</span>
+                                <span class="chip model" id="modelChip-${agent.name}" ${st?.skin?.label ? '' : 'hidden'}
+                                    style="${st?.skin?.color ? `color:${esc(st.skin.color)};border-color:${esc(st.skin.color)}` : ''}">${esc(st?.skin?.label || '')}</span>
                                 <span class="chip" id="itemsHint-${agent.name}">${st?.inventory ? `${st.inventory.stacksUsed ?? 0}/${st.inventory.totalSlots ?? 0} slots` : '— slots'}</span>
                             </div>
                         </div>
@@ -3096,6 +3299,269 @@
             });
         }
 
+        // —— Voices ——
+        const voicesModal = document.getElementById('voicesModal');
+        const voicesBotList = document.getElementById('voicesBotList');
+        const voicesModelInput = document.getElementById('voicesModelInput');
+        const voicesDefaultSelect = document.getElementById('voicesDefaultSelect');
+        const voicesDefaultCustom = document.getElementById('voicesDefaultCustom');
+        const voicesDefaultPreview = document.getElementById('voicesDefaultPreview');
+        const saveVoicesBtn = document.getElementById('saveVoicesBtn');
+        let voicesState = null;   // last server snapshot: pool, bots, previewAvailable
+        let voicesDraft = null;   // edited config: {elevenlabs_model, default_voice, bots}
+        let voicesSavedJson = '';
+        let extraVoiceBots = [];  // names added in the UI for bots that don't exist yet
+        let previewAudio = null;
+
+        function voicesDirty() {
+            return Boolean(voicesDraft) && JSON.stringify(voicesDraft) !== voicesSavedJson;
+        }
+
+        function setVoicesStatus(text, isError = false) {
+            const el = document.getElementById('voicesStatus');
+            el.textContent = text || '';
+            el.classList.toggle('error', Boolean(isError));
+        }
+
+        function poolNameFor(value) {
+            if (!value || !voicesState) return null;
+            const match = voicesState.pool.find(v => v.name.toLowerCase() === String(value).toLowerCase());
+            return match ? match.name : null;
+        }
+
+        // Mirrors autoVoiceName() in src/agent/tts_voices.js, for bot names the
+        // server doesn't know about yet (rows added via "+ Add bot").
+        function autoVoiceFor(name) {
+            const s = String(name || 'bot');
+            let hash = 5381;
+            for (let i = 0; i < s.length; i++) hash = ((hash << 5) + hash + s.charCodeAt(i)) >>> 0;
+            return voicesState.pool[hash % voicesState.pool.length].name;
+        }
+
+        function voiceBotEntries() {
+            const known = new Set(voicesState.bots.map(b => b.name));
+            return [
+                ...voicesState.bots,
+                ...extraVoiceBots.filter(n => !known.has(n))
+                    .map(name => ({ name, connected: false, autoVoice: autoVoiceFor(name) })),
+            ];
+        }
+
+        // `value` semantics: undefined/null = unset (fall through to default/auto),
+        // a pool name = pinned pool voice, anything else (including '') = custom ID.
+        function voiceOptionsHtml(value, defaultLabel) {
+            const has = value !== undefined && value !== null;
+            const poolName = has ? poolNameFor(value) : null;
+            const isCustom = has && !poolName;
+            return [
+                `<option value="">${esc(defaultLabel)}</option>`,
+                ...voicesState.pool.map(v =>
+                    `<option value="${esc(v.name)}" ${v.name === poolName ? 'selected' : ''}>${esc(v.name)} — ${esc(v.description)}</option>`),
+                `<option value="__custom" ${isCustom ? 'selected' : ''}>Custom voice ID…</option>`,
+            ].join('');
+        }
+
+        function renderVoices() {
+            if (!voicesState || !voicesDraft) return;
+            if (document.activeElement !== voicesModelInput) {
+                voicesModelInput.value = voicesDraft.elevenlabs_model;
+            }
+            voicesModelInput.placeholder = voicesState.defaultModel;
+
+            voicesDefaultSelect.innerHTML = voiceOptionsHtml(
+                voicesDraft.default_voice ?? null, 'Auto — unique voice per bot');
+            const defCustom = voicesDraft.default_voice !== null && !poolNameFor(voicesDraft.default_voice);
+            voicesDefaultCustom.hidden = !defCustom;
+            if (defCustom && document.activeElement !== voicesDefaultCustom) {
+                voicesDefaultCustom.value = voicesDraft.default_voice;
+            }
+            voicesDefaultPreview.disabled = !voicesState.previewAvailable;
+
+            const entries = voiceBotEntries();
+            if (!entries.length) {
+                voicesBotList.innerHTML = '<div class="empty-agents">No bots yet — create an agent, or add a name below to pre-assign a voice.</div>';
+            } else {
+                voicesBotList.innerHTML = entries.map(bot => {
+                    const assigned = voicesDraft.bots[bot.name];
+                    const has = assigned !== undefined;
+                    const isCustom = has && !poolNameFor(assigned);
+                    const fallback = voicesDraft.default_voice
+                        ? `default → ${poolNameFor(voicesDraft.default_voice) || 'custom ID'}`
+                        : `auto → ${bot.autoVoice}`;
+                    return `
+                        <div class="voice-row" data-bot="${esc(bot.name)}">
+                            <span class="voice-name" title="${esc(bot.name)}${bot.connected ? ' (connected)' : ''}">
+                                <span class="voice-dot ${bot.connected ? 'on' : ''}"></span>${esc(bot.name)}
+                            </span>
+                            <div class="voice-controls">
+                                <select data-role="voice-select" aria-label="Voice for ${esc(bot.name)}">${voiceOptionsHtml(has ? assigned : undefined, 'Default')}</select>
+                                <input type="text" data-role="voice-custom" placeholder="ElevenLabs voice ID" spellcheck="false"
+                                    value="${isCustom ? esc(assigned) : ''}" ${isCustom ? '' : 'hidden'}>
+                                ${has ? '' : `<span class="voice-hint">${esc(fallback)}</span>`}
+                            </div>
+                            <button class="btn btn-ghost btn-preview" data-role="voice-preview"
+                                ${voicesState.previewAvailable ? '' : 'disabled'}
+                                title="${voicesState.previewAvailable
+                                    ? `Preview how ${esc(bot.name)} will sound`
+                                    : 'Set ELEVENLABS_API_KEY to enable previews'}">▶</button>
+                        </div>`;
+                }).join('');
+            }
+
+            saveVoicesBtn.disabled = !voicesDirty();
+        }
+
+        function initVoices(data) {
+            voicesState = data;
+            voicesDraft = {
+                elevenlabs_model: data.config.elevenlabs_model,
+                default_voice: data.config.default_voice,
+                bots: { ...data.config.bots },
+            };
+            voicesSavedJson = JSON.stringify(voicesDraft);
+            const known = new Set(data.bots.map(b => b.name));
+            extraVoiceBots = extraVoiceBots.filter(n => !known.has(n));
+            renderVoices();
+        }
+
+        function openVoices() {
+            voicesModal.style.display = 'flex';
+            setVoicesStatus('');
+            refreshVoices();
+        }
+
+        function closeVoices() {
+            voicesModal.style.display = 'none';
+            if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+        }
+
+        function refreshVoices() {
+            socket.timeout(10000).emit('get-voices', (err, res) => {
+                if (err || !res?.success) {
+                    voicesBotList.innerHTML = `<div class="empty-agents">${esc(err
+                        ? 'No response from the server — it may be running outdated code. Restart the MindServer.'
+                        : res?.error || 'Failed to load voices')}</div>`;
+                    return;
+                }
+                initVoices(res);
+            });
+        }
+
+        // Another dashboard saved voices; refresh unless there are local edits.
+        socket.on('voices-update', () => {
+            if (voicesModal.style.display === 'flex' && !voicesDirty()) refreshVoices();
+        });
+
+        function draftVoiceFor(name) {
+            return voicesDraft.bots[name]
+                || voicesDraft.default_voice
+                || voiceBotEntries().find(b => b.name === name)?.autoVoice
+                || null;
+        }
+
+        function playVoicePreview(voice, botName, btn) {
+            if (!voice) return;
+            if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+            btn.disabled = true;
+            btn.textContent = '…';
+            setVoicesStatus('Generating preview…');
+            socket.timeout(20000).emit('preview-voice', { voice, botName }, (err, res) => {
+                btn.disabled = !voicesState?.previewAvailable;
+                btn.textContent = '▶';
+                if (err || !res?.success) {
+                    setVoicesStatus(`Preview failed: ${err ? 'no response from the server' : res?.error || 'unknown error'}`, true);
+                    return;
+                }
+                setVoicesStatus('');
+                previewAudio = new Audio('data:audio/mpeg;base64,' + res.audio);
+                previewAudio.play().catch(e => setVoicesStatus(`Could not play audio: ${e.message}`, true));
+            });
+        }
+
+        voicesModelInput.addEventListener('input', () => {
+            voicesDraft.elevenlabs_model = voicesModelInput.value.trim() || voicesState.defaultModel;
+            saveVoicesBtn.disabled = !voicesDirty();
+        });
+
+        voicesDefaultSelect.addEventListener('change', () => {
+            const v = voicesDefaultSelect.value;
+            if (v === '') voicesDraft.default_voice = null;
+            else if (v === '__custom') voicesDraft.default_voice = voicesDefaultCustom.value.trim();
+            else voicesDraft.default_voice = v;
+            renderVoices();
+            if (v === '__custom') voicesDefaultCustom.focus();
+        });
+
+        voicesDefaultCustom.addEventListener('input', () => {
+            voicesDraft.default_voice = voicesDefaultCustom.value.trim();
+            saveVoicesBtn.disabled = !voicesDirty();
+        });
+
+        voicesDefaultPreview.addEventListener('click', () => {
+            if (!voicesDraft.default_voice) {
+                setVoicesStatus('Auto mode gives each bot its own voice — use ▶ on a bot row to hear one.');
+                return;
+            }
+            playVoicePreview(voicesDraft.default_voice, null, voicesDefaultPreview);
+        });
+
+        voicesBotList.addEventListener('change', (e) => {
+            const row = e.target.closest('.voice-row');
+            if (!row || e.target.dataset.role !== 'voice-select') return;
+            const name = row.dataset.bot;
+            const v = e.target.value;
+            if (v === '') delete voicesDraft.bots[name];
+            else if (v === '__custom') voicesDraft.bots[name] = row.querySelector('[data-role="voice-custom"]').value.trim();
+            else voicesDraft.bots[name] = v;
+            renderVoices();
+            if (v === '__custom') {
+                voicesBotList.querySelector(`.voice-row[data-bot="${CSS.escape(name)}"] [data-role="voice-custom"]`)?.focus();
+            }
+        });
+
+        voicesBotList.addEventListener('input', (e) => {
+            const row = e.target.closest('.voice-row');
+            if (!row || e.target.dataset.role !== 'voice-custom') return;
+            voicesDraft.bots[row.dataset.bot] = e.target.value.trim();
+            saveVoicesBtn.disabled = !voicesDirty();
+        });
+
+        voicesBotList.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-role="voice-preview"]');
+            if (!btn) return;
+            const name = btn.closest('.voice-row').dataset.bot;
+            playVoicePreview(draftVoiceFor(name), name, btn);
+        });
+
+        function addVoiceBot() {
+            const input = document.getElementById('voicesAddInput');
+            const name = input.value.trim();
+            if (!name || !voicesState) return;
+            input.value = '';
+            if (!voiceBotEntries().some(b => b.name === name)) extraVoiceBots.push(name);
+            if (voicesDraft.bots[name] === undefined) voicesDraft.bots[name] = autoVoiceFor(name);
+            renderVoices();
+        }
+
+        saveVoicesBtn.addEventListener('click', () => {
+            if (!voicesDirty()) return;
+            saveVoicesBtn.disabled = true;
+            setVoicesStatus('Saving…');
+            socket.timeout(10000).emit('set-voices', {
+                elevenlabs_model: voicesDraft.elevenlabs_model,
+                default_voice: voicesDraft.default_voice || null,
+                bots: voicesDraft.bots,
+            }, (err, res) => {
+                if (err || !res?.success) {
+                    setVoicesStatus(`Save failed: ${err ? 'no response from the server' : res?.error || 'unknown error'}`, true);
+                    saveVoicesBtn.disabled = false;
+                    return;
+                }
+                initVoices(res);
+                setVoicesStatus('Saved — bots use the new voices on their next spoken line.');
+            });
+        });
+
         window.focusAgent = focusAgent;
         window.restartAgent = restartAgent;
         window.disconnectAgent = disconnectAgent;
@@ -3114,6 +3580,10 @@
         window.refreshRecordings = refreshRecordings;
         window.downloadRecordingsZip = downloadRecordingsZip;
         window.exportRecordingsFolder = exportRecordingsFolder;
+        window.openVoices = openVoices;
+        window.closeVoices = closeVoices;
+        window.refreshVoices = refreshVoices;
+        window.addVoiceBot = addVoiceBot;
     </script>
 </body>
 </html>
