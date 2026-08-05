@@ -103,8 +103,8 @@ export function addBrowserViewer(bot, count_id) {
         });
     });
 
-    server.listen(port, () => {
-        console.log(`Prismarine viewer web server running on *:${port}`);
+    server.listen(port, '127.0.0.1', () => {
+        console.log(`Prismarine viewer web server running on 127.0.0.1:${port}`);
     });
 
     bot.viewer = new EventEmitter();

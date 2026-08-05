@@ -10,8 +10,9 @@ services:
       - ./profiles:/app/profiles
       - ./bots:/app/bots
     ports:
-      - "3000-3003:3000-3003" # see the view from the camera mounted on your bot head: http://localhost:3000/
-      - 8080 # Mindserver port
+      # Localhost only — do not publish on the LAN.
+      - "127.0.0.1:3000-3003:3000-3003" # bot camera views: http://localhost:3000/
+      - "127.0.0.1:8080:8080" # Mindserver port
     extra_hosts:
     - "host.docker.internal:host-gateway"
 
@@ -20,7 +21,7 @@ services:
     volumes:
       - ./services/viaproxy:/app/run
     ports:
-      - "25568:25568"
+      - "127.0.0.1:25568:25568"
     profiles:
       - viaproxy
     stdin_open: true

@@ -3,7 +3,8 @@ services:
     image: itzg/minecraft-server:latest
     container_name: mindcraft-mc
     ports:
-      - "55916:25565"
+      # Localhost only — do not publish on the LAN.
+      - "127.0.0.1:55916:25565"
     environment:
       EULA: "TRUE"
       ONLINE_MODE: "FALSE"
