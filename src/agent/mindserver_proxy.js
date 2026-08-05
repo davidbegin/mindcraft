@@ -125,6 +125,10 @@ class MindServerProxy {
             }
         });
 
+        this.socket.on('contest-recording-audio', (payload) => {
+            this.agent?.addContestRecordingAudio(payload);
+        });
+
         this.socket.on('model-probe', async (callback) => {
             try {
                 if (!this.agent?.prompter) {
