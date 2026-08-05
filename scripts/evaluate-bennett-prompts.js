@@ -70,8 +70,8 @@ const MEMORY_FIXTURES = [
             /(elevat|bridge|rerout)/i
         ],
         policies: [
-            /(elevat|higher|above).{0,70}(water|flood|trap|route|bridg)/i,
-            /(bridg|reroute|build).{0,70}(dry|anchor|water|flood|trap)/i
+            /((elevat|higher|above).{0,90}(water|flood|trap|route|bridg)|(water|flood|trap).{0,90}(elevat|higher|above|bridg|path))/i,
+            /(bridg|reroute|build|use|from).{0,70}(dry|anchor|water|flood|trap)/i
         ],
         incidentalCoordinates: ['-15,44,-33', '-9,45,-11']
     },
@@ -137,7 +137,7 @@ const MEMORY_FIXTURES = [
             /(oak|cobblestone|torch)/i
         ],
         policies: [
-            /(keep|preserve).{0,35}(route|room|assignment|core)/i
+            /(keep|preserve|clear).{0,40}(route|room|assignment|core|corridor)/i
         ],
         incidentalCoordinates: []
     },
@@ -168,8 +168,8 @@ const MEMORY_FIXTURES = [
             /(eight|8)/i
         ],
         policies: [
-            /(increase|expand|widen|larger|farther).{0,45}(radius|range|search)/i,
-            /(do not|don'?t|never|avoid).{0,45}(repeat|retry|same radius|20)/i
+            /(increase|expand|widen|larger|farther|up to|beyond).{0,45}(radius|range|search|blocks|96)/i,
+            /((do not|don'?t|never|avoid).{0,45}(repeat|retry|same radius|20)|(none|not|no).{0,50}(20|nearby).{0,80}(search|expand|96))/i
         ],
         incidentalCoordinates: []
     },
@@ -201,8 +201,8 @@ const MEMORY_FIXTURES = [
             /(shared cache|deliver)/i
         ],
         policies: [
-            /(correct|proper|suitable|required).{0,40}(tool|pickaxe)/i,
-            /(craft|equip|upgrade).{0,40}(tool|pickaxe).{0,40}(before|then|min)/i
+            /(correct|proper|suitable|required|use|need).{0,40}(a )?(wooden )?(tool|pickaxe)/i,
+            /(craft|equip|upgrade).{0,40}(tool|pickaxe)/i
         ],
         incidentalCoordinates: []
     }

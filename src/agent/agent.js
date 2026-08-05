@@ -21,6 +21,7 @@ import {
     sendOutputToServer,
     requestColonyCommand,
     requestContestSpeech,
+    reportContestWinItem,
 } from './mindserver_proxy.js';
 import { setOutageHandler } from '../models/quota_guard.js';
 import settings from './settings.js';
@@ -143,6 +144,7 @@ export class Agent {
                 this.pov_snapshotter.start();
                 if (settings.game_session) {
                     this._trackGameBlockPlacements();
+                    this._watchContestWinItem();
                 }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
@@ -958,6 +960,25 @@ export class Agent {
             if (!position) return;
             this.bot.recordPlacedBlock(position.x, position.y, position.z);
         });
+    }
+
+    _watchContestWinItem() {
+        const winItem = settings.game_session?.winItem;
+        if (!winItem) return;
+        const checkInventory = () => {
+            if (this._contestWinReported || !this.bot?.inventory) return;
+            const hasWinItem = this.bot.inventory.items().some(item => item.name === winItem);
+            if (!hasWinItem) return;
+            this._contestWinReported = true;
+            reportContestWinItem(winItem).catch(error => {
+                if (/not accepting|deadline|already finished/i.test(error.message)) return;
+                console.error(`[${this.name}] Could not report contest win item:`, error.message);
+                this._contestWinReported = false;
+                setTimeout(checkInventory, 1000);
+            });
+        };
+        this.bot.inventory.on('updateSlot', checkInventory);
+        checkInventory();
     }
 
     _isSolidAt(x, y, z) {

@@ -34,6 +34,7 @@ import { runMinecraftCommand } from './minecraft_server.js';
 import { getGpt56Profiles } from './model_profiles.js';
 import { ensureSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
+import { playSpeech } from '../agent/speak.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Mindserver is:
@@ -45,6 +46,16 @@ let io;
 let server;
 const agent_connections = {};
 const agent_listeners = [];
+// Browser clients that have proven they can actually produce sound, in claim
+// order. The head of the list owns voice playback; every other client stays
+// silent so a line is never heard twice. Host speakers are used only while
+// this list is empty. See public/bot_voice.js for the client half.
+const voice_output_claims = [];
+// Recent utterances kept just long enough to re-route to host speakers if the
+// owning tab reports that playback failed.
+const recent_utterances = new Map();
+const RECENT_UTTERANCE_TTL_MS = 60000;
+let utterance_seq = 0;
 let colonyCoordinator = null;
 let colonyReady = null;
 let colonySupervisorInterval = null;
@@ -294,7 +305,9 @@ function defaultSettingsForProfile(profile) {
 
 function buildGameAgentSettings(profile, gameSession) {
     const settings = defaultSettingsForProfile(profile);
-    settings.profile.speak_model = 'elevenlabs';
+    settings.profile.speak_model = gameSession.voice
+        ? { api: 'elevenlabs', voice: gameSession.voice }
+        : 'elevenlabs';
     settings.load_memory = false;
     settings.init_message = null;
     settings.speak = true;
@@ -1299,6 +1312,45 @@ export function createMindServer(host_public = false, port = 8080) {
             }
         });
 
+        socket.on('contest-win-item', async (request, callback) => {
+            try {
+                const connection = agent_connections[curAgentName];
+                const active = contestCoordinator?.view()?.activeContest;
+                if (!curAgentName || !connection?.settings?.game_session || !active) {
+                    throw new Error('Only an active game participant can report a win item');
+                }
+                if (connection.settings.game_session.contestId !== active.id) {
+                    throw new Error('Game participant is not in the active contest');
+                }
+                const expectedItem = active.rules?.winItem;
+                const itemName = String(request?.itemName || '').trim();
+                if (!expectedItem || itemName !== expectedItem) {
+                    throw new Error(`Contest requires ${expectedItem || 'no win item'}`);
+                }
+                const data = await contestCoordinator.declareWinner(
+                    active.id,
+                    curAgentName,
+                    {
+                        item: itemName,
+                        elapsedMs: Date.now() - active.startedAt,
+                    }
+                );
+                const view = contestCoordinator.view();
+                await contestHud.sync(view);
+                emitContestUpdate();
+                callback?.({ success: true, data });
+
+                const cleanup = gameSessionManager?.view()?.contestId === active.id
+                    ? gameSessionManager.syncWithContestView(view)
+                    : contestRecordingManager.stop(active.id);
+                cleanup.catch(error => {
+                    console.error(`Could not clean up completed contest ${active.id}:`, error);
+                });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
         socket.on('contest-submit', async (request, callback) => {
             try {
                 if (!curAgentName) {
@@ -1484,6 +1536,7 @@ export function createMindServer(host_public = false, port = 8080) {
             if (agent_listeners.some(l => l.socket === socket)) {
                 removeListener(socket);
             }
+            releaseVoiceOutput(socket);
         });
 
         socket.on('chat-message', (agentName, json) => {
@@ -1601,6 +1654,10 @@ export function createMindServer(host_public = false, port = 8080) {
             io.emit('bot-output', agentName, message);
         });
 
+        socket.on('claim-voice-output', () => claimVoiceOutput(socket));
+        socket.on('release-voice-output', () => releaseVoiceOutput(socket));
+        socket.on('voice-output-failed', ({ id } = {}) => recoverFailedVoice(socket, id));
+
         socket.on('contest-speech', async (options, callback) => {
             try {
                 const connection = agent_connections[curAgentName];
@@ -1614,14 +1671,17 @@ export function createMindServer(host_public = false, port = 8080) {
                 if (!text) {
                     throw new Error('Contest voice text is required');
                 }
-                const voiceId = resolveVoice(curAgentName);
+                const voiceId = resolveVoice(
+                    curAgentName,
+                    connection.settings.game_session.voice
+                );
                 const audio = await elevenLabsTTSConfig.sendAudioRequest(
                     text,
                     getVoicesConfig().elevenlabs_model,
                     voiceId,
                     elevenLabsTTSConfig.baseUrl
                 );
-                io.emit('bot-voice', { agentName: curAgentName, text, audio });
+                dispatchBotVoice({ agentName: curAgentName, text, audio });
                 callback?.({ success: true, audio });
             } catch (error) {
                 callback?.({ success: false, error: error.message });
@@ -1786,6 +1846,85 @@ function removeListener(listener_socket) {
         listenerInterval = null;
         listenerTickRunning = false;
     }
+}
+
+function voiceOutputOwner() {
+    while (voice_output_claims.length && !voice_output_claims[0].connected) {
+        voice_output_claims.shift();
+    }
+    return voice_output_claims[0] ?? null;
+}
+
+// Tells every claimant whether it is currently the one that should play, so
+// extra tabs can show a muted indicator instead of silently doing nothing.
+function broadcastVoiceOutputOwner() {
+    const owner = voiceOutputOwner();
+    for (const claimant of voice_output_claims) {
+        claimant.emit('voice-output-owner', { owner: claimant === owner });
+    }
+}
+
+function claimVoiceOutput(socket) {
+    if (voice_output_claims.includes(socket)) return;
+    voice_output_claims.push(socket);
+    broadcastVoiceOutputOwner();
+}
+
+function releaseVoiceOutput(socket) {
+    const idx = voice_output_claims.indexOf(socket);
+    if (idx === -1) return;
+    voice_output_claims.splice(idx, 1);
+    if (socket.connected) socket.emit('voice-output-owner', { owner: false });
+    broadcastVoiceOutputOwner();
+}
+
+function rememberUtterance(id, utterance) {
+    recent_utterances.set(id, utterance);
+    setTimeout(() => recent_utterances.delete(id), RECENT_UTTERANCE_TTL_MS);
+}
+
+/**
+ * Send a generated line to exactly one output device: the owning browser tab
+ * if there is one, otherwise the host speakers.
+ */
+function dispatchBotVoice({ agentName, text, audio }) {
+    const owner = voiceOutputOwner();
+    if (!owner) {
+        playSpeech({
+            text,
+            model: 'elevenlabs',
+            botName: agentName,
+            volume: 100,
+            audioPromise: Promise.resolve(audio),
+        });
+        return;
+    }
+    const id = `voice_${++utterance_seq}`;
+    rememberUtterance(id, { agentName, text, audio });
+    owner.emit('bot-voice', { id, agentName, text, audio });
+}
+
+// The owning tab could not play (autoplay policy, no output device). Drop its
+// claim and put the line back on host speakers so nothing is lost.
+function recoverFailedVoice(socket, id) {
+    releaseVoiceOutput(socket);
+    const utterance = recent_utterances.get(id);
+    if (!utterance) return;
+    recent_utterances.delete(id);
+    const owner = voiceOutputOwner();
+    if (owner) {
+        const retryId = `voice_${++utterance_seq}`;
+        rememberUtterance(retryId, utterance);
+        owner.emit('bot-voice', { id: retryId, ...utterance });
+        return;
+    }
+    playSpeech({
+        text: utterance.text,
+        model: 'elevenlabs',
+        botName: utterance.agentName,
+        volume: 100,
+        audioPromise: Promise.resolve(utterance.audio),
+    });
 }
 
 // Optional: export these if you need access to them from other files

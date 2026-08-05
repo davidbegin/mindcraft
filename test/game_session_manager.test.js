@@ -43,7 +43,7 @@ const preset = {
     title: 'Tower',
     prompt: 'Build the tallest tower.',
     durationMs: 60_000,
-    rules: { metrics: [] },
+    rules: { metrics: [], winItem: 'diamond' },
     metadata: {},
 };
 
@@ -90,7 +90,7 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         const result = await manager.start({
             gameId: 'tower',
             participants: [
-                { profileId: 'fast', name: 'speedy' },
+                { profileId: 'fast', name: 'speedy', voice: 'Trickster' },
                 { profileId: 'smart', name: 'thinker' },
             ],
             systemPrompt: 'Be entertaining.',
@@ -106,7 +106,14 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         assert.equal(createdSettings.game_session.systemPrompt, 'Be entertaining.');
         assert.deepEqual(createdSettings.game_session.participantIds, ['speedy', 'thinker']);
         assert.deepEqual(createdSettings.game_session.rivalIds, ['thinker']);
+        assert.equal(createdSettings.game_session.winItem, 'diamond');
+        assert.equal(createdSettings.game_session.voice, 'Trickster');
         assert.equal(createdSettings.profile.name, 'speedy');
+        assert.deepEqual(createdSettings.profile.speak_model, {
+            api: 'elevenlabs',
+            voice: 'Trickster',
+        });
+        assert.equal(manager.view().participants[0].voice, 'Trickster');
         const speedyDirective = calls.find(
             ([type, name]) => type === 'directive' && name === 'speedy'
         )[2];
@@ -169,6 +176,12 @@ test('participant validation rejects catalog, name, and collision errors', () =>
     assert.throws(
         () => validateGameParticipants([{ profileId: 'fast', name: 'colony_bot' }], profiles, ['colony_bot']),
         /already in use/
+    );
+    assert.throws(
+        () => validateGameParticipants([
+            { profileId: 'fast', name: 'valid_name', voice: 'v'.repeat(129) },
+        ], profiles),
+        /voice must be 128/
     );
 });
 

@@ -102,6 +102,42 @@ test('announces ranked winners and removes the bossbar', async () => {
     assert.ok(commands.some(command => command.includes('1. bob — 31 blocks')));
 });
 
+test('celebrates an automatic diamond-race winner', async () => {
+    const commands = [];
+    const contest = runningContest({
+        title: 'First Diamond',
+        rules: { type: 'diamond_race', winItem: 'diamond' },
+    });
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: async command => commands.push(command),
+    });
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    commands.length = 0;
+
+    const completed = {
+        ...contest,
+        status: 'completed',
+        winnerIds: ['alice'],
+        results: [
+            { participantId: 'alice', score: -12_000, rank: 1 },
+            { participantId: 'bob', score: 0, rank: null, disqualified: true },
+        ],
+    };
+    await hud.sync({ activeContest: null, contests: [completed] });
+
+    assert.ok(commands.some(command =>
+        command.includes('title @a title {"text":"DIAMOND FOUND!","color":"aqua"')
+    ));
+    assert.ok(commands.some(command => command.includes('"alice WINS!"')));
+    assert.ok(commands.some(command =>
+        command.startsWith('playsound entity.firework_rocket.large_blast')
+    ));
+    assert.ok(commands.some(command =>
+        command.startsWith('playsound entity.player.levelup')
+    ));
+});
+
 test('cleans up the HUD and explains cancellation', async () => {
     const commands = [];
     const contest = runningContest();

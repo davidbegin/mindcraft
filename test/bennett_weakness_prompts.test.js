@@ -30,15 +30,23 @@ test('default prompts prefer Bennett weakness over MDL compression', () => {
     }
 
     assert.match(profile.saving_memory, /Bennett's Razor/);
-    assert.match(profile.saving_memory, /WEAK rules/);
-    assert.match(profile.saving_memory, /transferable rules/);
+    assert.match(profile.saving_memory, /WEAK transferable rules/);
     assert.match(profile.saving_memory, /all unmet acceptance requirements/);
-    assert.match(profile.saving_memory, /every distinct anchor explicitly required/);
-    assert.match(profile.saving_memory, /500 characters/);
+    assert.match(profile.saving_memory, /place coords only when needed/);
+    assert.match(profile.saving_memory, /drop incidental endpoints/);
+    assert.match(profile.saving_memory, /≤500 characters|500 characters/);
 
-    assert.match(profile.coding, /Prefer WEAK/);
+    assert.match(profile.coding, /Prefer WEAK parameterized/);
     assert.match(profile.coding, /parameterize/i);
     assert.match(profile.coding, /strategy class/);
+    assert.ok(
+        profile.saving_memory.length < 1000,
+        `saving_memory should stay concise, got ${profile.saving_memory.length}`
+    );
+    assert.ok(
+        profile.coding.length < 1400,
+        `coding should stay concise, got ${profile.coding.length}`
+    );
 
     const bridgeExample = profile.coding_examples.find(turns =>
         turns.some(turn =>
