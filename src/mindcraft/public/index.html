@@ -1674,6 +1674,41 @@
             gap: 6px;
         }
 
+        .highlight-reel {
+            margin-top: 14px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg-inset);
+        }
+
+        .highlight-reel-head,
+        .highlight-reel-actions {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .highlight-reel-head {
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .highlight-reel video {
+            display: block;
+            width: 100%;
+            max-height: 480px;
+            border-radius: 8px;
+            background: #000;
+            margin-bottom: 10px;
+        }
+
+        .highlight-reel-status {
+            color: var(--text-dim);
+            font-size: 0.8rem;
+        }
+
         .contest-result-row {
             display: grid;
             grid-template-columns: 40px 1fr auto;
@@ -2099,6 +2134,17 @@
                         <div id="contestParticipantChips" class="contest-participant-chips" hidden></div>
                         <div id="gamePlayers" class="game-players" hidden></div>
                         <div id="contestResults" class="contest-results" hidden></div>
+                        <div id="highlightReelPanel" class="highlight-reel" hidden>
+                            <div class="highlight-reel-head">
+                                <strong>Game highlight reel</strong>
+                                <span id="highlightReelStatus" class="highlight-reel-status"></span>
+                            </div>
+                            <video id="highlightReelVideo" controls preload="metadata" hidden></video>
+                            <div class="highlight-reel-actions">
+                                <a id="highlightReelDownload" class="btn btn-primary" hidden download>Download MP4</a>
+                                <button id="highlightReelRetry" class="btn btn-ghost" type="button" hidden>Build again</button>
+                            </div>
+                        </div>
                         <div class="contest-live-row" style="margin-top:10px;">
                             <button id="cancelContestBtn" class="btn btn-danger" hidden>Cancel contest</button>
                             <button id="warpSpectatorsBtn" class="btn btn-ghost" hidden>Warp me to arena</button>
@@ -2355,6 +2401,8 @@
         let lastLaunchReport = '';
         let currentView = 'colony';
         let contestClockTimer = null;
+        let highlightReelTimer = null;
+        let highlightContestId = null;
         let gameSetupGameId = null;
         let gameSetupParticipants = [];
         let focusedAgent = null;
@@ -3335,6 +3383,103 @@
             btn.dataset.session = sessionKey;
         }
 
+        function hideHighlightReel() {
+            clearTimeout(highlightReelTimer);
+            highlightReelTimer = null;
+            highlightContestId = null;
+            const panel = document.getElementById('highlightReelPanel');
+            const video = document.getElementById('highlightReelVideo');
+            panel.hidden = true;
+            video.pause();
+            video.removeAttribute('src');
+            delete video.dataset.contest;
+            video.hidden = true;
+        }
+
+        async function refreshHighlightReel(contestId) {
+            if (!contestId || highlightContestId !== contestId) return;
+            const panel = document.getElementById('highlightReelPanel');
+            const status = document.getElementById('highlightReelStatus');
+            const video = document.getElementById('highlightReelVideo');
+            const download = document.getElementById('highlightReelDownload');
+            const retry = document.getElementById('highlightReelRetry');
+            panel.hidden = false;
+            try {
+                const response = await fetch(`/api/highlights/${encodeURIComponent(contestId)}`);
+                const result = await response.json();
+                if (highlightContestId !== contestId) return;
+                const state = result.status || (response.status === 404 ? 'missing' : 'failed');
+                download.hidden = true;
+                retry.hidden = true;
+                if (state === 'ready' && result.url) {
+                    status.textContent = result.durationMs
+                        ? `Ready · ${fmtElapsed(result.durationMs)}`
+                        : 'Ready';
+                    if (video.dataset.contest !== contestId) {
+                        video.src = result.url;
+                        video.dataset.contest = contestId;
+                    }
+                    video.hidden = false;
+                    download.href = result.url;
+                    download.hidden = false;
+                    download.textContent = 'Download highlight';
+                    return;
+                }
+                video.hidden = true;
+                if (state === 'processing' || state === 'queued') {
+                    status.textContent = state === 'queued'
+                        ? 'Waiting to encode…'
+                        : 'Building synchronized highlights…';
+                    highlightReelTimer = setTimeout(
+                        () => refreshHighlightReel(contestId),
+                        2000
+                    );
+                    return;
+                }
+                status.textContent = state === 'missing'
+                    ? 'No reel has been built for this game yet.'
+                    : `Could not build reel: ${result.error || 'unknown encoding error'}`;
+                retry.hidden = false;
+                retry.dataset.contest = contestId;
+            } catch (error) {
+                status.textContent = `Highlight status unavailable: ${error.message}`;
+                retry.hidden = false;
+                retry.dataset.contest = contestId;
+            }
+        }
+
+        function showHighlightReel(contest) {
+            if (!contest?.id || contest.status !== 'completed') {
+                hideHighlightReel();
+                return;
+            }
+            clearTimeout(highlightReelTimer);
+            highlightReelTimer = null;
+            highlightContestId = contest.id;
+            refreshHighlightReel(contest.id);
+        }
+
+        document.getElementById('highlightReelRetry').addEventListener('click', async (event) => {
+            const contestId = event.currentTarget.dataset.contest;
+            if (!contestId) return;
+            event.currentTarget.disabled = true;
+            try {
+                const response = await fetch(
+                    `/api/highlights/${encodeURIComponent(contestId)}`,
+                    { method: 'POST' }
+                );
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || 'Could not queue highlight reel');
+                }
+                await refreshHighlightReel(contestId);
+            } catch (error) {
+                document.getElementById('highlightReelStatus').textContent = error.message;
+            } finally {
+                event.currentTarget.disabled = false;
+            }
+        });
+
         document.getElementById('exportGameSessionBtn').addEventListener('click', async (event) => {
             const btn = event.currentTarget;
             const session = btn.dataset.session;
@@ -3383,6 +3528,7 @@
                 && ['provisioning', 'preparing', 'recording', 'announcing-start'].includes(gameSession.status);
 
             if (provisioning && !active) {
+                hideHighlightReel();
                 live.classList.remove('idle');
                 title.textContent = `${gameSession.title || 'Game'} · ${gameSession.status}`;
                 const progressMsg = launchProgressMessage(gameSession);
@@ -3401,6 +3547,7 @@
                 if (gameSession.error) setContestStatus(gameSession.error, true);
                 else updateLaunchProgressFromSession(gameSession);
             } else if (active) {
+                hideHighlightReel();
                 live.classList.remove('idle');
                 const sessionStatus = gameSession?.status && gameSession.status !== 'running'
                     ? ` · ${gameSession.status}`
@@ -3443,6 +3590,7 @@
                 updateGameSessionExport(null);
                 renderContestResults(active);
             } else if (latestDone) {
+                showHighlightReel(latestDone);
                 live.classList.toggle('idle', latestDone.status !== 'completed');
                 title.textContent = `${latestDone.title} · ${latestDone.status}`;
                 const winners = (latestDone.winnerIds || []).join(', ') || 'none';
@@ -3464,6 +3612,7 @@
                 updateGameSessionExport(latestDone.id);
                 renderContestResults(latestDone);
             } else {
+                hideHighlightReel();
                 live.classList.add('idle');
                 title.textContent = 'No active contest';
                 row.textContent = 'Pick a game above and choose model profiles to start.';

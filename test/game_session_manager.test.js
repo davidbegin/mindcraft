@@ -72,11 +72,21 @@ async function withManager(run, overrides = {}) {
                 calls.push(['arena', participants]);
                 return { center: { x: 1, y: 2, z: 3 } };
             },
+            presentResults: async contest => calls.push([
+                'present-results',
+                contest.id,
+                contest.results.map(result => [result.participantId, result.rank]),
+            ]),
             startRecording: async options => {
                 calls.push(['record-start', options]);
                 return { sessionId: `contest-${options.contestId}`, cameraCount: 4 };
             },
             stopRecording: async contestId => calls.push(['record-stop', contestId]),
+            queueHighlight: ({ session, contest }) => calls.push([
+                'highlight',
+                session.sessionId,
+                contest.id,
+            ]),
             sendDirective: async (name, prompt) => calls.push(['directive', name, prompt]),
             announceStart: contest => {
                 calls.push(['announce-start', contest.id]);
@@ -163,8 +173,13 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         );
         const stopIndex = calls.findIndex(([type]) => type === 'record-stop');
         const destroyIndex = calls.findIndex(([type]) => type === 'destroy');
+        const highlightIndex = calls.findIndex(([type]) => type === 'highlight');
+        const presentResultsIndex = calls.findIndex(([type]) => type === 'present-results');
         const announceResultIndex = calls.findIndex(([type]) => type === 'announce-result');
+        assert.ok(presentResultsIndex < announceResultIndex, 'competitors reach podiums before the announcement');
         assert.ok(announceResultIndex < stopIndex, 'winner is announced before recording stops');
+        assert.ok(stopIndex < highlightIndex, 'highlight encoding starts after recordings are finalized');
+        assert.ok(highlightIndex < destroyIndex, 'highlight job is queued before temporary agents are destroyed');
         assert.ok(stopIndex < destroyIndex, 'recording stops before temporary agents are destroyed');
     });
 });

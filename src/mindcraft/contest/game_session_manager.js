@@ -69,6 +69,7 @@ export class GameSessionManager {
             'destroyAgent',
             'isAgentReady',
             'prepareArena',
+            'presentResults',
             'startRecording',
             'stopRecording',
             'sendDirective',
@@ -94,6 +95,11 @@ export class GameSessionManager {
         this.announceResult = options.announceResult || (() => {});
         this.onAnnouncementError = options.onAnnouncementError
             || (error => console.warn(`Contest announcement failed: ${error.message}`));
+        this.onPresentationError = options.onPresentationError
+            || (error => console.warn(`Contest podium ceremony failed: ${error.message}`));
+        this.queueHighlight = options.queueHighlight || (() => null);
+        this.onHighlightError = options.onHighlightError
+            || (error => console.warn(`Contest highlight reel failed: ${error.message}`));
         this.getAgentLaunchStatus = options.getAgentLaunchStatus || null;
         this.telemetry = options.telemetry || null;
         this.active = null;
@@ -358,7 +364,7 @@ export class GameSessionManager {
         return this.finish(contestId);
     }
 
-    async finish(contestId = null) {
+    async finish(contestId = null, contest = null) {
         if (!this.active) return null;
         if (contestId && this.active.contestId !== contestId) return null;
         const session = this.view();
@@ -367,6 +373,18 @@ export class GameSessionManager {
         this._record({ stage: 'cleanup', message: `Cleaning up session ${session.contestId}` });
         this._emit();
         await this.stopRecording(session.contestId).catch(() => {});
+        if (contest?.status === 'completed') {
+            try {
+                const queued = this.queueHighlight({ session, contest });
+                queued?.catch?.(this.onHighlightError);
+                this._record({
+                    stage: 'highlight_queued',
+                    message: `Queued highlight reel for ${session.contestId}`,
+                });
+            } catch (error) {
+                this.onHighlightError(error);
+            }
+        }
         await Promise.allSettled(
             session.createdAgents.map(agent => this.destroyAgent(agent.id))
         );
@@ -379,13 +397,21 @@ export class GameSessionManager {
         if (!this.active) return null;
         const contest = (view?.contests || []).find(item => item.id === this.active.contestId);
         if (contest && ['completed', 'cancelled'].includes(contest.status)) {
-            if (['announcing-result', 'cleaning-up'].includes(this.active.status)) return null;
+            if ([
+                'presenting-results',
+                'announcing-result',
+                'cleaning-up',
+            ].includes(this.active.status)) return null;
             if (contest.status === 'completed') {
+                this.active.status = 'presenting-results';
+                this._setProgress('present_results', 'Moving competitors to the podiums…');
+                this._emit();
+                await this._presentResults(contest);
                 this.active.status = 'announcing-result';
                 this._emit();
                 await this._announce(this.announceResult, contest);
             }
-            return this.finish(contest.id);
+            return this.finish(contest.id, contest);
         }
         return null;
     }
@@ -442,6 +468,14 @@ export class GameSessionManager {
             await announce(contest);
         } catch (error) {
             this.onAnnouncementError(error);
+        }
+    }
+
+    async _presentResults(contest) {
+        try {
+            await this.presentResults(contest);
+        } catch (error) {
+            this.onPresentationError(error);
         }
     }
 }

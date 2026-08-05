@@ -13,10 +13,26 @@ for candidate in .env code/.env; do
 done
 
 if [[ -n "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  # Read values literally rather than sourcing: keys like CurseForge's bcrypt
+  # tokens contain `$2...`, which `source` would expand as a positional
+  # parameter and abort under `set -u`.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    if [[ -z "$line" || "$line" == '#'* || "$line" != *=* ]]; then
+      continue
+    fi
+    line="${line#export }"
+    name="${line%%=*}"
+    value="${line#*=}"
+    if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      continue
+    fi
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ ${#value} -ge 2 && ( "$value" == '"'*'"' || "$value" == "'"*"'" ) ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$name=$value"
+  done < "$ENV_FILE"
   echo "Loaded API keys from $ENV_FILE"
 else
   echo "WARNING: no .env found. Put OPENAI_API_KEY in .env (or use keys.json)."

@@ -33,10 +33,41 @@ const POV_SELF_ID = 'pov-recorder-self';
 // bot, action labels, and exact UTC start/end (epoch ms), so overlapping clips
 // from different bots can be lined up on a common timeline when stitching.
 const MANIFEST_PATH = path.resolve('./bots/recordings-manifest.jsonl');
+const MAX_RECORDING_EVENTS = 500;
+const MAX_EVENT_TYPE_LENGTH = 64;
+const MAX_EVENT_DATA_DEPTH = 3;
+const MAX_EVENT_DATA_ITEMS = 20;
+const MAX_EVENT_STRING_LENGTH = 500;
+const MAX_EVENT_DATA_BYTES = 2048;
 
 // Turns an action label like '!goToCoordinates' into a filename-safe tag.
 function sanitizeLabel(label) {
     return String(label).replace(/^!/, '').replace(/[^a-zA-Z0-9_+.-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function sanitizeEventData(value, depth = 0, seen = new WeakSet()) {
+    if (value === null || typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string') return value.slice(0, MAX_EVENT_STRING_LENGTH);
+    if (depth >= MAX_EVENT_DATA_DEPTH || typeof value !== 'object') return undefined;
+    if (seen.has(value)) return undefined;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+        return value
+            .slice(0, MAX_EVENT_DATA_ITEMS)
+            .map(item => sanitizeEventData(item, depth + 1, seen))
+            .filter(item => item !== undefined);
+    }
+
+    const sanitized = {};
+    for (const [key, item] of Object.entries(value).slice(0, MAX_EVENT_DATA_ITEMS)) {
+        const safeItem = sanitizeEventData(item, depth + 1, seen);
+        if (safeItem !== undefined) {
+            sanitized[String(key).slice(0, MAX_EVENT_TYPE_LENGTH)] = safeItem;
+        }
+    }
+    return sanitized;
 }
 
 /**
@@ -154,6 +185,7 @@ export class PovRecorder {
         this._lastFrame = null;
         this._audio = []; // TTS chat lines spoken during the clip: {data (base64 mp3), offsetMs}
         this._voiceLines = 0;
+        this._resetEvents();
         this._onBotEnd = () => { this.stop().catch(() => {}); };
     }
 
@@ -184,6 +216,42 @@ export class PovRecorder {
     }
 
     /**
+     * Add a timestamped event to the active recording. Event payloads and the
+     * total event count are bounded so untrusted action output cannot inflate
+     * the shared manifest indefinitely.
+     */
+    addMarker(type, data = null, atMs = Date.now()) {
+        if (!this.recording || !Number.isFinite(this.startedAt) || !type) return;
+        if (this.events.length >= MAX_RECORDING_EVENTS) return;
+        if (typeof data === 'number' && arguments.length === 2) {
+            atMs = data;
+            data = null;
+        }
+
+        const eventAtMs = Number.isFinite(atMs) ? atMs : Date.now();
+        const sessionStartMs = Number.isFinite(this.syncEpochMs)
+            ? this.syncEpochMs
+            : this.startedAt;
+        const event = {
+            type: String(type).replace(/[^a-zA-Z0-9_.-]+/g, '-').slice(0, MAX_EVENT_TYPE_LENGTH),
+            atMs: eventAtMs,
+            offsetMs: Math.max(0, eventAtMs - sessionStartMs),
+        };
+        let safeData = sanitizeEventData(data);
+        if (safeData !== null && safeData !== undefined
+            && Buffer.byteLength(JSON.stringify(safeData), 'utf8') > MAX_EVENT_DATA_BYTES) {
+            safeData = { truncated: true };
+        }
+        if (safeData !== null && safeData !== undefined) event.data = safeData;
+        this.events.push(event);
+        return event;
+    }
+
+    _resetEvents() {
+        this.events = [];
+    }
+
+    /**
      * Attach a TTS voice line (base64 mp3) to the current clip. The offset is
      * taken from wall-clock time so the line lands where the bot said it;
      * segments are muxed into the MP4's audio track when the recording stops.
@@ -191,6 +259,7 @@ export class PovRecorder {
     addAudio(audioBase64, atMs = Date.now()) {
         if (!this.recording || !this.startedAt || !audioBase64) return;
         this._audio.push({ data: audioBase64, offsetMs: Math.max(0, atMs - this.startedAt) });
+        this.addMarker('speech', null, atMs);
     }
 
     _notify() {
@@ -236,6 +305,7 @@ export class PovRecorder {
         this.labels = new Set(opts.label ? [String(opts.label)] : []);
         this._audio = [];
         this._voiceLines = 0;
+        this._resetEvents();
         this._fps = opts.fps;
 
         fs.mkdirSync(this.folder, { recursive: true });
@@ -510,6 +580,7 @@ export class PovRecorder {
                 durationMs: endedAt - this.startedAt,
                 frames: this.frames,
                 voiceLines: this._voiceLines,
+                events: this.events.map(event => ({ ...event })),
             }) + '\n');
         } catch (err) {
             console.warn(`[${this.name}] Could not append to recordings manifest:`, err.message);

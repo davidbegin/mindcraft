@@ -55,6 +55,13 @@ export {
     serializeRecordingManifest,
 } from './recording_exports.js';
 export {
+    HighlightReelBuilder,
+    resolveWithinBotsRoot,
+    runProcess,
+    safeHighlightSessionId,
+    selectHighlightSegments,
+} from './highlight_reel.js';
+export {
     GAME_CONTENT_SYSTEM_PROMPT,
     buildParticipantGameDirective,
     buildGameSystemPrompt,

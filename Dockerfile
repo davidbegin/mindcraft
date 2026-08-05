@@ -9,6 +9,8 @@ RUN apt-get update && \
     python3 \
     python-is-python3 \
     python3-pip \
+    ffmpeg \
+    zip \
     # tmux \
     xvfb \
     xauth \

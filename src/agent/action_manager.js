@@ -77,6 +77,14 @@ export class ActionManager {
         this.resume_name = null;
     }
 
+    _markRecordingEvent(type, data) {
+        try {
+            this.agent.pov_recorder?.addMarker?.(type, data);
+        } catch (_) {
+            // Recording metadata is best-effort and must not affect actions.
+        }
+    }
+
     async _executeResume(actionLabel = null, actionFn = null, timeout = 10) {
         const new_resume = actionFn != null;
         if (new_resume) { // start new resume
@@ -135,6 +143,7 @@ export class ActionManager {
             this.currentActionLabel = actionLabel;
             this.currentActionFn = actionFn;
             this.timedout = false;
+            this._markRecordingEvent('action-start', { label: actionLabel });
 
             // timeout in minutes
             if (timeout > 0) {
@@ -146,10 +155,18 @@ export class ActionManager {
 
             // mark action as finished + cleanup only if we still own the slot
             if (actionId !== this._actionId) {
+                this._markRecordingEvent('action-end', {
+                    label: actionLabel,
+                    outcome: 'superseded',
+                });
                 clearTimeout(TIMEOUT);
                 return { success: false, message: 'Action superseded by interrupt/force-clear.', interrupted: true, timedout: true };
             }
 
+            this._markRecordingEvent('action-end', {
+                label: actionLabel,
+                outcome: 'success',
+            });
             this.executing = false;
             this.currentActionLabel = '';
             this.currentActionFn = null;
@@ -169,6 +186,12 @@ export class ActionManager {
             // return action status report
             return { success: true, message: output, interrupted, timedout };
         } catch (err) {
+            if (actionId != null) {
+                this._markRecordingEvent('action-error', {
+                    label: actionLabel,
+                    message: err?.message || String(err),
+                });
+            }
             if (actionId == null || actionId === this._actionId) {
                 this.executing = false;
                 this.currentActionLabel = '';

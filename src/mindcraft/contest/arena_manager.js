@@ -27,6 +27,14 @@ const DOG_TREE_SPECIES = Object.freeze([
     Object.freeze({ log: 'spruce_log', leaves: 'spruce_leaves' }),
 ]);
 
+const PODIUM_BLOCKS = Object.freeze([
+    'gold_block',
+    'iron_block',
+    'copper_block',
+]);
+const PODIUM_WIDTH = 3;
+const PODIUM_GAP = 1;
+
 const DEPTH_RACE_KIT = Object.freeze([
     'diamond_pickaxe 1',
     'bread 16',
@@ -498,6 +506,78 @@ function spectatorWarpCommands(spectatorNames) {
     });
 }
 
+function podiumXOffset(index) {
+    if (index === 0) return 0;
+    const distance = Math.ceil(index / 2) * (PODIUM_WIDTH + PODIUM_GAP);
+    return index % 2 === 1 ? -distance : distance;
+}
+
+function orderedContestResults(contest) {
+    const participantIds = Array.isArray(contest?.participantIds)
+        ? contest.participantIds
+        : [];
+    const participantSet = new Set(participantIds);
+    const seen = new Set();
+    const results = [];
+
+    for (const result of contest?.results || []) {
+        if (!participantSet.has(result?.participantId) || seen.has(result.participantId)) {
+            continue;
+        }
+        seen.add(result.participantId);
+        results.push(result);
+    }
+    for (const participantId of participantIds) {
+        if (!seen.has(participantId)) {
+            results.push({ participantId, rank: null });
+        }
+    }
+    return results;
+}
+
+export function buildPodiumCeremonyCommands(contest) {
+    if (contest?.status !== 'completed' || !contest.winnerIds?.length) return [];
+
+    const results = orderedContestResults(contest);
+    if (results.length === 0) return [];
+    results.forEach(result => assertPlayerName(result.participantId));
+
+    const podiums = results.map((result, index) => {
+        const rank = Number.isInteger(result.rank) && result.rank > 0
+            ? result.rank
+            : index + 1;
+        return {
+            name: result.participantId,
+            rank,
+            height: Math.max(1, results.length - rank + 1),
+            x: ARENA.centerX + podiumXOffset(index),
+        };
+    });
+    const minX = Math.min(...podiums.map(podium => podium.x - 1));
+    const maxX = Math.max(...podiums.map(podium => podium.x + 1));
+    const minZ = ARENA.centerZ - 1;
+    const maxZ = ARENA.centerZ + 1;
+    const commands = [
+        `fill ${minX} ${ARENA.floorY + 1} ${minZ} `
+        + `${maxX} ${ARENA.clearTopY} ${maxZ} air`,
+    ];
+
+    for (const podium of podiums) {
+        const block = PODIUM_BLOCKS[podium.rank - 1] || 'polished_andesite';
+        commands.push(
+            `fill ${podium.x - 1} ${ARENA.floorY + 1} ${minZ} `
+            + `${podium.x + 1} ${ARENA.floorY + podium.height} ${maxZ} ${block}`,
+            `effect clear ${podium.name}`,
+            `gamemode adventure ${podium.name}`,
+            `tp ${podium.name} ${podium.x} `
+            + `${ARENA.floorY + podium.height + 1} ${ARENA.centerZ} 0 0`,
+            `spawnpoint ${podium.name} ${podium.x} `
+            + `${ARENA.floorY + podium.height + 1} ${ARENA.centerZ}`
+        );
+    }
+    return commands;
+}
+
 export class ContestArenaManager {
     constructor(options = {}) {
         this.runCommand = options.runCommand || runMinecraftCommand;
@@ -591,6 +671,17 @@ export class ContestArenaManager {
         return {
             ...getArenaJoinInfo(),
             spectators,
+        };
+    }
+
+    async presentResults(contest) {
+        const commands = buildPodiumCeremonyCommands(contest);
+        for (const command of commands) {
+            await this.runCommand(command);
+        }
+        return {
+            presented: commands.length > 0,
+            commandCount: commands.length,
         };
     }
 }

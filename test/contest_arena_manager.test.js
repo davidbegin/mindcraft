@@ -49,6 +49,38 @@ test('radically resets the arena and every diamond-race participant', async () =
     }
 });
 
+test('builds ranked podiums and warps every competitor onto them', async () => {
+    const commands = [];
+    const manager = new ContestArenaManager({
+        runCommand: async command => {
+            commands.push(command);
+            return 'ok';
+        },
+    });
+
+    const result = await manager.presentResults({
+        status: 'completed',
+        participantIds: ['alice', 'bob', 'charlie'],
+        winnerIds: ['bob'],
+        results: [
+            { participantId: 'bob', rank: 1 },
+            { participantId: 'charlie', rank: 2 },
+            { participantId: 'alice', rank: 3 },
+        ],
+    });
+
+    assert.equal(result.presented, true);
+    assert.ok(commands.includes('fill 99999 101 99999 100001 103 100001 gold_block'));
+    assert.ok(commands.includes('fill 99995 101 99999 99997 102 100001 iron_block'));
+    assert.ok(commands.includes('fill 100003 101 99999 100005 101 100001 copper_block'));
+    assert.ok(commands.includes('tp bob 100000 104 100000 0 0'));
+    assert.ok(commands.includes('tp charlie 99996 103 100000 0 0'));
+    assert.ok(commands.includes('tp alice 100004 102 100000 0 0'));
+    for (const name of ['alice', 'bob', 'charlie']) {
+        assert.ok(commands.includes(`gamemode adventure ${name}`));
+    }
+});
+
 test('builds a netherite race that requires crafting a diamond pickaxe', async () => {
     const commands = [];
     const manager = new ContestArenaManager({

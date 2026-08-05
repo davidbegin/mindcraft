@@ -23,6 +23,7 @@ import {
     ContestLoop,
     ContestRecordingManager,
     GameSessionManager,
+    HighlightReelBuilder,
     TowerHighScoreStore,
     buildGameSystemPrompt,
     defaultJudge,
@@ -31,6 +32,7 @@ import {
     getArenaJoinInfo,
     getContestGamePreset,
     listContestGamePresets,
+    safeHighlightSessionId,
     scoreDepthRace,
     scoreTowerBattle,
     serializeRecordingManifest,
@@ -86,6 +88,8 @@ const contestRecordingManager = new ContestRecordingManager({
 const contestAnnouncer = new ContestAnnouncer({
     speak: speakContestAnnouncement,
 });
+const highlightJobs = new Map();
+let highlightReelBuilder = null;
 
 // Circuit breaker for non-retryable model provider failures (exhausted credits, revoked
 // keys). While it is open the colony stays paused and a single agent probes the provider on
@@ -102,6 +106,9 @@ let modelOutage = { ...idleModelOutage };
 
 const settings_spec = JSON.parse(readFileSync(path.join(__dirname, 'public/settings_spec.json'), 'utf8'));
 const projectRoot = path.resolve(__dirname, '../..');
+highlightReelBuilder = new HighlightReelBuilder({
+    botsRoot: path.join(projectRoot, 'bots'),
+});
 const providerKeys = {
     anthropic: 'ANTHROPIC_API_KEY',
     azure: 'AZURE_OPENAI_API_KEY',
@@ -295,8 +302,10 @@ async function ensureContest(options) {
                 },
                 prepareArena: (preset, participants) =>
                     contestArenaManager.prepare(preset, participants),
+                presentResults: contest => contestArenaManager.presentResults(contest),
                 startRecording: options => contestRecordingManager.start(options),
                 stopRecording: contestId => contestRecordingManager.stop(contestId),
+                queueHighlight: ({ session, contest }) => queueContestHighlight({ session, contest }),
                 sendDirective: sendGameDirective,
                 announceStart: contest => contestAnnouncer.announceStart(contest),
                 announceResult: contest => contestAnnouncer.announceResult(contest),
@@ -630,6 +639,130 @@ function requestContestRecordingCommand(agentRef, event, options) {
             resolve(result);
         });
     });
+}
+
+function highlightSessionCandidates(contestOrSessionId) {
+    const id = String(contestOrSessionId || '').trim();
+    if (!id) return [];
+    const candidates = [id];
+    if (!id.startsWith('contest-')) candidates.push(`contest-${id}`);
+    return candidates;
+}
+
+function highlightStatusPath(sessionId) {
+    const safe = safeHighlightSessionId(sessionId);
+    return path.join(projectRoot, 'bots', 'highlights', safe, 'status.json');
+}
+
+function highlightPublicUrl(sessionId) {
+    const safe = safeHighlightSessionId(sessionId);
+    return `/bots/highlights/${encodeURIComponent(safe)}/highlight.mp4`;
+}
+
+function mapHighlightStatus(raw, sessionId) {
+    if (!raw) {
+        return { success: true, status: 'missing', sessionId };
+    }
+    const stateMap = {
+        queued: 'queued',
+        building: 'processing',
+        processing: 'processing',
+        complete: 'ready',
+        ready: 'ready',
+        failed: 'failed',
+    };
+    const status = stateMap[raw.state] || raw.state || 'missing';
+    const durationSeconds = Number(raw.durationSeconds);
+    return {
+        success: true,
+        status,
+        sessionId: raw.sessionId || sessionId,
+        error: raw.error || null,
+        durationMs: Number.isFinite(durationSeconds)
+            ? Math.round(durationSeconds * 1000)
+            : null,
+        url: status === 'ready' ? highlightPublicUrl(raw.sessionId || sessionId) : null,
+        segments: Array.isArray(raw.segments) ? raw.segments.length : 0,
+    };
+}
+
+function readHighlightStatus(contestOrSessionId) {
+    for (const sessionId of highlightSessionCandidates(contestOrSessionId)) {
+        if (highlightJobs.has(sessionId)) {
+            return mapHighlightStatus(
+                { state: 'building', sessionId },
+                sessionId
+            );
+        }
+        try {
+            const statusPath = highlightStatusPath(sessionId);
+            if (!existsSync(statusPath)) continue;
+            const raw = JSON.parse(readFileSync(statusPath, 'utf8'));
+            return mapHighlightStatus(raw, sessionId);
+        } catch (error) {
+            return {
+                success: false,
+                status: 'failed',
+                sessionId,
+                error: error.message,
+                url: null,
+            };
+        }
+    }
+    return mapHighlightStatus(null, contestOrSessionId);
+}
+
+async function queueContestHighlight({ session = null, contest = null, contestId = null } = {}) {
+    await ensureContest();
+    const resolvedContest = contest
+        || contestCoordinator?.snapshot()?.contests?.[contestId]
+        || contestCoordinator?.snapshot()?.contests?.[session?.contestId]
+        || null;
+    if (!resolvedContest) {
+        throw new Error('Contest not found for highlight reel');
+    }
+    if (resolvedContest.status !== 'completed') {
+        throw new Error('Highlight reels are only built for completed contests');
+    }
+
+    const sessionId = session?.sessionId
+        || `contest-${resolvedContest.id}`;
+    if (highlightJobs.has(sessionId)) {
+        return { success: true, status: 'processing', sessionId };
+    }
+
+    const selection = { session: sessionId };
+    let entries = readManifestEntries(selection);
+    if (!entries.length) {
+        // Also accept the bare contest id in case older clips used that key.
+        entries = readManifestEntries({ session: resolvedContest.id });
+    }
+    if (!entries.length) {
+        throw new Error('No finished session recordings are available for a highlight reel');
+    }
+
+    const statusPath = highlightStatusPath(sessionId);
+    mkdirSync(path.dirname(statusPath), { recursive: true });
+    writeFileSync(statusPath, `${JSON.stringify({
+        state: 'queued',
+        sessionId,
+        startedAt: Date.now(),
+    }, null, 2)}\n`);
+
+    const job = highlightReelBuilder.build({
+        sessionId,
+        manifestEntries: entries,
+        contest: resolvedContest,
+    }).finally(() => {
+        highlightJobs.delete(sessionId);
+        emitContestUpdate();
+    });
+    highlightJobs.set(sessionId, job);
+    job.catch(error => {
+        console.warn(`Highlight reel failed for ${sessionId}:`, error.message);
+    });
+    emitContestUpdate();
+    return { success: true, status: 'queued', sessionId };
 }
 
 async function startContestGame(gameId, options = {}) {
@@ -1525,6 +1658,31 @@ export function createMindServer(host_public = false, port = 8080) {
             });
         } catch (err) {
             res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.get('/api/highlights/:contestId', (req, res) => {
+        try {
+            const payload = readHighlightStatus(req.params.contestId);
+            const code = payload.status === 'missing' ? 404
+                : payload.success === false ? 500
+                : 200;
+            res.status(code).json(payload);
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                status: 'failed',
+                error: error.message,
+            });
+        }
+    });
+
+    app.post('/api/highlights/:contestId', async (req, res) => {
+        try {
+            const result = await queueContestHighlight({ contestId: req.params.contestId });
+            res.json(result);
+        } catch (error) {
+            res.status(400).json({ success: false, error: error.message });
         }
     });
 
