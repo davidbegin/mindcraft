@@ -1,95 +1,63 @@
-// Shared bot voice playback for the dashboard and the audience wall.
+// Optional in-browser mirror of bot and narrator speech.
 //
-// A line must only ever be heard once, so the MindServer sends each clip to a
-// single output device. A tab claims that role only after it can genuinely
-// produce sound; while no tab holds the claim the server plays through host
-// speakers instead, which keeps a game audible with no browser open. The server
-// half of this protocol lives in mindserver.js (voice_output_claims).
+// The MindServer always plays these lines on the host speakers next to the
+// Minecraft client, so a game is audible with no browser open. A page only
+// receives audio after the user turns monitoring on, which keeps a tab nobody
+// is listening to -- backgrounded, muted, or a headless automation browser --
+// from ever competing for the audio. The server half lives in mindserver.js.
 
 (function () {
-    const GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchstart'];
-
-    function createAudioContext() {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        return Ctx ? new Ctx() : null;
-    }
+    const STORAGE_KEY = 'mindcraft.voiceMonitor';
 
     /**
-     * Wires a page's socket up to voice playback.
-     * `onStatus` receives 'owner' | 'muted' | 'blocked' so a page can show
-     * whether it is the tab producing sound.
+     * Wires a page's socket up to optional voice monitoring.
+     * `onStatus` receives 'on' | 'off' | 'blocked' so a page can reflect state.
      */
     window.initBotVoice = function initBotVoice(socket, { onStatus } = {}) {
-        const audioCtx = createAudioContext();
-        let claimed = false;
-        let isOwner = false;
+        let enabled = false;
+        try { enabled = localStorage.getItem(STORAGE_KEY) === 'on'; } catch (_) { /* private mode */ }
         let playback = Promise.resolve();
 
         const setStatus = (status) => {
             try { onStatus?.(status); } catch (_) { /* page callback is advisory */ }
         };
 
-        function claim() {
-            if (claimed) return;
-            claimed = true;
-            socket.emit('claim-voice-output');
+        function sync() {
+            socket.emit(enabled ? 'start-voice-monitor' : 'stop-voice-monitor');
+            setStatus(enabled ? 'on' : 'off');
         }
 
-        // Autoplay policies block sound until the user interacts with the page,
-        // and a suspended AudioContext is the signal for that. Waiting to claim
-        // means the server keeps using host speakers until we can be heard.
-        function claimWhenAudible() {
-            if (!audioCtx || audioCtx.state === 'running') {
-                claim();
-                return;
-            }
-            setStatus('blocked');
-            const onGesture = () => {
-                audioCtx.resume().then(() => {
-                    if (audioCtx.state === 'running') {
-                        GESTURE_EVENTS.forEach(e => document.removeEventListener(e, onGesture));
-                        claim();
-                    }
-                }).catch(() => {});
-            };
-            GESTURE_EVENTS.forEach(e => document.addEventListener(e, onGesture));
+        function setEnabled(next) {
+            enabled = !!next;
+            try { localStorage.setItem(STORAGE_KEY, enabled ? 'on' : 'off'); } catch (_) { /* private mode */ }
+            sync();
         }
 
-        socket.on('connect', () => {
-            claimed = false;
-            isOwner = false;
-            claimWhenAudible();
-        });
-        if (socket.connected) claimWhenAudible();
-
-        socket.on('voice-output-owner', (payload) => {
-            isOwner = !!payload?.owner;
-            setStatus(isOwner ? 'owner' : 'muted');
-        });
+        socket.on('connect', sync);
+        if (socket.connected) sync();
 
         socket.on('bot-voice', (payload) => {
-            if (!payload?.audio) return;
+            if (!enabled || !payload?.audio) return;
             playback = playback.catch(() => {}).then(() => new Promise(resolve => {
                 const audio = new Audio(`data:audio/mpeg;base64,${payload.audio}`);
                 audio.onended = resolve;
-                audio.onerror = () => {
-                    socket.emit('voice-output-failed', { id: payload.id });
-                    resolve();
-                };
+                audio.onerror = resolve;
                 audio.play().catch(error => {
-                    console.warn(`Could not play ${payload.agentName || 'bot'} voice:`, error.message);
-                    socket.emit('voice-output-failed', { id: payload.id });
+                    // Autoplay policy blocks sound until the user interacts with
+                    // the page. The host speakers already played this line, so
+                    // just surface why the mirror is quiet.
+                    console.warn(`Could not mirror ${payload.agentName || 'bot'} voice:`, error.message);
+                    setStatus('blocked');
                     resolve();
                 });
             }));
         });
 
         return {
-            isOwner: () => isOwner,
-            release: () => {
-                claimed = false;
-                socket.emit('release-voice-output');
-            },
+            isEnabled: () => enabled,
+            enable: () => setEnabled(true),
+            disable: () => setEnabled(false),
+            toggle: () => setEnabled(!enabled),
         };
     };
 })();

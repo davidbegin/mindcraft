@@ -308,6 +308,8 @@
         <span class="spacer"></span>
         <button class="btn" onclick="setAllLive(false)">Pause all</button>
         <button class="btn" onclick="setAllLive(true)">Resume all</button>
+        <button class="btn" id="voiceMonitorBtn" onclick="toggleVoiceMonitor()"
+            title="Bot and narrator speech always plays on the host speakers. Turn this on to also hear it on this wall.">🔈 Audio: off</button>
         <span class="shortcuts" title="←/→ page · f around · p pause page · l live page · Esc clear">⌨ ←→ f p l</span>
         <a href="/">← dashboard</a>
     </header>
@@ -343,7 +345,19 @@
         const params = new URLSearchParams(location.search);
         const sessionFilter = params.get('session') || null;
         const socket = io();
-        initBotVoice(socket);
+        const voiceMonitor = initBotVoice(socket, {
+            onStatus: status => {
+                const btn = document.getElementById('voiceMonitorBtn');
+                if (!btn) return;
+                const label = status === 'blocked'
+                    ? 'click to allow'
+                    : status === 'on' ? 'on' : 'off';
+                btn.textContent = `🔈 Audio: ${label}`;
+            },
+        });
+        function toggleVoiceMonitor() { voiceMonitor.toggle(); }
+        window.toggleVoiceMonitor = toggleVoiceMonitor;
+        if (params.get('audio') === '1') voiceMonitor.enable();
         let agents = [];
         let states = {};
         let colonyState = null;

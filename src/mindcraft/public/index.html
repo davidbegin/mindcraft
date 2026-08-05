@@ -2102,6 +2102,8 @@
         <div class="footer-actions">
             <button class="btn btn-ghost" onclick="window.open(focusedAgent ? '/live.html?focus=' + encodeURIComponent(focusedAgent) : '/live.html', '_blank')">📺 Live Wall</button>
             <button class="btn btn-ghost" onclick="openVoices()">🎙 Voices</button>
+            <button class="btn btn-ghost" id="voiceMonitorBtn" onclick="toggleVoiceMonitor()"
+                title="Bot and narrator speech always plays on the host speakers. Turn this on to also hear it in this tab.">🔈 Mirror audio here: off</button>
             <button class="btn btn-ghost" onclick="openRecordings()">🎥 Recordings</button>
             <button class="btn btn-ghost" onclick="disconnectAllAgents()">Disconnect All</button>
             <button class="btn btn-danger" onclick="confirmShutdown()">Full Shutdown</button>
@@ -2265,7 +2267,18 @@
 
     <script>
         const socket = io({ path: '/socket.io' });
-        initBotVoice(socket);
+        const voiceMonitor = initBotVoice(socket, {
+            onStatus: status => {
+                const btn = document.getElementById('voiceMonitorBtn');
+                if (!btn) return;
+                const label = status === 'blocked'
+                    ? 'click page to allow'
+                    : status === 'on' ? 'on' : 'off';
+                btn.textContent = `🔈 Mirror audio here: ${label}`;
+            },
+        });
+        function toggleVoiceMonitor() { voiceMonitor.toggle(); }
+        window.toggleVoiceMonitor = toggleVoiceMonitor;
         const agentsDiv = document.getElementById('agents');
         let settingsSpec = {};
         let profileData = null;

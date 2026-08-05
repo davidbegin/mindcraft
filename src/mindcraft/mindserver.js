@@ -40,6 +40,7 @@ import { getGpt56Profiles } from './model_profiles.js';
 import { ensureSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
 import { playSpeech } from '../agent/speak.js';
+import { VoiceOutput } from './voice_output.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Mindserver is:
@@ -51,16 +52,17 @@ let io;
 let server;
 const agent_connections = {};
 const agent_listeners = [];
-// Browser clients that have proven they can actually produce sound, in claim
-// order. The head of the list owns voice playback; every other client stays
-// silent so a line is never heard twice. Host speakers are used only while
-// this list is empty. See public/bot_voice.js for the client half.
-const voice_output_claims = [];
-// Recent utterances kept just long enough to re-route to host speakers if the
-// owning tab reports that playback failed.
-const recent_utterances = new Map();
-const RECENT_UTTERANCE_TTL_MS = 60000;
-let utterance_seq = 0;
+// Host speakers always play bot and narrator lines; browser pages opt in as
+// extra monitors. See public/bot_voice.js for the client half.
+const voiceOutput = new VoiceOutput({
+    playOnHost: ({ agentName, text, audio }) => playSpeech({
+        text,
+        model: 'elevenlabs',
+        botName: agentName,
+        volume: 100,
+        audioPromise: Promise.resolve(audio),
+    }),
+});
 let colonyCoordinator = null;
 let colonyReady = null;
 let colonySupervisorInterval = null;
@@ -1740,7 +1742,7 @@ export function createMindServer(host_public = false, port = 8080) {
             if (agent_listeners.some(l => l.socket === socket)) {
                 removeListener(socket);
             }
-            releaseVoiceOutput(socket);
+            voiceOutput.removeMonitor(socket);
         });
 
         socket.on('chat-message', (agentName, json) => {
@@ -1858,9 +1860,8 @@ export function createMindServer(host_public = false, port = 8080) {
             io.emit('bot-output', agentName, message);
         });
 
-        socket.on('claim-voice-output', () => claimVoiceOutput(socket));
-        socket.on('release-voice-output', () => releaseVoiceOutput(socket));
-        socket.on('voice-output-failed', ({ id } = {}) => recoverFailedVoice(socket, id));
+        socket.on('start-voice-monitor', () => addVoiceMonitor(socket));
+        socket.on('stop-voice-monitor', () => removeVoiceMonitor(socket));
 
         socket.on('contest-speech', async (options, callback) => {
             try {
@@ -2058,39 +2059,14 @@ function removeListener(listener_socket) {
     }
 }
 
-function voiceOutputOwner() {
-    while (voice_output_claims.length && !voice_output_claims[0].connected) {
-        voice_output_claims.shift();
-    }
-    return voice_output_claims[0] ?? null;
+function addVoiceMonitor(socket) {
+    voiceOutput.addMonitor(socket);
+    if (socket.connected) socket.emit('voice-monitor', { monitoring: true });
 }
 
-// Tells every claimant whether it is currently the one that should play, so
-// extra tabs can show a muted indicator instead of silently doing nothing.
-function broadcastVoiceOutputOwner() {
-    const owner = voiceOutputOwner();
-    for (const claimant of voice_output_claims) {
-        claimant.emit('voice-output-owner', { owner: claimant === owner });
-    }
-}
-
-function claimVoiceOutput(socket) {
-    if (voice_output_claims.includes(socket)) return;
-    voice_output_claims.push(socket);
-    broadcastVoiceOutputOwner();
-}
-
-function releaseVoiceOutput(socket) {
-    const idx = voice_output_claims.indexOf(socket);
-    if (idx === -1) return;
-    voice_output_claims.splice(idx, 1);
-    if (socket.connected) socket.emit('voice-output-owner', { owner: false });
-    broadcastVoiceOutputOwner();
-}
-
-function rememberUtterance(id, utterance) {
-    recent_utterances.set(id, utterance);
-    setTimeout(() => recent_utterances.delete(id), RECENT_UTTERANCE_TTL_MS);
+function removeVoiceMonitor(socket) {
+    voiceOutput.removeMonitor(socket);
+    if (socket.connected) socket.emit('voice-monitor', { monitoring: false });
 }
 
 function broadcastContestRecordingAudio(sourceConnection, payload) {
@@ -2109,47 +2085,11 @@ function broadcastContestSessionRecordingAudio(sessionId, payload) {
 }
 
 /**
- * Send a generated line to exactly one output device: the owning browser tab
- * if there is one, otherwise the host speakers.
+ * Play a generated line on the host speakers and mirror it to any browser
+ * pages that opted in as monitors.
  */
 function dispatchBotVoice({ agentName, text, audio }) {
-    const owner = voiceOutputOwner();
-    if (!owner) {
-        playSpeech({
-            text,
-            model: 'elevenlabs',
-            botName: agentName,
-            volume: 100,
-            audioPromise: Promise.resolve(audio),
-        });
-        return;
-    }
-    const id = `voice_${++utterance_seq}`;
-    rememberUtterance(id, { agentName, text, audio });
-    owner.emit('bot-voice', { id, agentName, text, audio });
-}
-
-// The owning tab could not play (autoplay policy, no output device). Drop its
-// claim and put the line back on host speakers so nothing is lost.
-function recoverFailedVoice(socket, id) {
-    releaseVoiceOutput(socket);
-    const utterance = recent_utterances.get(id);
-    if (!utterance) return;
-    recent_utterances.delete(id);
-    const owner = voiceOutputOwner();
-    if (owner) {
-        const retryId = `voice_${++utterance_seq}`;
-        rememberUtterance(retryId, utterance);
-        owner.emit('bot-voice', { id: retryId, ...utterance });
-        return;
-    }
-    playSpeech({
-        text: utterance.text,
-        model: 'elevenlabs',
-        botName: utterance.agentName,
-        volume: 100,
-        audioPromise: Promise.resolve(utterance.audio),
-    });
+    voiceOutput.dispatch({ agentName, text, audio });
 }
 
 // Optional: export these if you need access to them from other files
