@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import test from 'node:test';
 
 import {
@@ -173,7 +174,7 @@ test('builder records useful failure and preserves source recordings', async t =
         endedAt: 101000,
         events: [{ type: 'action.mine', atMs: 50000 }],
     }];
-    const processRunner = async command => {
+    const processRunner = command => {
         if (command === 'ffprobe') {
             return {
                 code: 0,

@@ -4,7 +4,6 @@ import {
     access,
     mkdir,
     mkdtemp,
-    readFile,
     realpath,
     rename,
     rm,
@@ -229,11 +228,20 @@ export function selectHighlightSegments(manifestEntries, contest, options = {}) 
     }
 
     const winner = Array.isArray(contest?.winnerIds) ? contest.winnerIds[0] : null;
-    const endingEntry = bestEntryAt(
-        entries,
+    const winnerEntries = winner
+        ? entries.filter(entry => entry.sourceBot === winner || entry.bot === winner)
+        : [];
+    const winnerEndingEntry = bestEntryAt(
+        winnerEntries,
         bounds.endMs - 1,
         winner,
         'participant-pov'
+    );
+    const endingEntry = winnerEndingEntry || bestEntryAt(
+        entries,
+        bounds.endMs - 1,
+        null,
+        'arena-overview'
     );
     const ending = endingEntry
         ? windowFor(
@@ -241,7 +249,7 @@ export function selectHighlightSegments(manifestEntries, contest, options = {}) 
             bounds.endMs,
             ENDING_SECONDS,
             bounds,
-            winner ? 'winner-pov-ending' : 'contest-ending',
+            winnerEndingEntry ? 'winner-pov-ending' : 'contest-ending',
             900
         )
         : null;
@@ -274,7 +282,7 @@ export function selectHighlightSegments(manifestEntries, contest, options = {}) 
         const endingSeconds = ending.durationSeconds;
         result = trimToBudget(
             selected.sort((left, right) =>
-                left.startMs - right.startMs || right.score - left.score
+                right.score - left.score || left.startMs - right.startMs
             ),
             Math.max(0, maxDurationSeconds - endingSeconds)
         );
@@ -282,7 +290,7 @@ export function selectHighlightSegments(manifestEntries, contest, options = {}) 
     } else {
         result = trimToBudget(
             selected.sort((left, right) =>
-                left.startMs - right.startMs || right.score - left.score
+                right.score - left.score || left.startMs - right.startMs
             ),
             maxDurationSeconds
         );
@@ -320,7 +328,7 @@ export function resolveWithinBotsRoot(botsRoot, candidatePath) {
     return candidate;
 }
 
-export async function runProcess(command, args, options = {}) {
+export function runProcess(command, args, options = {}) {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, {
             cwd: options.cwd,
