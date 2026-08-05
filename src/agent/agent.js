@@ -22,6 +22,7 @@ import {
     sendOutputToServer,
     requestColonyCommand,
     requestContestSpeech,
+    reportContestDeath,
     reportContestWinItem,
 } from './mindserver_proxy.js';
 import { setOutageHandler } from '../models/quota_guard.js';
@@ -712,6 +713,7 @@ export class Agent {
             if (this.actions.executing) {
                 this.actions.forceClear('death');
             }
+            this._reportContestDeath();
         });
         this.bot.on('kicked', (reason) => {
             if (!this._disconnectHandled) {
@@ -1019,6 +1021,21 @@ export class Agent {
         };
         this.bot.inventory.on('updateSlot', checkInventory);
         checkInventory();
+    }
+
+    _reportContestDeath() {
+        if (
+            settings.game_session?.contestType !== 'death_race'
+            || this._contestDeathReported
+        ) {
+            return;
+        }
+        this._contestDeathReported = true;
+        reportContestDeath().catch(error => {
+            if (/not accepting|deadline|already finished/i.test(error.message)) return;
+            console.error(`[${this.name}] Could not report contest death:`, error.message);
+            this._contestDeathReported = false;
+        });
     }
 
     _isSolidAt(x, y, z) {

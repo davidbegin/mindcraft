@@ -3,6 +3,11 @@ import { runMinecraftCommand } from '../minecraft_server.js';
 const BOSSBAR_ID = 'mindcraft:contest';
 const ALL_PLAYERS = '@a';
 const ITEM_RACE_PRESENTATIONS = Object.freeze({
+    death_race: Object.freeze({
+        score: 'died first',
+        winnerLabel: 'FIRST DEATH!',
+        titleColor: 'red',
+    }),
     dog_race: Object.freeze({
         score: 'dog tamed',
         winnerLabel: 'DOG TAMED!',

@@ -21,6 +21,9 @@ const DEPTH_RACE_KIT = Object.freeze([
 ]);
 
 const GAME_KITS = Object.freeze({
+    death_race: Object.freeze([
+        'wooden_sword 1',
+    ]),
     dog_race: Object.freeze([
         'stone_sword 1',
         'bread 16',
@@ -326,6 +329,17 @@ function buildWorldResetCommands(gameId) {
                 + `${ARENA.centerZ + dz} ancient_debris`
             );
         }
+    } else if (gameId === 'death_race') {
+        commands.push(
+            `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
+            + `${maxX} ${ARENA.floorY - 3} ${maxZ} bedrock`,
+            `fill ${minX} ${ARENA.floorY - 2} ${minZ} `
+            + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
+            `fill ${minX} ${ARENA.floorY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`,
+            `fill ${ARENA.centerX - 4} ${ARENA.floorY} ${ARENA.centerZ - 4} `
+            + `${ARENA.centerX + 4} ${ARENA.floorY} ${ARENA.centerZ + 4} lava`
+        );
     } else {
         commands.push(
             `fill ${minX} ${ARENA.floorY - 3} ${minZ} `

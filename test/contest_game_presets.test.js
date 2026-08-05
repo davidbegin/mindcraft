@@ -11,6 +11,7 @@ test('lists the starter contest games for the UI', () => {
     assert.deepEqual(
         games.map(game => game.id).sort(),
         [
+            'death_race',
             'deepest_2_5',
             'deepest_5',
             'diamond_race',
@@ -43,6 +44,14 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.match(tower.prompt, /Nothing is submitted/);
     assert.match(tower.prompt, /timer expires/);
     assert.doesNotMatch(tower.prompt, /five minutes/i);
+
+    const deathRace = getContestGamePreset('death_race');
+    assert.equal(deathRace.rules.type, 'death_race');
+    assert.equal(deathRace.rules.scoring, 'first-death-wins');
+    assert.equal(deathRace.rules.metrics[0].direction, 'minimize');
+    assert.equal(deathRace.metadata.pvp, true);
+    assert.match(deathRace.prompt, /first competitor to die/i);
+    assert.match(deathRace.prompt, /ends automatically/i);
 
     const diamonds = getContestGamePreset('diamond_race');
     assert.equal(diamonds.rules.winItem, 'diamond');

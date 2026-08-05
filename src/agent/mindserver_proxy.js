@@ -337,6 +337,26 @@ export function reportContestWinItem(itemName) {
     });
 }
 
+export function reportContestDeath() {
+    const socket = serverProxy.getSocket();
+    if (!socket?.connected) {
+        return Promise.reject(new Error('MindServer is not connected'));
+    }
+    return new Promise((resolve, reject) => {
+        socket.timeout(10000).emit('contest-death', {}, (error, result) => {
+            if (error) {
+                reject(new Error('Contest death report timed out'));
+                return;
+            }
+            if (!result?.success) {
+                reject(new Error(result?.error || 'Contest death report failed'));
+                return;
+            }
+            resolve(result.data);
+        });
+    });
+}
+
 export function requestColonyCommand(type, payload = {}) {
     const socket = serverProxy.getSocket();
     if (!socket?.connected) {

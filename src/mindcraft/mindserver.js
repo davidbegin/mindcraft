@@ -1510,6 +1510,43 @@ export function createMindServer(host_public = false, port = 8080) {
             }
         });
 
+        socket.on('contest-death', async (_request, callback) => {
+            try {
+                const connection = agent_connections[curAgentName];
+                const active = contestCoordinator?.view()?.activeContest;
+                if (!curAgentName || !connection?.settings?.game_session || !active) {
+                    throw new Error('Only an active game participant can report a death');
+                }
+                if (connection.settings.game_session.contestId !== active.id) {
+                    throw new Error('Game participant is not in the active contest');
+                }
+                if (active.rules?.type !== 'death_race') {
+                    throw new Error('The active contest is not a first-to-die game');
+                }
+                const data = await contestCoordinator.declareWinner(
+                    active.id,
+                    curAgentName,
+                    {
+                        event: 'death',
+                        elapsedMs: Date.now() - active.startedAt,
+                    }
+                );
+                const view = contestCoordinator.view();
+                await contestHud.sync(view);
+                emitContestUpdate();
+                callback?.({ success: true, data });
+
+                const cleanup = gameSessionManager?.view()?.contestId === active.id
+                    ? gameSessionManager.syncWithContestView(view)
+                    : contestRecordingManager.stop(active.id);
+                cleanup.catch(error => {
+                    console.error(`Could not clean up completed contest ${active.id}:`, error);
+                });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
         socket.on('contest-submit', async (request, callback) => {
             try {
                 if (!curAgentName) {

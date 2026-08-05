@@ -174,6 +174,7 @@ export class GameSessionManager {
                     provider: participant.provider,
                     systemPrompt,
                     winItem: preset.rules?.winItem ?? null,
+                    contestType: preset.rules?.type ?? null,
                 });
                 const result = await this.createAgent(settings);
                 if (!result?.success) {
