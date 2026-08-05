@@ -33,6 +33,16 @@ test('lists the starter contest games for the UI', () => {
         CONTEST_BOT_CHARACTERS.map(character => ({ ...character }))
     );
     assert.equal(tower.defaultCharacters.length, 4);
+    assert.deepEqual(
+        tower.defaultCharacters.map(({ name, profileId }) => ({ name, profileId })),
+        [
+            { name: 'Billy', profileId: 'gpt-5-6-luna-instant' },
+            { name: 'Alice', profileId: 'claude' },
+            { name: 'Marcus', profileId: 'gemini' },
+            { name: 'Priya', profileId: 'grok' },
+        ]
+    );
+    assert.ok(tower.defaultCharacters.every(character => character.systemPrompt.length > 40));
 });
 
 test('contest presets include game-specific rules and judge metrics', () => {
