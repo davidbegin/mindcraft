@@ -4,7 +4,7 @@ import yargs from 'yargs';
 
 const args = process.argv.slice(2);
 if (args.length < 1) {
-    console.log('Usage: node init_agent.js -n <agent_name> -p <port> -l <load_memory> -m <init_message> -c <count_id>');
+    console.log('Usage: node init_agent.js -n <agent_name> -i <agent_id> -p <port> -l <load_memory> -m <init_message> -c <count_id>');
     process.exit(1);
 }
 
@@ -12,7 +12,12 @@ const argv = yargs(args)
     .option('name', {
         alias: 'n',
         type: 'string',
-        description: 'name of agent'
+        description: 'in-game name of agent'
+    })
+    .option('id', {
+        alias: 'i',
+        type: 'string',
+        description: 'unique instance id the mindserver registered this agent under'
     })
     .option('load_memory', {
         alias: 'l',
@@ -63,7 +68,7 @@ installShutdownHandlers();
 (async () => {
     try {
         console.log('Connecting to MindServer');
-        await serverProxy.connect(argv.name, argv.port);
+        await serverProxy.connect(argv.name, argv.port, argv.id);
         console.log('Starting agent');
         agent = new Agent();
         serverProxy.setAgent(agent);

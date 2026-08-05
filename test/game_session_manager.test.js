@@ -64,7 +64,7 @@ async function withManager(run, overrides = {}) {
             buildAgentSettings: (profile, gameSession) => ({ profile, game_session: gameSession }),
             createAgent: async settings => {
                 calls.push(['create', settings]);
-                return { success: true };
+                return { success: true, agentId: `${settings.profile.name}#${calls.length}` };
             },
             destroyAgent: async name => calls.push(['destroy', name]),
             isAgentReady: () => true,
@@ -157,8 +157,9 @@ test('provisions isolated agents, records, directs, and cleans up after completi
 
         assert.equal(manager.view(), null);
         assert.deepEqual(
-            calls.filter(([type]) => type === 'destroy').map(([, name]) => name),
-            ['speedy', 'thinker']
+            calls.filter(([type]) => type === 'destroy').map(([, id]) => id),
+            ['speedy#1', 'thinker#2'],
+            'temporary bots are destroyed by instance id, not by name'
         );
         const stopIndex = calls.findIndex(([type]) => type === 'record-stop');
         const destroyIndex = calls.findIndex(([type]) => type === 'destroy');
@@ -215,6 +216,8 @@ test('rolls back agents and cancels the draft after partial startup failure', as
 
         assert.equal(coordinator.snapshot().contests['game-1'].status, 'cancelled');
         assert.equal(manager.view(), null);
+        assert.ok(manager.lastFailure?.error);
+        assert.match(manager.lastFailure.error, /provider unavailable/);
         assert.deepEqual(
             calls.filter(([type]) => type === 'destroy').map(([, name]) => name),
             ['speedy']
@@ -225,6 +228,79 @@ test('rolls back agents and cancels the draft after partial startup failure', as
             if (attempts === 2) return { success: false, error: 'provider unavailable' };
             return { success: true, settings };
         },
+    });
+});
+
+test('ready timeout explains connected vs in-game agent state', async () => {
+    await withManager(async ({ manager }) => {
+        await assert.rejects(
+            manager.start({
+                gameId: 'tower',
+                participants: [{ profileId: 'fast', name: 'speedy' }],
+            }),
+            /connected, not in-game yet/
+        );
+        assert.match(manager.lastFailure.error, /connected, not in-game yet/);
+        assert.equal(manager.lastFailure.session.status, 'failed');
+        assert.equal(manager.lastFailure.session.progress.stage, 'wait_ready');
+    }, {
+        isAgentReady: () => false,
+        getAgentLaunchStatus: name => ({
+            name,
+            registered: true,
+            socketConnected: true,
+            inGame: false,
+        }),
+        readyTimeoutMs: 20,
+        readyPollMs: 5,
+    });
+});
+
+test('frees names held by leftover bots instead of refusing the roster', async () => {
+    let online = ['leftover'];
+    const reclaimed = [];
+    await withManager(async ({ manager, coordinator }) => {
+        await manager.start({
+            gameId: 'tower',
+            participants: [{ profileId: 'fast', name: 'leftover' }],
+        });
+
+        assert.deepEqual(reclaimed, [['leftover']]);
+        assert.equal(manager.view().status, 'running');
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        getExistingAgentNames: () => online,
+        reclaimNames: names => {
+            reclaimed.push(names);
+            online = online.filter(name => !names.includes(name));
+        },
+    });
+});
+
+test('a refused second game leaves the running bots alone', async () => {
+    const reclaimed = [];
+    await withManager(async ({ manager, coordinator }) => {
+        await manager.start({
+            gameId: 'tower',
+            participants: [{ profileId: 'fast', name: 'speedy' }],
+        });
+        reclaimed.length = 0;
+
+        await assert.rejects(
+            manager.start({
+                gameId: 'tower',
+                participants: [{ profileId: 'fast', name: 'speedy' }],
+            }),
+            /already active/
+        );
+        assert.deepEqual(reclaimed, []);
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        reclaimNames: names => reclaimed.push(names),
     });
 });
 
@@ -239,7 +315,18 @@ test('participant validation rejects catalog, name, and collision errors', () =>
     );
     assert.throws(
         () => validateGameParticipants([{ profileId: 'fast', name: 'colony_bot' }], profiles, ['colony_bot']),
-        /already in use/
+        /already online/
+    );
+    assert.throws(
+        () => validateGameParticipants([
+            { profileId: 'fast', name: 'twin' },
+            { profileId: 'smart', name: 'twin' },
+        ], profiles),
+        /must be unique/
+    );
+    assert.doesNotThrow(
+        () => validateGameParticipants([{ profileId: 'fast', name: 'retired_bot' }], profiles, []),
+        'a name from a finished session can be used again'
     );
     assert.throws(
         () => validateGameParticipants([

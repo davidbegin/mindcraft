@@ -41,6 +41,7 @@ import { ensureSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
 import { playSpeech } from '../agent/speak.js';
 import { VoiceOutput } from './voice_output.js';
+import * as launchTelemetry from './diagnostics/launch_telemetry.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Mindserver is:
@@ -50,7 +51,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let io;
 let server;
-const agent_connections = {};
+// Bots are identified by a per-instance id, never by their Minecraft name. A
+// name is a label a bot wears while it is alive; the next bot is free to wear
+// the same one with completely different settings, stats, and history.
+const agent_connections = new Map();
+let agent_id_seq = 0;
 const agent_listeners = [];
 // Host speakers always play bot and narrator lines; browser pages opt in as
 // extra monitors. See public/bot_voice.js for the client half.
@@ -210,7 +215,7 @@ function getContestRoot(options) {
 }
 
 function defaultContestOptions() {
-    for (const connection of Object.values(agent_connections)) {
+    for (const connection of agent_connections.values()) {
         if (connection.settings?.contest) {
             return { enabled: true, ...connection.settings.contest };
         }
@@ -260,14 +265,34 @@ async function ensureContest(options) {
                 coordinator,
                 getPreset: getContestGamePreset,
                 getProfiles: getAvailableProfiles,
-                getExistingAgentNames: () => Object.keys(agent_connections),
+                getExistingAgentNames: reservedAgentNames,
                 resolveParticipantVoice: resolveVoiceName,
+                reclaimNames: reclaimAgentNames,
                 buildAgentSettings: buildGameAgentSettings,
                 createAgent: settings => mindcraft.createAgent(settings),
                 destroyAgent: destroyGameAgent,
-                isAgentReady: name => Boolean(
-                    agent_connections[name]?.socket && agent_connections[name]?.in_game
-                ),
+                isAgentReady: agentRef => {
+                    const connection = getConnection(agentRef);
+                    return Boolean(connection?.socket && connection.in_game);
+                },
+                getAgentLaunchStatus: agentRef => {
+                    const connection = getConnection(agentRef);
+                    if (!connection) {
+                        return {
+                            name: agentRef,
+                            registered: false,
+                            socketConnected: false,
+                            inGame: false,
+                        };
+                    }
+                    return {
+                        name: connection.name || agentRef,
+                        id: connection.id,
+                        registered: true,
+                        socketConnected: Boolean(connection.socket),
+                        inGame: Boolean(connection.in_game),
+                    };
+                },
                 prepareArena: (preset, participants) =>
                     contestArenaManager.prepare(preset, participants),
                 startRecording: options => contestRecordingManager.start(options),
@@ -276,6 +301,11 @@ async function ensureContest(options) {
                 announceStart: contest => contestAnnouncer.announceStart(contest),
                 announceResult: contest => contestAnnouncer.announceResult(contest),
                 onUpdate: () => emitContestUpdate(),
+                telemetry: {
+                    record: event => launchTelemetry.record(event),
+                    recordError: (error, context) => launchTelemetry.recordError(error, context),
+                    clear: () => launchTelemetry.clearLaunchTelemetry(),
+                },
             });
             contestLoop = new ContestLoop({
                 coordinator,
@@ -308,7 +338,7 @@ async function ensureContest(options) {
 }
 
 function getMinecraftJoinInfo() {
-    for (const connection of Object.values(agent_connections)) {
+    for (const connection of agent_connections.values()) {
         const host = connection.settings?.host;
         const port = connection.settings?.port;
         if (host && Number.isFinite(port) && port > 0) {
@@ -375,24 +405,26 @@ function buildGameAgentSettings(profile, gameSession) {
     return settings;
 }
 
-async function destroyGameAgent(agentName) {
-    mindcraft.destroyAgent(agentName);
-    await unregisterAgent(agentName, 'removed');
+async function destroyGameAgent(agentRef) {
+    const connection = getConnection(agentRef);
+    if (!connection) return;
+    mindcraft.destroyAgent(connection.id);
+    await unregisterAgent(connection.id, 'removed');
 }
 
-function sendGameDirective(agentName, prompt) {
-    const connection = agent_connections[agentName];
+function sendGameDirective(agentRef, prompt) {
+    const connection = getConnection(agentRef);
     if (!connection?.socket || !connection.in_game) {
-        return Promise.reject(new Error(`Agent '${agentName}' is not ready for a game directive`));
+        return Promise.reject(new Error(`Agent '${agentRef}' is not ready for a game directive`));
     }
     return new Promise((resolve, reject) => {
         connection.socket.timeout(20000).emit('game-directive', { prompt }, (error, result) => {
             if (error) {
-                reject(new Error(`Game directive timed out for ${agentName}`));
+                reject(new Error(`Game directive timed out for ${connection.name}`));
                 return;
             }
             if (!result?.success) {
-                reject(new Error(result?.error || `Game directive failed for ${agentName}`));
+                reject(new Error(result?.error || `Game directive failed for ${connection.name}`));
                 return;
             }
             resolve(result);
@@ -423,9 +455,9 @@ async function speakContestAnnouncement(text) {
     });
 }
 
-function requestGameTowerReport(agentName, options = {}) {
+function requestGameTowerReport(agentRef, options = {}) {
     const { timeoutMs = 20000, warn = true } = options;
-    const connection = agent_connections[agentName];
+    const connection = getConnection(agentRef);
     if (!connection?.socket || !connection.in_game) {
         return Promise.resolve(null);
     }
@@ -433,7 +465,7 @@ function requestGameTowerReport(agentName, options = {}) {
         connection.socket.timeout(timeoutMs).emit('game-tower-report', (error, result) => {
             if (error || !result?.success) {
                 if (warn) console.warn(
-                    `Could not measure tower for ${agentName}: `
+                    `Could not measure tower for ${connection.name}: `
                     + (error ? 'timed out' : result?.error || 'unknown error')
                 );
                 resolve(null);
@@ -583,16 +615,16 @@ async function judgeContest(contest) {
     return defaultJudge(contest);
 }
 
-function requestContestRecordingCommand(agentName, event, options) {
-    const connection = agent_connections[agentName];
+function requestContestRecordingCommand(agentRef, event, options) {
+    const connection = getConnection(agentRef);
     if (!connection?.socket || !connection.in_game) {
-        return Promise.reject(new Error(`Agent '${agentName}' is not in game`));
+        return Promise.reject(new Error(`Agent '${agentRef}' is not in game`));
     }
     return new Promise((resolve, reject) => {
         const args = options === undefined ? [] : [options];
         connection.socket.timeout(60000).emit(event, ...args, (error, result) => {
             if (error) {
-                reject(new Error(`${event} timed out for ${agentName}`));
+                reject(new Error(`${event} timed out for ${connection.name}`));
                 return;
             }
             resolve(result);
@@ -608,21 +640,75 @@ async function startContestGame(gameId, options = {}) {
     if (!gameSessionManager) {
         throw new Error('Game session manager is not enabled');
     }
-    const result = await gameSessionManager.start({
-        gameId,
-        participants: options.participants,
-        systemPrompt: options.systemPrompt,
-        durationMs: options.durationMs,
+    try {
+        const result = await gameSessionManager.start({
+            gameId,
+            participants: options.participants,
+            systemPrompt: options.systemPrompt,
+            durationMs: options.durationMs,
+        });
+        await contestHud.sync(contestCoordinator.view());
+        return {
+            ...result,
+            game: listContestGamePresets().find(game => game.id === gameId),
+            join: {
+                ...getMinecraftJoinInfo(),
+                arena: result.arenaReset,
+            },
+        };
+    } catch (error) {
+        const report = buildLaunchFailureReport(error);
+        error.diagnosticsReport = report;
+        throw error;
+    }
+}
+
+function collectAgentLaunchSnapshots(session = null) {
+    const names = new Set([
+        ...(session?.participantIds || []),
+        ...(session?.createdAgents || []).map(agent => agent.name),
+    ]);
+    if (names.size === 0) {
+        for (const connection of agent_connections.values()) {
+            if (connection?.name) names.add(connection.name);
+        }
+    }
+    return [...names].map(name => {
+        const connection = getConnection(name);
+        if (!connection) {
+            return {
+                name,
+                registered: false,
+                socketConnected: false,
+                inGame: false,
+            };
+        }
+        return {
+            name: connection.name || name,
+            id: connection.id,
+            registered: true,
+            socketConnected: Boolean(connection.socket),
+            inGame: Boolean(connection.in_game),
+        };
     });
-    await contestHud.sync(contestCoordinator.view());
-    return {
-        ...result,
-        game: listContestGamePresets().find(game => game.id === gameId),
-        join: {
-            ...getMinecraftJoinInfo(),
-            arena: result.arenaReset,
+}
+
+function buildLaunchFailureReport(error) {
+    const failure = gameSessionManager?.lastFailure || null;
+    const session = failure?.session || gameSessionManager?.view() || null;
+    const join = getMinecraftJoinInfo();
+    return launchTelemetry.captureFailureReport({
+        error,
+        gameSession: session,
+        contestView: contestCoordinator?.view?.() || null,
+        agents: collectAgentLaunchSnapshots(session),
+        env: {
+            node: process.version,
+            platform: process.platform,
+            minecraftAddress: join.address,
+            mindserverPort: join.mindserverPort,
         },
-    };
+    });
 }
 
 async function ensureColony(options) {
@@ -752,7 +838,7 @@ async function handleColonyCommand(agentName, command) {
 }
 
 function firstAgentSettings() {
-    return Object.values(agent_connections)[0]?.settings ?? null;
+    return listConnections()[0]?.settings ?? null;
 }
 
 async function createColonyAgent(name, role, storedProfile = null) {
@@ -776,7 +862,7 @@ async function restoreDesiredAgents() {
     for (const agent of Object.values(agents)) {
         const latest = colonyCoordinator.snapshot();
         if (latest.paused || !latest.agents[agent.id]?.desired ||
-            agent_connections[agent.id] || !agent.profile) continue;
+            connectionsNamed(agent.id).length || !agent.profile) continue;
         try {
             await createColonyAgent(agent.id, agent.role, agent.profile);
         } catch (error) {
@@ -813,25 +899,25 @@ function requestWallState(connection) {
     });
 }
 
-function sendColonyDirective(agentName, connection) {
+function sendColonyDirective(connection) {
     if (!connection.socket) return;
-    const directive = colonyCoordinator.directiveFor(agentName);
+    const directive = colonyCoordinator.directiveFor(connection.name);
     connection.last_directive_at = Date.now();
     connection.socket.emit('colony-directive', directive, result => {
         if (!result?.success) {
-            console.warn(`Colony directive was rejected by ${agentName}: ${result?.error}`);
+            console.warn(`Colony directive was rejected by ${connection.name}: ${result?.error}`);
             return;
         }
         if (result.status && result.status !== 'started') {
-            console.log(`Colony directive for ${agentName}: ${result.status}${result.detail ? ` (${result.detail})` : ''}`);
+            console.log(`Colony directive for ${connection.name}: ${result.status}${result.detail ? ` (${result.detail})` : ''}`);
         }
     });
 }
 
 function broadcastColonyDirectives() {
-    for (const [agentName, connection] of Object.entries(agent_connections)) {
-        if (connection.socket && colonyCoordinator.snapshot().agents[agentName]) {
-            sendColonyDirective(agentName, connection);
+    for (const connection of agent_connections.values()) {
+        if (connection.socket && colonyCoordinator.snapshot().agents[connection.name]) {
+            sendColonyDirective(connection);
         }
     }
 }
@@ -891,7 +977,7 @@ async function runModelOutageProbe() {
     const now = Date.now();
     if (!modelOutage.active || now < modelOutage.nextProbeAt) return;
 
-    const connection = Object.values(agent_connections)
+    const connection = listConnections()
         .find(candidate => candidate.socket && candidate.in_game);
     if (!connection) {
         modelOutage.nextProbeAt = now + modelProbeBaseMs();
@@ -927,7 +1013,7 @@ async function runColonySupervisor() {
         let state = colonyCoordinator.snapshot();
 
         for (const agent of Object.values(state.agents)) {
-            if (!agent_connections[agent.id] && agent.status !== 'offline') {
+            if (!connectionsNamed(agent.id).length && agent.status !== 'offline') {
                 await colonyCoordinator.updateAgent(agent.id, { status: 'offline' });
             }
         }
@@ -953,21 +1039,21 @@ async function runColonySupervisor() {
             console.log(`Rejected pending colony spawn request ${request.id} (${request.role}): manual roster`);
         }
 
-        const heartbeatEntries = Object.entries(agent_connections);
-        const wallStates = await Promise.all(heartbeatEntries.map(async ([agentName, connection]) => {
-            const colonyAgent = colonyCoordinator.snapshot().agents[agentName];
+        const wallStates = await Promise.all(listConnections().map(async (connection) => {
+            const colonyAgent = colonyCoordinator.snapshot().agents[connection.name];
             if (!colonyAgent || !connection.in_game || !connection.socket) {
-                return [agentName, connection, null];
+                return [connection, null];
             }
             try {
                 const state = await requestWallState(connection);
-                return [agentName, connection, state];
+                return [connection, state];
             } catch (e) {
-                return [agentName, connection, null];
+                return [connection, null];
             }
         }));
 
-        for (const [agentName, connection, wallState] of wallStates) {
+        for (const [connection, wallState] of wallStates) {
+            const agentName = connection.name;
             const colonyAgent = colonyCoordinator.snapshot().agents[agentName];
             if (!colonyAgent) continue;
             if (connection.in_game && connection.socket) {
@@ -987,17 +1073,17 @@ async function runColonySupervisor() {
                     available &&
                     now - connection.last_directive_at >=
                     (colonySettings.idle_directive_ms ?? 15000)) {
-                    sendColonyDirective(agentName, connection);
+                    sendColonyDirective(connection);
                 }
             } else {
                 const latestState = colonyCoordinator.snapshot();
                 const latestAgent = latestState.agents[agentName];
-                const process = mindcraft.getAgentProcess(agentName);
+                const process = mindcraft.getAgentProcess(connection.id);
                 if (!latestState.paused && latestAgent?.desired &&
                     process && !process.running &&
                     now - connection.last_restart_attempt_at >= 30000) {
                     connection.last_restart_attempt_at = now;
-                    mindcraft.startAgent(agentName);
+                    mindcraft.startAgent(connection.id);
                 }
             }
         }
@@ -1020,7 +1106,9 @@ function startColonySupervisor() {
 }
 
 class AgentConnection {
-    constructor(settings, viewer_port) {
+    constructor(id, settings, viewer_port) {
+        this.id = id;
+        this.name = settings.profile.name;
         this.socket = null;
         this.settings = settings;
         this.in_game = false;
@@ -1035,6 +1123,96 @@ class AgentConnection {
     }
 }
 
+function listConnections() {
+    return [...agent_connections.values()];
+}
+
+function isLiveConnection(connection) {
+    return Boolean(connection?.socket) || connection?.in_game === true;
+}
+
+function connectionsNamed(name) {
+    return listConnections().filter(connection => connection.name === name);
+}
+
+/**
+ * Resolves an agent id or a Minecraft name to a connection. Names are only a
+ * convenience for callers that speak in-game (chat, contests, the dashboard);
+ * they resolve to whichever instance is currently wearing the name.
+ */
+function getConnection(agentRef) {
+    if (!agentRef) return null;
+    const byId = agent_connections.get(agentRef);
+    if (byId) return byId;
+    const named = connectionsNamed(agentRef);
+    return named.find(isLiveConnection) ?? named.at(-1) ?? null;
+}
+
+function hasLiveAgentNamed(name) {
+    return connectionsNamed(name).some(isLiveConnection);
+}
+
+/**
+ * A leftover registration must never keep a name hostage. Temporary game bots
+ * are always replaceable; every other bot holds its name only while it is
+ * actually online.
+ */
+function holdsName(connection) {
+    return isLiveConnection(connection) && !connection.settings?.game_session;
+}
+
+function reservedAgentNames() {
+    return listConnections().filter(holdsName).map(connection => connection.name);
+}
+
+function forgetConnection(connection) {
+    mindcraft.destroyAgent(connection.id);
+    agent_connections.delete(connection.id);
+}
+
+async function waitUntil(predicate, timeoutMs, pollMs = 250) {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate() && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, pollMs));
+    }
+    return predicate();
+}
+
+/**
+ * Frees a name for a bot that is about to be created. Instances that no longer
+ * hold the name are dropped outright; a replaceable one that is still online is
+ * stopped first, because Minecraft refuses a second login while the previous
+ * player of that name is still connected.
+ */
+async function reclaimAgentName(name) {
+    const replaceable = connectionsNamed(name).filter(connection => !holdsName(connection));
+    const online = replaceable.filter(isLiveConnection);
+    for (const connection of online) {
+        console.log(`Reclaiming the name ${name} from agent ${connection.id}`);
+        mindcraft.stopAgent(connection.id);
+    }
+    if (online.length) {
+        const left = await waitUntil(
+            () => online.every(connection => !isLiveConnection(connection)),
+            15000
+        );
+        if (!left) {
+            console.warn(`Agent(s) named ${name} did not leave in time; reusing the name anyway`);
+        }
+    }
+    for (const connection of replaceable) {
+        forgetConnection(connection);
+        await releaseColonyAgent(connection.name, 'replaced');
+    }
+    agentsStatusUpdate();
+}
+
+async function reclaimAgentNames(names) {
+    for (const name of new Set(names)) {
+        await reclaimAgentName(name);
+    }
+}
+
 export async function registerAgent(settings, viewer_port) {
     // Every bot gets a generated skin keyed to its name + model so it is
     // visually unique in-game. Hand-authored profile skins are left alone.
@@ -1045,7 +1223,13 @@ export async function registerAgent(settings, viewer_port) {
     } catch (error) {
         console.error(`Failed to generate skin for ${settings.profile.name}:`, error);
     }
-    let agentConnection = new AgentConnection(settings, viewer_port);
+    const agentId = `${settings.profile.name}#${++agent_id_seq}`;
+    // Drop any earlier instance that is no longer wearing this name so ghost
+    // registrations cannot pile up under it.
+    for (const connection of connectionsNamed(settings.profile.name)) {
+        if (!isLiveConnection(connection)) forgetConnection(connection);
+    }
+    const agentConnection = new AgentConnection(agentId, settings, viewer_port);
     await ensureContest(settings.contest);
     const coordinator = settings.game_session
         ? null
@@ -1059,42 +1243,46 @@ export async function registerAgent(settings, viewer_port) {
             { desired: true, profile: settings.profile }
         );
     }
-    agent_connections[settings.profile.name] = agentConnection;
+    agent_connections.set(agentId, agentConnection);
     emitColonyUpdate();
     emitContestUpdate();
-    return registeredColonyAgent;
+    return { agentId, colonyAgent: registeredColonyAgent };
 }
 
-export async function unregisterAgent(agentName, status = 'failed') {
-    delete agent_connections[agentName];
-    if (colonyCoordinator?.snapshot().agents[agentName]) {
-        await colonyCoordinator.updateAgent(agentName, {
-            desired: false,
-            status,
-        });
+async function releaseColonyAgent(name, status) {
+    if (colonyCoordinator?.snapshot().agents[name]) {
+        await colonyCoordinator.updateAgent(name, { desired: false, status });
         emitColonyUpdate();
     }
 }
 
-export function logoutAgent(agentName) {
-    if (agent_connections[agentName]) {
-        agent_connections[agentName].in_game = false;
-        agent_connections[agentName].recording = null;
+export async function unregisterAgent(agentRef, status = 'failed') {
+    const connection = getConnection(agentRef);
+    if (!connection) return;
+    agent_connections.delete(connection.id);
+    await releaseColonyAgent(connection.name, status);
+}
+
+export function logoutAgent(agentId) {
+    const connection = agent_connections.get(agentId);
+    if (connection) {
+        connection.in_game = false;
+        connection.recording = null;
         agentsStatusUpdate();
     }
 }
 
 // Forward a recording start/stop request from the UI to the agent's process and relay the ack.
-function forwardRecordingCommand(agentName, event, options, callback) {
-    const conn = agent_connections[agentName];
+function forwardRecordingCommand(agentRef, event, options, callback) {
+    const conn = getConnection(agentRef);
     if (!conn?.socket) {
-        callback?.({ success: false, error: `Agent '${agentName}' is not connected` });
+        callback?.({ success: false, error: `Agent '${agentRef}' is not connected` });
         return;
     }
     const args = options === undefined ? [] : [options];
     conn.socket.timeout(20000).emit(event, ...args, (err, result) => {
         if (err) {
-            callback?.({ success: false, error: `Recording command timed out for ${agentName}` });
+            callback?.({ success: false, error: `Recording command timed out for ${conn.name}` });
             return;
         }
         if (result && typeof result === 'object' && 'recording' in result) {
@@ -1143,7 +1331,7 @@ function listRecordings() {
 function voicesOverview() {
     const config = getVoicesConfig();
     const botNames = new Set([
-        ...Object.keys(agent_connections),
+        ...listConnections().map(connection => connection.name),
         ...Object.keys(config.bots),
     ]);
     return {
@@ -1157,7 +1345,7 @@ function voicesOverview() {
         })),
         bots: [...botNames].sort().map(name => ({
             name,
-            connected: Boolean(agent_connections[name]),
+            connected: hasLiveAgentNamed(name),
             assigned: config.bots[name] || null,
             autoVoice: autoVoiceName(name),
         })),
@@ -1188,7 +1376,7 @@ function readManifestEntries(selection) {
 }
 
 function collectRecordingsForExport(selection) {
-    const liveFiles = new Set(Object.values(agent_connections)
+    const liveFiles = new Set(listConnections()
         .filter(conn => conn.recording?.recording && conn.recording?.file)
         .map(conn => conn.recording.file));
     if (selection.session) {
@@ -1342,7 +1530,10 @@ export function createMindServer(host_public = false, port = 8080) {
 
     // Socket.io connection handling
     io.on('connection', (socket) => {
-        let curAgentName = null;
+        // The agent process this socket belongs to, if any. Tracked by instance
+        // id so a later bot reusing the name cannot be mistaken for this one.
+        let curAgentId = null;
+        const curAgent = () => (curAgentId ? agent_connections.get(curAgentId) : null);
         console.log('Client connected');
 
         agentsStatusUpdate(socket);
@@ -1401,6 +1592,21 @@ export function createMindServer(host_public = false, port = 8080) {
                     systemPrompt: request?.systemPrompt,
                 });
                 callback({ success: true, data });
+            } catch (error) {
+                const report = error.diagnosticsReport || buildLaunchFailureReport(error);
+                callback({ success: false, error: error.message, report });
+            }
+        });
+
+        socket.on('diagnostics-report', (callback) => {
+            try {
+                const report = launchTelemetry.getLastFailureReport();
+                callback({
+                    success: true,
+                    report,
+                    meta: launchTelemetry.getLastFailureMeta(),
+                    events: launchTelemetry.getLaunchEvents().slice(-80),
+                });
             } catch (error) {
                 callback({ success: false, error: error.message });
             }
@@ -1483,9 +1689,9 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('contest-win-item', async (request, callback) => {
             try {
-                const connection = agent_connections[curAgentName];
+                const connection = curAgent();
                 const active = contestCoordinator?.view()?.activeContest;
-                if (!curAgentName || !connection?.settings?.game_session || !active) {
+                if (!connection?.settings?.game_session || !active) {
                     throw new Error('Only an active game participant can report a win item');
                 }
                 if (connection.settings.game_session.contestId !== active.id) {
@@ -1498,7 +1704,7 @@ export function createMindServer(host_public = false, port = 8080) {
                 }
                 const data = await contestCoordinator.declareWinner(
                     active.id,
-                    curAgentName,
+                    connection.name,
                     {
                         item: itemName,
                         elapsedMs: Date.now() - active.startedAt,
@@ -1522,9 +1728,9 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('contest-death', async (_request, callback) => {
             try {
-                const connection = agent_connections[curAgentName];
+                const connection = curAgent();
                 const active = contestCoordinator?.view()?.activeContest;
-                if (!curAgentName || !connection?.settings?.game_session || !active) {
+                if (!connection?.settings?.game_session || !active) {
                     throw new Error('Only an active game participant can report a death');
                 }
                 if (connection.settings.game_session.contestId !== active.id) {
@@ -1535,7 +1741,7 @@ export function createMindServer(host_public = false, port = 8080) {
                 }
                 const data = await contestCoordinator.declareWinner(
                     active.id,
-                    curAgentName,
+                    connection.name,
                     {
                         event: 'death',
                         elapsedMs: Date.now() - active.startedAt,
@@ -1559,7 +1765,8 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('contest-submit', async (request, callback) => {
             try {
-                if (!curAgentName) {
+                const connection = curAgent();
+                if (!connection) {
                     throw new Error('Only a registered agent can submit to a contest');
                 }
                 await ensureContest();
@@ -1568,7 +1775,7 @@ export function createMindServer(host_public = false, port = 8080) {
                 }
                 const data = await contestCoordinator.submit(
                     request?.contestId,
-                    curAgentName,
+                    connection.name,
                     request?.payload
                 );
                 await contestHud.sync(contestCoordinator.view());
@@ -1598,8 +1805,8 @@ export function createMindServer(host_public = false, port = 8080) {
                 } else {
                     throw new Error(`Unknown colony control: ${action}`);
                 }
-                for (const [agentName, connection] of Object.entries(agent_connections)) {
-                    if (connection.socket) sendColonyDirective(agentName, connection);
+                for (const connection of agent_connections.values()) {
+                    if (connection.socket) sendColonyDirective(connection);
                 }
                 emitColonyUpdate();
                 callback({ success: true, data: colonyCoordinator.view() });
@@ -1610,9 +1817,10 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('colony-command', async (command, callback) => {
             try {
-                if (!curAgentName) throw new Error('Only a registered agent can issue colony commands');
+                const connection = curAgent();
+                if (!connection) throw new Error('Only a registered agent can issue colony commands');
                 if (colonyReady) await colonyReady;
-                callback(await handleColonyCommand(curAgentName, command));
+                callback(await handleColonyCommand(connection.name, command));
             } catch (error) {
                 callback({ success: false, error: error.message });
             }
@@ -1637,26 +1845,29 @@ export function createMindServer(host_public = false, port = 8080) {
                 }
             }
             if (settings.profile?.name) {
-                if (settings.profile.name in agent_connections) {
-                    callback({ success: false, error: 'Agent already exists' });
+                const name = settings.profile.name;
+                if (hasLiveAgentNamed(name)) {
+                    callback({
+                        success: false,
+                        error: `A bot named ${name} is already online. Stop it first.`,
+                    });
                     return;
                 }
                 // An explicit create from the UI must override a sticky
                 // desired=false left by a previous stop/destroy of the same
                 // name, otherwise createAgent registers the agent but never
                 // starts its process and it stays offline forever.
-                if (colonyCoordinator?.snapshot().agents[settings.profile.name]?.desired === false) {
-                    await colonyCoordinator.updateAgent(settings.profile.name, {
+                if (colonyCoordinator?.snapshot().agents[name]?.desired === false) {
+                    await colonyCoordinator.updateAgent(name, {
                         desired: true,
                         status: 'spawning',
                     });
                 }
                 let returned = await mindcraft.createAgent(settings);
                 callback({ success: returned.success, error: returned.error });
-                let name = settings.profile.name;
-                if (!returned.success && agent_connections[name]) {
-                    mindcraft.destroyAgent(name);
-                    delete agent_connections[name];
+                if (!returned.success && returned.agentId) {
+                    mindcraft.destroyAgent(returned.agentId);
+                    agent_connections.delete(returned.agentId);
                 }
                 agentsStatusUpdate();
             }
@@ -1666,34 +1877,39 @@ export function createMindServer(host_public = false, port = 8080) {
             }
         });
 
-        socket.on('get-settings', (agentName, callback) => {
-            if (agent_connections[agentName]) {
-                callback({ settings: agent_connections[agentName].settings });
+        socket.on('get-settings', (agentRef, callback) => {
+            const connection = getConnection(agentRef);
+            if (connection) {
+                callback({ settings: connection.settings });
             } else {
-                callback({ error: `Agent '${agentName}' not found.` });
+                callback({ error: `Agent '${agentRef}' not found.` });
             }
         });
 
-        socket.on('connect-agent-process', (agentName) => {
-            if (agent_connections[agentName]) {
-                agent_connections[agentName].socket = socket;
+        socket.on('connect-agent-process', (agentRef) => {
+            const connection = getConnection(agentRef);
+            if (connection) {
+                connection.socket = socket;
+                curAgentId = connection.id;
                 agentsStatusUpdate();
             }
         });
 
-        socket.on('login-agent', (agentName) => {
-            if (agent_connections[agentName]) {
-                agent_connections[agentName].socket = socket;
-                agent_connections[agentName].in_game = true;
-                curAgentName = agentName;
+        socket.on('login-agent', (agentRef) => {
+            const connection = getConnection(agentRef);
+            if (connection) {
+                const agentName = connection.name;
+                connection.socket = socket;
+                connection.in_game = true;
+                curAgentId = connection.id;
                 agentsStatusUpdate();
                 // Colored nametag + model suffix, visible from any distance.
-                assignModelTeam(agentName, agent_connections[agentName].settings?.profile?.model)
+                assignModelTeam(agentName, connection.settings?.profile?.model)
                     .catch(error => console.warn(`Nametag assignment failed for ${agentName}:`, error));
                 if (colonyCoordinator) {
                     const colonyAgent = colonyCoordinator.snapshot().agents[agentName];
                     if (colonyAgent?.desired === false) {
-                        mindcraft.stopAgent(agentName);
+                        mindcraft.stopAgent(connection.id);
                         colonyCoordinator.updateAgent(agentName, { status: 'stopped' })
                             .then(() => emitColonyUpdate())
                             .catch(error => console.error(
@@ -1710,31 +1926,34 @@ export function createMindServer(host_public = false, port = 8080) {
                 }
             }
             else {
-                console.warn(`Unregistered agent ${agentName} tried to login`);
+                console.warn(`Unregistered agent ${agentRef} tried to login`);
             }
         });
 
         socket.on('colony-ready', () => {
             const state = colonyCoordinator?.snapshot();
-            if (curAgentName && state && !state.paused &&
-                state.agents[curAgentName]?.desired &&
-                agent_connections[curAgentName]) {
-                sendColonyDirective(curAgentName, agent_connections[curAgentName]);
+            const connection = curAgent();
+            if (connection && state && !state.paused && state.agents[connection.name]?.desired) {
+                sendColonyDirective(connection);
             }
         });
 
         socket.on('disconnect', () => {
-            if (agent_connections[curAgentName]) {
-                console.log(`Agent ${curAgentName} disconnected`);
-                agent_connections[curAgentName].in_game = false;
-                agent_connections[curAgentName].socket = null;
-                agent_connections[curAgentName].recording = null;
+            const connection = curAgent();
+            // A restarted process can re-register this agent on a new socket
+            // before the old one disconnects; that connection is live and must
+            // not be torn down here.
+            if (connection && (!connection.socket || connection.socket === socket)) {
+                console.log(`Agent ${connection.name} disconnected`);
+                connection.in_game = false;
+                connection.socket = null;
+                connection.recording = null;
                 agentsStatusUpdate();
                 if (colonyCoordinator) {
-                    colonyCoordinator.updateAgent(curAgentName, { status: 'offline' })
+                    colonyCoordinator.updateAgent(connection.name, { status: 'offline' })
                         .then(() => emitColonyUpdate())
                         .catch(error => console.error(
-                            `Failed to mark colony agent ${curAgentName} offline:`,
+                            `Failed to mark colony agent ${connection.name} offline:`,
                             error
                         ));
                 }
@@ -1745,63 +1964,67 @@ export function createMindServer(host_public = false, port = 8080) {
             voiceOutput.removeMonitor(socket);
         });
 
-        socket.on('chat-message', (agentName, json) => {
-            const target = agent_connections[agentName];
+        socket.on('chat-message', (agentRef, json) => {
+            const target = getConnection(agentRef);
+            const sender = curAgent();
             if (!target?.socket) {
-                console.warn(`Agent ${agentName} tried to send a message but is not logged in`);
+                console.warn(`Agent ${agentRef} tried to send a message but is not logged in`);
                 return;
             }
-            console.log(`${curAgentName} sending message to ${agentName}: ${json.message}`);
-            target.socket.emit('chat-message', curAgentName, json);
+            console.log(`${sender?.name} sending message to ${target.name}: ${json.message}`);
+            target.socket.emit('chat-message', sender?.name, json);
         });
 
-        socket.on('set-agent-settings', (agentName, settings) => {
-            const agent = agent_connections[agentName];
+        socket.on('set-agent-settings', (agentRef, settings) => {
+            const agent = getConnection(agentRef);
             if (agent?.socket) {
                 agent.setSettings(settings);
                 agent.socket.emit('restart-agent');
             }
         });
 
-        socket.on('restart-agent', (agentName) => {
-            const agent = agent_connections[agentName];
+        socket.on('restart-agent', (agentRef) => {
+            const agent = getConnection(agentRef);
             if (!agent?.socket) {
-                console.warn(`Cannot restart ${agentName}: not connected`);
+                console.warn(`Cannot restart ${agentRef}: not connected`);
                 return;
             }
-            console.log(`Restarting agent: ${agentName}`);
+            console.log(`Restarting agent: ${agent.name}`);
             agent.socket.emit('restart-agent');
         });
 
-        socket.on('stop-agent', async (agentName) => {
-            if (colonyCoordinator?.snapshot().agents[agentName]) {
-                await colonyCoordinator.updateAgent(agentName, {
+        socket.on('stop-agent', async (agentRef) => {
+            const agent = getConnection(agentRef);
+            if (!agent) return;
+            if (colonyCoordinator?.snapshot().agents[agent.name]) {
+                await colonyCoordinator.updateAgent(agent.name, {
                     desired: false,
                     status: 'stopped',
                 });
                 emitColonyUpdate();
             }
-            mindcraft.stopAgent(agentName);
+            mindcraft.stopAgent(agent.id);
         });
 
-        socket.on('start-agent', async (agentName) => {
-            if (colonyCoordinator?.snapshot().agents[agentName]) {
-                await colonyCoordinator.updateAgent(agentName, {
+        socket.on('start-agent', async (agentRef) => {
+            const agent = getConnection(agentRef);
+            if (!agent) return;
+            if (colonyCoordinator?.snapshot().agents[agent.name]) {
+                await colonyCoordinator.updateAgent(agent.name, {
                     desired: true,
                     status: 'spawning',
                 });
                 emitColonyUpdate();
             }
-            mindcraft.startAgent(agentName);
+            mindcraft.startAgent(agent.id);
         });
 
-        socket.on('destroy-agent', async (agentName) => {
-            if (agent_connections[agentName]) {
-                mindcraft.destroyAgent(agentName);
-                delete agent_connections[agentName];
-            }
-            if (colonyCoordinator?.snapshot().agents[agentName]) {
-                await colonyCoordinator.updateAgent(agentName, {
+        socket.on('destroy-agent', async (agentRef) => {
+            const agent = getConnection(agentRef);
+            if (!agent) return;
+            forgetConnection(agent);
+            if (colonyCoordinator?.snapshot().agents[agent.name]) {
+                await colonyCoordinator.updateAgent(agent.name, {
                     desired: false,
                     status: 'destroyed',
                 });
@@ -1815,25 +2038,25 @@ export function createMindServer(host_public = false, port = 8080) {
             if (colonyCoordinator) {
                 closeModelOutage();
                 await colonyCoordinator.pause('All agents stopped from the Mindcraft UI');
-                for (const agentName of Object.keys(agent_connections)) {
-                    if (colonyCoordinator.snapshot().agents[agentName]) {
-                        await colonyCoordinator.updateAgent(agentName, {
+                for (const connection of agent_connections.values()) {
+                    if (colonyCoordinator.snapshot().agents[connection.name]) {
+                        await colonyCoordinator.updateAgent(connection.name, {
                             desired: false,
                             status: 'stopped',
                         });
                     }
                 }
             }
-            for (let agentName in agent_connections) {
-                mindcraft.stopAgent(agentName);
+            for (const connection of agent_connections.values()) {
+                mindcraft.stopAgent(connection.id);
             }
             emitColonyUpdate();
         });
 
         socket.on('shutdown', () => {
             console.log('Shutting down');
-            for (let agentName in agent_connections) {
-                mindcraft.stopAgent(agentName);
+            for (const connection of agent_connections.values()) {
+                mindcraft.stopAgent(connection.id);
             }
             // wait 2 seconds
             setTimeout(() => {
@@ -1843,10 +2066,10 @@ export function createMindServer(host_public = false, port = 8080) {
             
         });
 
-		socket.on('send-message', (agentName, data) => {
-			const agent = agent_connections[agentName];
+		socket.on('send-message', (agentRef, data) => {
+			const agent = getConnection(agentRef);
 			if (!agent?.socket) {
-				console.warn(`Agent ${agentName} not in game, cannot send message via MindServer.`);
+				console.warn(`Agent ${agentRef} not in game, cannot send message via MindServer.`);
 				return
 			}
 			try {
@@ -1865,8 +2088,8 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('contest-speech', async (options, callback) => {
             try {
-                const connection = agent_connections[curAgentName];
-                if (!curAgentName || !connection?.settings?.game_session?.serverBroadcastVoice) {
+                const connection = curAgent();
+                if (!connection?.settings?.game_session?.serverBroadcastVoice) {
                     throw new Error('Contest voice broadcast is only available to active game agents');
                 }
                 if (!hasKey('ELEVENLABS_API_KEY')) {
@@ -1877,7 +2100,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     throw new Error('Contest voice text is required');
                 }
                 const voiceId = resolveVoice(
-                    curAgentName,
+                    connection.name,
                     connection.settings.game_session.voice
                 );
                 const audio = await elevenLabsTTSConfig.sendAudioRequest(
@@ -1888,11 +2111,11 @@ export function createMindServer(host_public = false, port = 8080) {
                 );
                 broadcastContestRecordingAudio(connection, {
                     sessionId: connection.settings.game_session.sessionId,
-                    speaker: curAgentName,
+                    speaker: connection.name,
                     audio,
                     atMs: Date.now(),
                 });
-                dispatchBotVoice({ agentName: curAgentName, text, audio });
+                dispatchBotVoice({ agentName: connection.name, text, audio });
                 callback?.({ success: true, audio });
             } catch (error) {
                 callback?.({ success: false, error: error.message });
@@ -1911,8 +2134,8 @@ export function createMindServer(host_public = false, port = 8080) {
             forwardRecordingCommand(agentName, 'set-auto-recording', Boolean(enabled), callback);
         });
 
-        socket.on('recording-update', (agentName, status) => {
-            const conn = agent_connections[agentName];
+        socket.on('recording-update', (agentRef, status) => {
+            const conn = getConnection(agentRef);
             if (conn) {
                 conn.recording = status;
                 agentsStatusUpdate();
@@ -1987,10 +2210,11 @@ function agentsStatusUpdate(socket) {
         socket = io;
     }
     let agents = [];
-    for (let agentName in agent_connections) {
-        const conn = agent_connections[agentName];
+    for (const conn of agent_connections.values()) {
+        const agentName = conn.name;
         agents.push({
-            name: agentName, 
+            id: conn.id,
+            name: agentName,
             in_game: conn.in_game,
             viewerPort: conn.viewer_port,
             socket_connected: !!conn.socket,
@@ -2024,13 +2248,13 @@ function addListener(listener_socket, mode = 'full') {
                 const needsFull = agent_listeners.some(l => l.mode === 'full');
                 const fetchState = needsFull ? requestFullState : requestWallState;
                 const entries = await Promise.all(
-                    Object.entries(agent_connections).map(async ([agentName, agent]) => {
-                        if (!agent.in_game) return [agentName, null];
+                    listConnections().map(async (agent) => {
+                        if (!agent.in_game) return [agent.name, null];
                         try {
                             const state = await fetchState(agent);
-                            return [agentName, state ?? { error: 'Agent state request timed out' }];
+                            return [agent.name, state ?? { error: 'Agent state request timed out' }];
                         } catch (e) {
-                            return [agentName, { error: String(e) }];
+                            return [agent.name, { error: String(e) }];
                         }
                     })
                 );
@@ -2077,7 +2301,7 @@ function broadcastContestRecordingAudio(sourceConnection, payload) {
 
 function broadcastContestSessionRecordingAudio(sessionId, payload) {
     if (!sessionId || payload?.sessionId !== sessionId || !payload.audio) return;
-    for (const connection of Object.values(agent_connections)) {
+    for (const connection of agent_connections.values()) {
         if (connection.settings?.game_session?.sessionId !== sessionId) continue;
         if (!connection.socket?.connected) continue;
         connection.socket.emit('contest-recording-audio', payload);

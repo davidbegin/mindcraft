@@ -1695,6 +1695,42 @@
             min-height: 1.2em;
         }
         .contest-status-msg.error { color: var(--red); }
+        .launch-debug-report {
+            margin-top: 12px;
+            border: 1px solid var(--border, #333);
+            border-radius: 8px;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+        .launch-debug-report[hidden] { display: none !important; }
+        .launch-debug-report-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .launch-debug-report-head strong { font-size: 0.9rem; }
+        .launch-debug-report-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .launch-debug-report textarea {
+            width: 100%;
+            min-height: 140px;
+            max-height: 240px;
+            resize: vertical;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.75rem;
+            line-height: 1.35;
+            color: var(--text);
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid var(--border, #333);
+            border-radius: 6px;
+            padding: 8px;
+            box-sizing: border-box;
+        }
 
         .contest-join {
             margin-top: 12px;
@@ -2068,8 +2104,19 @@
                             <button id="warpSpectatorsBtn" class="btn btn-ghost" hidden>Warp me to arena</button>
                             <a id="watchLiveBtn" class="btn btn-primary contest-watch-link" hidden href="/live.html" target="_blank" rel="noopener">Watch Live</a>
                             <button id="exportGameSessionBtn" class="btn btn-ghost" hidden>Export session</button>
+                            <button id="copyLaunchReportBtn" class="btn btn-ghost" hidden type="button">Copy last launch report</button>
                         </div>
                         <div id="contestStatusMsg" class="contest-status-msg"></div>
+                        <div id="contestLaunchDebug" class="launch-debug-report" hidden>
+                            <div class="launch-debug-report-head">
+                                <strong>Debug report for Cursor</strong>
+                                <div class="launch-debug-report-actions">
+                                    <button type="button" id="copyContestLaunchReportBtn" class="btn btn-primary">Copy for Cursor</button>
+                                    <button type="button" id="hideContestLaunchDebugBtn" class="btn btn-ghost">Hide</button>
+                                </div>
+                            </div>
+                            <textarea id="contestLaunchDebugText" readonly spellcheck="false" aria-label="Launch failure debug report"></textarea>
+                        </div>
                     </div>
                     <aside id="towerAtlas" class="tower-atlas" aria-label="Live tower heights" aria-live="polite" hidden>
                         <div class="tower-atlas-head">
@@ -2254,6 +2301,15 @@
                     <div class="game-setup-prompt-count"><span id="gameSetupPromptCount">0</span>/4000</div>
                 </div>
                 <div id="gameSetupError" class="contest-status-msg error"></div>
+                <div id="gameSetupDebug" class="launch-debug-report" hidden>
+                    <div class="launch-debug-report-head">
+                        <strong>Debug report for Cursor</strong>
+                        <div class="launch-debug-report-actions">
+                            <button type="button" id="copyGameSetupReportBtn" class="btn btn-primary">Copy for Cursor</button>
+                        </div>
+                    </div>
+                    <textarea id="gameSetupDebugText" readonly spellcheck="false" aria-label="Launch failure debug report"></textarea>
+                </div>
             </div>
             <div class="modal-footer">
                 <div class="footer-left" id="gameSetupFooter">Pick profiles and unique Minecraft names, then start.</div>
@@ -2296,6 +2352,7 @@
         let contestGamesError = '';
         let contestBusy = false;
         let contestJoin = null;
+        let lastLaunchReport = '';
         let currentView = 'colony';
         let contestClockTimer = null;
         let gameSetupGameId = null;
@@ -2305,6 +2362,7 @@
 
         const VIEW_PATHS = { colony: '/colony', games: '/games' };
         const VIEW_TITLES = { colony: 'Mindcraft Spy — Colony', games: 'Mindcraft Spy — Games' };
+        const CONTEST_START_TIMEOUT_MS = 180_000;
 
         const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
         const MAX_GAME_SYSTEM_PROMPT = 4000;
@@ -2760,6 +2818,19 @@
         }
 
         const statusEl = document.getElementById('msStatus');
+        function unlockContestBusyOnDisconnect(reason) {
+            if (!contestBusy) return;
+            contestBusy = false;
+            const submitBtn = document.getElementById('submitGameSetupBtn');
+            if (submitBtn) submitBtn.disabled = false;
+            const message = reason || 'Lost connection to MindServer during start';
+            setGameSetupError(message);
+            setContestStatus(message, true);
+            const footer = document.getElementById('gameSetupFooter');
+            if (footer) footer.textContent = 'Connection lost. Fix the server connection and try again.';
+            renderGameCards();
+            fetchLastLaunchReport();
+        }
         function updateStatus(connected) {
             if (!statusEl) return;
             if (connected) {
@@ -2770,6 +2841,7 @@
                 statusEl.textContent = 'mindserver offline';
                 statusEl.classList.remove('online');
                 statusEl.classList.add('offline');
+                unlockContestBusyOnDisconnect('Lost connection to MindServer during start');
             }
         }
 
@@ -2904,6 +2976,83 @@
             const el = document.getElementById('contestStatusMsg');
             el.textContent = message || '';
             el.classList.toggle('error', Boolean(isError && message));
+        }
+
+        function launchProgressMessage(gameSession) {
+            if (!gameSession) return '';
+            if (gameSession.progress?.message) return gameSession.progress.message;
+            if (gameSession.error) return gameSession.error;
+            const status = gameSession.status;
+            if (status === 'provisioning') return 'Provisioning temporary contest bots…';
+            if (status === 'preparing') return 'Preparing arena…';
+            if (status === 'recording') return 'Starting synchronized recording…';
+            if (status === 'announcing-start') return 'Announcing match start…';
+            if (status === 'running') return 'Contest running';
+            if (status === 'failed') return 'Launch failed';
+            if (status === 'cleaning-up') return 'Cleaning up temporary bots…';
+            return status ? `Status: ${status}` : '';
+        }
+
+        function updateLaunchProgressFromSession(gameSession) {
+            if (!contestBusy || !gameSession) return;
+            const message = launchProgressMessage(gameSession);
+            if (!message) return;
+            setContestStatus(message, Boolean(gameSession.error));
+            const footer = document.getElementById('gameSetupFooter');
+            if (footer) footer.textContent = message;
+        }
+
+        function setLaunchReport(report, { showInModal = false, showInContest = true } = {}) {
+            lastLaunchReport = String(report || '');
+            const setupText = document.getElementById('gameSetupDebugText');
+            const contestText = document.getElementById('contestLaunchDebugText');
+            const setupPanel = document.getElementById('gameSetupDebug');
+            const contestPanel = document.getElementById('contestLaunchDebug');
+            const copyLastBtn = document.getElementById('copyLaunchReportBtn');
+            if (setupText) setupText.value = lastLaunchReport;
+            if (contestText) contestText.value = lastLaunchReport;
+            if (setupPanel) setupPanel.hidden = !(showInModal && lastLaunchReport);
+            if (contestPanel) contestPanel.hidden = !(showInContest && lastLaunchReport);
+            if (copyLastBtn) copyLastBtn.hidden = !lastLaunchReport;
+        }
+
+        function hideLaunchDebugPanels() {
+            const setupPanel = document.getElementById('gameSetupDebug');
+            const contestPanel = document.getElementById('contestLaunchDebug');
+            if (setupPanel) setupPanel.hidden = true;
+            if (contestPanel) contestPanel.hidden = true;
+        }
+
+        async function copyLaunchReportToClipboard(button) {
+            if (!lastLaunchReport) {
+                setContestStatus('No launch report available yet', true);
+                return;
+            }
+            const label = button?.textContent;
+            try {
+                await navigator.clipboard.writeText(lastLaunchReport);
+                if (button) {
+                    button.textContent = 'Copied!';
+                    setTimeout(() => { button.textContent = label; }, 1500);
+                }
+                setContestStatus('Launch report copied — paste it into Cursor');
+            } catch (error) {
+                const textarea = document.getElementById('contestLaunchDebugText')
+                    || document.getElementById('gameSetupDebugText');
+                if (textarea) {
+                    textarea.hidden = false;
+                    textarea.focus();
+                    textarea.select();
+                }
+                setContestStatus(`Could not copy automatically: ${error.message}. Select the report text and copy manually.`, true);
+            }
+        }
+
+        function fetchLastLaunchReport() {
+            socket.timeout(8000).emit('diagnostics-report', (err, res) => {
+                if (err || !res?.success || !res.report) return;
+                setLaunchReport(res.report, { showInModal: Boolean(contestBusy || gameSetupGameId), showInContest: true });
+            });
         }
 
         function formatCountdown(deadlineAt) {
@@ -3236,11 +3385,12 @@
             if (provisioning && !active) {
                 live.classList.remove('idle');
                 title.textContent = `${gameSession.title || 'Game'} · ${gameSession.status}`;
+                const progressMsg = launchProgressMessage(gameSession);
                 row.innerHTML = `
                     <span>Provisioning <strong>${esc(String(gameSession.participants?.length || 0))}</strong> temporary bots</span>
                     ${gameSession.error
                         ? `<span class="contest-status-msg error">${esc(gameSession.error)}</span>`
-                        : '<span>Waiting for agents to join the world…</span>'}
+                        : `<span>${esc(progressMsg || 'Waiting for agents to join the world…')}</span>`}
                 `;
                 renderContestParticipantChips(sessionParticipants);
                 cancelBtn.hidden = false;
@@ -3249,6 +3399,7 @@
                 updateGameSessionExport(null);
                 renderContestResults(null);
                 if (gameSession.error) setContestStatus(gameSession.error, true);
+                else updateLaunchProgressFromSession(gameSession);
             } else if (active) {
                 live.classList.remove('idle');
                 const sessionStatus = gameSession?.status && gameSession.status !== 'running'
@@ -3326,6 +3477,9 @@
             renderGamePlayers(provisioning || active ? sessionParticipants : null);
             renderTowerAtlas(active, state?.towerAtlas);
             renderGameCards();
+            if (contestBusy && gameSession) updateLaunchProgressFromSession(gameSession);
+            const copyLastBtn = document.getElementById('copyLaunchReportBtn');
+            if (copyLastBtn) copyLastBtn.hidden = !lastLaunchReport;
         }
 
         function configuredGameProfiles() {
@@ -3348,8 +3502,17 @@
             throw new Error(`Could not generate a unique name for ${baseName}`);
         }
 
+        // A name belongs to a bot only while that bot is online. Leftovers from
+        // finished matches are replaced automatically, so a roster can always be
+        // replayed with the same names.
+        function namesInUse() {
+            return currentAgents
+                .filter(agent => (agent.in_game || agent.socket_connected) && !agent.gameSession)
+                .map(agent => agent.name);
+        }
+
         function reservedGameNames(exceptIndex = -1) {
-            const names = new Set(currentAgents.map(agent => agent.name));
+            const names = new Set(namesInUse());
             gameSetupParticipants.forEach((participant, index) => {
                 if (index === exceptIndex) return;
                 const name = sanitizeMinecraftName(participant.name);
@@ -3419,7 +3582,7 @@
 
         function defaultGameSetupParticipants(gameId) {
             const profiles = configuredGameProfiles();
-            const reserved = new Set(currentAgents.map(agent => agent.name));
+            const reserved = new Set(namesInUse());
             const game = contestGames.find(item => item.id === gameId);
             const characters = Array.isArray(game?.defaultCharacters)
                 ? game.defaultCharacters
@@ -3583,6 +3746,7 @@
             document.getElementById('gameSetupSystemPrompt').value = '';
             updateGameSetupPromptCount();
             setGameSetupError('');
+            hideLaunchDebugPanels();
             document.getElementById('gameSetupFooter').textContent =
                 'Temporary bots are created for this match, then cleaned up afterward.';
             renderGameSetupParticipants();
@@ -3596,6 +3760,8 @@
             gameSetupParticipants = [];
             setGameSetupError('');
             setGameSetupVoiceStatus('');
+            const setupPanel = document.getElementById('gameSetupDebug');
+            if (setupPanel) setupPanel.hidden = true;
             if (previewAudio) { previewAudio.pause(); previewAudio = null; }
         }
 
@@ -3605,15 +3771,18 @@
             if (!gameSetupGameId) return 'No game selected';
             if (!gameSetupParticipants.length) return 'Add at least one participant';
             const seenNames = new Set();
-            const taken = new Set(currentAgents.map(agent => agent.name));
+            const taken = new Set(namesInUse());
             for (let i = 0; i < gameSetupParticipants.length; i++) {
                 const participant = gameSetupParticipants[i];
                 const name = String(participant.name || '').trim();
                 if (!AGENT_NAME_PATTERN.test(name)) {
                     return `Participant ${i + 1} name must be 3–16 letters, numbers, or underscores`;
                 }
-                if (taken.has(name) || seenNames.has(name)) {
-                    return `Agent name is already in use: ${name}`;
+                if (seenNames.has(name)) {
+                    return `Participant names must be unique: ${name}`;
+                }
+                if (taken.has(name)) {
+                    return `A bot named ${name} is already online. Stop it first.`;
                 }
                 if (!participant.profileId || !profileIds.has(participant.profileId)) {
                     return `Participant ${i + 1} needs a configured profile`;
@@ -3656,27 +3825,43 @@
 
             contestBusy = true;
             setGameSetupError('');
-            setContestStatus('Provisioning temporary contest bots (this can take up to ~90s)…');
-            document.getElementById('gameSetupFooter').textContent = 'Provisioning… waiting for MindServer ack.';
+            hideLaunchDebugPanels();
+            setContestStatus('Provisioning temporary contest bots…');
+            document.getElementById('gameSetupFooter').textContent = 'Starting… creating temporary contest bots.';
             document.getElementById('submitGameSetupBtn').disabled = true;
             renderGameCards();
 
-            socket.emit('contest-start-game', {
+            socket.timeout(CONTEST_START_TIMEOUT_MS).emit('contest-start-game', {
                 gameId,
                 participants,
                 systemPrompt,
                 durationMs,
-            }, (result) => {
+            }, (err, result) => {
                 contestBusy = false;
                 document.getElementById('submitGameSetupBtn').disabled = false;
+                if (err) {
+                    const message = 'Start game timed out or MindServer did not respond. Copy the debug report for Cursor if one is available.';
+                    setGameSetupError(message);
+                    setContestStatus(message, true);
+                    document.getElementById('gameSetupFooter').textContent = 'Timed out waiting for MindServer.';
+                    fetchLastLaunchReport();
+                    renderGameCards();
+                    return;
+                }
                 if (!result?.success) {
                     const message = result?.error || 'Failed to start contest';
                     setGameSetupError(message);
                     setContestStatus(message, true);
                     document.getElementById('gameSetupFooter').textContent = 'Fix the error and try again.';
+                    if (result?.report) {
+                        setLaunchReport(result.report, { showInModal: true, showInContest: true });
+                    } else {
+                        fetchLastLaunchReport();
+                    }
                     renderGameCards();
                     return;
                 }
+                hideLaunchDebugPanels();
                 closeGameSetup();
                 setContestStatus(`Started ${result.data?.contest?.title || result.data?.gameSession?.title || gameId}`);
                 if (result.data?.join) {
@@ -3710,6 +3895,33 @@
             if (!contestBusy) closeGameSetup();
         });
         document.getElementById('submitGameSetupBtn').addEventListener('click', submitGameSetup);
+        document.getElementById('copyGameSetupReportBtn')?.addEventListener('click', (event) => {
+            copyLaunchReportToClipboard(event.currentTarget);
+        });
+        document.getElementById('copyContestLaunchReportBtn')?.addEventListener('click', (event) => {
+            copyLaunchReportToClipboard(event.currentTarget);
+        });
+        document.getElementById('copyLaunchReportBtn')?.addEventListener('click', (event) => {
+            const btn = event.currentTarget;
+            if (lastLaunchReport) {
+                setLaunchReport(lastLaunchReport, { showInModal: false, showInContest: true });
+                copyLaunchReportToClipboard(btn);
+                return;
+            }
+            setContestStatus('Fetching last launch report…');
+            socket.timeout(8000).emit('diagnostics-report', (err, res) => {
+                if (err || !res?.success || !res.report) {
+                    setContestStatus(err ? 'Could not fetch launch report' : (res?.error || 'No launch report available yet'), true);
+                    return;
+                }
+                setLaunchReport(res.report, { showInModal: false, showInContest: true });
+                copyLaunchReportToClipboard(btn);
+            });
+        });
+        document.getElementById('hideContestLaunchDebugBtn')?.addEventListener('click', () => {
+            const panel = document.getElementById('contestLaunchDebug');
+            if (panel) panel.hidden = true;
+        });
         document.getElementById('gameSetupSystemPrompt').addEventListener('input', updateGameSetupPromptCount);
         document.getElementById('gameSetupModal').addEventListener('click', (event) => {
             if (event.target === event.currentTarget && !contestBusy) closeGameSetup();

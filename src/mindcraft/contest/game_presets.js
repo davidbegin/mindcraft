@@ -35,11 +35,11 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
     death_race: Object.freeze({
         id: 'death_race',
         title: 'Self-Destruct Race',
-        blurb: 'Reverse survival: cause your own death before any rival does.',
+        blurb: 'Reverse survival on a blank plain: die before any rival does.',
         durationLabel: '5 min cap',
         durationMs: 5 * 60_000,
         prompt:
-            'CONTEST: Self-Destruct Race. This is reverse survival: your only goal is to cause your own death before any rival causes theirs. PVP is off and another player killing you does not count as the intended strategy. Your survival instincts are disabled. Explore the arena, improvise with its terrain, materials, creatures, and hazards, and find your own fastest way to eliminate yourself. There is no prescribed solution, so act immediately and adapt if a strategy is too slow. Do not help anyone else die first. The game ends automatically the instant the first competitor dies. Keep saying what risky strategy you are trying and trade playful trash talk with every rival.',
+            'CONTEST: Self-Destruct Race. This is reverse survival: your only goal is to cause your own death before any rival causes theirs. PVP is off and another player killing you does not count as the intended strategy. Your survival instincts are disabled. The arena is a completely blank flat plain: no mobs, no hazards, no water, no fire, and nothing in your inventory. Grass, dirt, bedrock, and open sky are all you get, so every death has to be improvised out of what you can dig, build, and do to yourself. There is no prescribed solution, so act immediately and adapt if a strategy is too slow. Do not help anyone else die first. The game ends automatically the instant the first competitor dies. Keep saying what risky strategy you are trying and trade playful trash talk with every rival.',
         rules: Object.freeze({
             type: 'death_race',
             scoring: 'first-death-wins',
@@ -48,7 +48,7 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
             ]),
         }),
         metadata: Object.freeze({
-            arena: 'death-arena-v1',
+            arena: 'blank-plain-v1',
             pvp: false,
             radicalReset: true,
             needsFreshWorld: false,
@@ -57,11 +57,11 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
     dog_race: Object.freeze({
         id: 'dog_race',
         title: 'First Dog',
-        blurb: 'Explore the forest, obtain bones, find a wolf, and tame it first.',
+        blurb: 'Explore a randomized wilderness, get bones, find a wolf, and tame it first.',
         durationLabel: '20 min cap',
         durationMs: 20 * 60_000,
         prompt:
-            'CONTEST: First Dog. Your only goal is to become the first competitor to tame a wolf and get a dog. Explore the forest, obtain what you need through normal survival gameplay, find a wolf, and successfully tame it. You start without bones and must complete the real survival steps yourself. The game ends automatically the instant the first wolf is tamed. Do not help rivals. Move fast, keep saying what you are trying, and trade playful trash talk with every rival.',
+            'CONTEST: First Dog. Your only goal is to become the first competitor to tame a wolf and get a dog. You spawn on a small flat plain with nothing on it, and everything past that plain is a randomly generated wilderness that is different every match: the trees, hills, ponds, skeletons, and wolves all move to new places, and no wolf is ever within reach of spawn. Nothing is handed to you, so head out, work out where the wolves are, get bones the hard way, and tame one. You start without bones and must complete the real survival steps yourself. The game ends automatically the instant the first wolf is tamed. Do not help rivals. Move fast, keep saying what you are trying, and trade playful trash talk with every rival.',
         rules: Object.freeze({
             type: 'dog_race',
             winAdvancement: 'minecraft:husbandry/tame_an_animal',
@@ -71,7 +71,7 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
             ]),
         }),
         metadata: Object.freeze({
-            arena: 'dog-forest-v1',
+            arena: 'random-wilds-v1',
             pvp: false,
             radicalReset: true,
             needsFreshWorld: true,

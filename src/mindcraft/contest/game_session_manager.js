@@ -22,8 +22,14 @@ export function validateGameParticipants(participants, profiles, existingNames =
         if (!AGENT_NAME_PATTERN.test(name)) {
             throw new Error(`Participant ${index + 1} name must be 3-16 letters, numbers, or underscores`);
         }
-        if (unavailableNames.has(name) || selectedNames.has(name)) {
-            throw new Error(`Agent name is already in use: ${name}`);
+        if (selectedNames.has(name)) {
+            throw new Error(`Participant names must be unique: ${name}`);
+        }
+        // Reusing the name of a past bot is fine; only a bot that is online
+        // right now blocks it, because Minecraft refuses two players of the
+        // same name.
+        if (unavailableNames.has(name)) {
+            throw new Error(`A bot named ${name} is already online. Stop it first.`);
         }
         const catalogProfile = profileMap.get(profileId);
         if (!catalogProfile) {
@@ -78,6 +84,9 @@ export class GameSessionManager {
 
         Object.assign(this, options);
         this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+        // Frees the requested names from bots left over by earlier matches, so
+        // the same roster can be started again and again.
+        this.reclaimNames = options.reclaimNames || (() => Promise.resolve());
         this.readyTimeoutMs = options.readyTimeoutMs ?? 90000;
         this.readyPollMs = options.readyPollMs ?? 500;
         this.onUpdate = options.onUpdate || (() => {});
@@ -85,11 +94,42 @@ export class GameSessionManager {
         this.announceResult = options.announceResult || (() => {});
         this.onAnnouncementError = options.onAnnouncementError
             || (error => console.warn(`Contest announcement failed: ${error.message}`));
+        this.getAgentLaunchStatus = options.getAgentLaunchStatus || null;
+        this.telemetry = options.telemetry || null;
         this.active = null;
+        this.lastFailure = null;
     }
 
     view() {
         return this.active ? clone(this.active) : null;
+    }
+
+    _record(event) {
+        this.telemetry?.record?.(event);
+    }
+
+    _setProgress(stage, message, extra = {}) {
+        if (!this.active) return;
+        const total = this.active.participantIds?.length || 0;
+        const ready = typeof extra.ready === 'number'
+            ? extra.ready
+            : (this.active.participantIds || []).filter(name => this.isAgentReady(name)).length;
+        this.active.progress = {
+            stage,
+            message,
+            ready,
+            total,
+            createdCount: this.active.createdAgents?.length || 0,
+            ...extra,
+        };
+    }
+
+    _setStatus(status, stage, message, extra = {}) {
+        if (!this.active) return;
+        this.active.status = status;
+        this._setProgress(stage || status, message, extra);
+        this._record({ stage: stage || status, message, detail: extra });
+        this._emit();
     }
 
     async start(request = {}) {
@@ -100,7 +140,16 @@ export class GameSessionManager {
             throw new Error('A game is already running. Cancel it first.');
         }
 
+        this.lastFailure = null;
+        this.telemetry?.clear?.();
+        this._record({ stage: 'validate', message: `Starting game ${request.gameId || 'unknown'}` });
+
         const preset = this.getPreset(request.gameId);
+        await this.reclaimNames(
+            (request.participants || [])
+                .map(participant => String(participant?.name || '').trim())
+                .filter(Boolean)
+        );
         const participants = validateGameParticipants(
             request.participants,
             this.getProfiles(),
@@ -117,6 +166,11 @@ export class GameSessionManager {
             ? request.durationMs
             : preset.durationMs;
         const participantIds = participants.map(participant => participant.name);
+
+        this._record({
+            stage: 'create_contest',
+            message: `Creating contest for ${preset.title} with ${participantIds.length} bots`,
+        });
         const contest = await this.coordinator.createContest({
             title: preset.title,
             prompt: preset.prompt,
@@ -157,14 +211,30 @@ export class GameSessionManager {
                 model,
                 provider,
             })),
-            createdAgentNames: [],
+            // Bots are cleaned up by the instance id they were created under, so
+            // a later bot reusing a name is never destroyed by an old session.
+            createdAgents: [],
             recording: null,
             error: null,
+            progress: {
+                stage: 'create_agent',
+                message: `Creating temporary contest bots (0/${participants.length})…`,
+                ready: 0,
+                total: participants.length,
+                createdCount: 0,
+            },
         };
         this._emit();
 
         try {
-            for (const participant of participants) {
+            for (let index = 0; index < participants.length; index++) {
+                const participant = participants[index];
+                this._setStatus(
+                    'provisioning',
+                    'create_agent',
+                    `Creating bot ${index + 1}/${participants.length}: ${participant.name}…`,
+                    { agent: participant.name, createdCount: this.active.createdAgents.length }
+                );
                 const profile = clone(participant.profile);
                 profile.name = participant.name;
                 profile.speak_model = participant.voice
@@ -196,20 +266,32 @@ export class GameSessionManager {
                 if (!result?.success) {
                     throw new Error(result?.error || `Could not create ${participant.name}`);
                 }
-                this.active.createdAgentNames.push(participant.name);
+                this.active.createdAgents.push({
+                    name: participant.name,
+                    id: result.agentId ?? participant.name,
+                });
+                this._record({
+                    stage: 'create_agent',
+                    agent: participant.name,
+                    message: `Created agent process ${result.agentId ?? participant.name}`,
+                });
                 this._emit();
             }
 
+            this._setStatus(
+                'provisioning',
+                'wait_ready',
+                `Waiting for agents to join the world (0/${participantIds.length})…`,
+                { ready: 0 }
+            );
             await this._waitUntilReady(participantIds, contest.id);
             if (!this.active || this.active.contestId !== contest.id) {
                 throw new Error('Game session was cancelled during startup');
             }
-            this.active.status = 'preparing';
-            this._emit();
+            this._setStatus('preparing', 'prepare_arena', 'Preparing arena…');
             const arenaReset = await this.prepareArena(preset, participantIds);
 
-            this.active.status = 'recording';
-            this._emit();
+            this._setStatus('recording', 'start_recording', 'Starting synchronized recording…');
             const recording = await this.startRecording({
                 contestId: contest.id,
                 participants: participantIds,
@@ -217,9 +299,9 @@ export class GameSessionManager {
             });
             this.active.recording = { enabled: true, ...recording };
 
-            this.active.status = 'announcing-start';
-            this._emit();
+            this._setStatus('announcing-start', 'announce', 'Announcing match start…');
             await this._announce(this.announceStart, contest);
+            this._record({ stage: 'start_contest', message: `Starting contest ${contest.id}` });
             const started = await this.coordinator.startContest(contest.id);
             await Promise.all(participantIds.map(name =>
                 this.sendDirective(
@@ -227,9 +309,9 @@ export class GameSessionManager {
                     buildParticipantGameDirective(preset.prompt, participantIds, name)
                 )
             ));
-            this.active.status = 'running';
             this.active.arenaReset = arenaReset;
-            this._emit();
+            this._setStatus('running', 'running', 'Contest running');
+            this._record({ stage: 'running', message: `Game ${preset.id} is running` });
             return {
                 contest: started,
                 participants: participantIds,
@@ -241,7 +323,26 @@ export class GameSessionManager {
             if (this.active) {
                 this.active.status = 'failed';
                 this.active.error = error.message;
+                this._setProgress(
+                    this.active.progress?.stage || 'failed',
+                    error.message
+                );
+                this.telemetry?.recordError?.(error, {
+                    stage: this.active.progress?.stage || 'failed',
+                });
+                this.lastFailure = {
+                    at: new Date().toISOString(),
+                    error: error.message,
+                    session: this.view(),
+                };
                 this._emit();
+            } else {
+                this.telemetry?.recordError?.(error, { stage: 'failed' });
+                this.lastFailure = {
+                    at: new Date().toISOString(),
+                    error: error.message,
+                    session: null,
+                };
             }
             await this._cancelContestIfNeeded(contest.id, `Game session startup failed: ${error.message}`);
             await this.finish(contest.id);
@@ -262,10 +363,12 @@ export class GameSessionManager {
         if (contestId && this.active.contestId !== contestId) return null;
         const session = this.view();
         this.active.status = 'cleaning-up';
+        this._setProgress('cleanup', 'Cleaning up temporary contest bots…');
+        this._record({ stage: 'cleanup', message: `Cleaning up session ${session.contestId}` });
         this._emit();
         await this.stopRecording(session.contestId).catch(() => {});
         await Promise.allSettled(
-            session.createdAgentNames.map(name => this.destroyAgent(name))
+            session.createdAgents.map(agent => this.destroyAgent(agent.id))
         );
         this.active = null;
         this._emit();
@@ -287,17 +390,40 @@ export class GameSessionManager {
         return null;
     }
 
+    _describeAgentStatus(name) {
+        if (typeof this.getAgentLaunchStatus === 'function') {
+            const status = this.getAgentLaunchStatus(name) || {};
+            if (!status.registered) return `${name} (not registered)`;
+            if (!status.socketConnected) return `${name} (process not connected)`;
+            if (!status.inGame) return `${name} (connected, not in-game yet)`;
+            return `${name} (in-game)`;
+        }
+        return this.isAgentReady(name) ? `${name} (ready)` : `${name} (not ready)`;
+    }
+
     async _waitUntilReady(names, contestId) {
         const deadline = Date.now() + this.readyTimeoutMs;
+        let lastReady = -1;
         while (Date.now() < deadline) {
             if (!this.active || this.active.contestId !== contestId) {
                 throw new Error('Game session was cancelled during startup');
             }
-            if (names.every(name => this.isAgentReady(name))) return;
+            const ready = names.filter(name => this.isAgentReady(name)).length;
+            if (ready !== lastReady && this.active) {
+                lastReady = ready;
+                this._setProgress(
+                    'wait_ready',
+                    `Waiting for agents to join the world (${ready}/${names.length})…`,
+                    { ready }
+                );
+                this._emit();
+            }
+            if (ready === names.length) return;
             await this.sleep(this.readyPollMs);
         }
         const missing = names.filter(name => !this.isAgentReady(name));
-        throw new Error(`Timed out waiting for game agents: ${missing.join(', ')}`);
+        const detail = missing.map(name => this._describeAgentStatus(name)).join(', ');
+        throw new Error(`Timed out waiting for game agents: ${detail}`);
     }
 
     async _cancelContestIfNeeded(contestId, reason) {

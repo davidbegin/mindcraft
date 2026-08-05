@@ -18,10 +18,13 @@ class MindServerProxy {
         MindServerProxy.instance = this;
     }
 
-    async connect(name, port) {
+    async connect(name, port, id = null) {
         if (this.connected) return;
-        
+
         this.name = name;
+        // The mindserver tracks this process by instance id; the name is only
+        // how the bot appears in game and can be reused by later bots.
+        this.id = id || name;
         this.socket = io(`http://localhost:${port}`);
 
         await new Promise((resolve, reject) => {
@@ -236,13 +239,13 @@ class MindServerProxy {
                 reject(new Error('Settings request timed out after 5 seconds'));
             }, 5000);
 
-            this.socket.emit('get-settings', name, (response) => {
+            this.socket.emit('get-settings', this.id, (response) => {
                 clearTimeout(timeout);
                 if (response.error) {
                     return reject(new Error(response.error));
                 }
                 setSettings(response.settings);
-                this.socket.emit('connect-agent-process', name);
+                this.socket.emit('connect-agent-process', this.id);
                 resolve();
             });
         });
@@ -261,7 +264,7 @@ class MindServerProxy {
     }
 
     login() {
-        this.socket.emit('login-agent', this.agent.name);
+        this.socket.emit('login-agent', this.id);
     }
 
     colonyReady() {
@@ -271,7 +274,7 @@ class MindServerProxy {
     // Push POV recording state changes so the UI reflects auto-stops (bot death, ffmpeg failure)
     sendRecordingUpdate(status) {
         if (this.socket?.connected) {
-            this.socket.emit('recording-update', this.name, status);
+            this.socket.emit('recording-update', this.id, status);
         }
     }
 

@@ -13,6 +13,20 @@ const ARENA = Object.freeze({
     spectatorY: 140,
 });
 
+const DOG_ARENA = Object.freeze({
+    plainRadius: 15,
+    wolfMinRadius: 22,
+    moundExtent: 5,
+    pondExtent: 4,
+    treeExtent: 2,
+});
+
+const DOG_TREE_SPECIES = Object.freeze([
+    Object.freeze({ log: 'oak_log', leaves: 'oak_leaves' }),
+    Object.freeze({ log: 'birch_log', leaves: 'birch_leaves' }),
+    Object.freeze({ log: 'spruce_log', leaves: 'spruce_leaves' }),
+]);
+
 const DEPTH_RACE_KIT = Object.freeze([
     'diamond_pickaxe 1',
     'bread 16',
@@ -105,8 +119,19 @@ function fillLayers(commands, bounds, bottomY, topY, block, layerHeight = 6) {
     }
 }
 
-function spawnPositions(participantCount) {
-    const radius = Math.min(22, Math.max(8, participantCount * 3));
+function flatFloorCommands({ minX, maxX, minZ, maxZ }) {
+    return [
+        `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
+        + `${maxX} ${ARENA.floorY - 3} ${maxZ} bedrock`,
+        `fill ${minX} ${ARENA.floorY - 2} ${minZ} `
+        + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
+        `fill ${minX} ${ARENA.floorY} ${minZ} `
+        + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`,
+    ];
+}
+
+function spawnPositions(participantCount, maxRadius = 22) {
+    const radius = Math.min(maxRadius, Math.max(8, participantCount * 3));
     return Array.from({ length: participantCount }, (_, index) => {
         const angle = (index / participantCount) * Math.PI * 2;
         return {
@@ -116,83 +141,128 @@ function spawnPositions(participantCount) {
     });
 }
 
-function addDogForest(commands) {
-    const treeOffsets = [
-        [-27, -25], [-26, -8], [-25, 14], [-22, 27],
-        [-14, -18], [-12, 4], [-10, 22],
-        [0, -27], [2, -10], [4, 13], [1, 28],
-        [13, -20], [15, 1], [12, 23],
-        [25, -27], [27, -9], [24, 11], [27, 26],
-    ];
-    for (const [dx, dz] of treeOffsets) {
+/** Deterministic mulberry32 so a contest layout can be replayed from its seed. */
+function createRandom(seed) {
+    let state = seed >>> 0;
+    return () => {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let value = state;
+        value = Math.imul(value ^ (value >>> 15), value | 1);
+        value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+        return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function randomSeed() {
+    return Math.floor(Math.random() * 0x100000000) >>> 0;
+}
+
+function randomInt(random, min, max) {
+    return min + Math.floor(random() * (max - min + 1));
+}
+
+function randomPick(random, values) {
+    return values[Math.floor(random() * values.length)];
+}
+
+/** Shortest distance from the arena center to a feature's square footprint. */
+function footprintClearance(dx, dz, extent) {
+    return Math.hypot(
+        Math.max(0, Math.abs(dx) - extent),
+        Math.max(0, Math.abs(dz) - extent)
+    );
+}
+
+/**
+ * Scatters feature positions around the spawn plain: everything lands in the
+ * ring outside `plainRadius`, inside the barrier walls, and clear of features
+ * already placed.
+ */
+function createScatter(random, plainRadius) {
+    const taken = [];
+    const limit = ARENA.halfSize - 1;
+    return function scatter(count, { extent, spacing, minRadius = plainRadius }) {
+        const spots = [];
+        const outerRadius = limit - extent;
+        for (let attempt = 0; spots.length < count && attempt < count * 60; attempt += 1) {
+            const angle = random() * Math.PI * 2;
+            const radius = minRadius + random() * (outerRadius - minRadius);
+            const dx = Math.round(Math.cos(angle) * radius);
+            const dz = Math.round(Math.sin(angle) * radius);
+            if (footprintClearance(dx, dz, extent) <= plainRadius) continue;
+            if (Math.abs(dx) + extent > limit || Math.abs(dz) + extent > limit) continue;
+            if (taken.some(spot => Math.hypot(spot.dx - dx, spot.dz - dz) < spacing)) continue;
+            taken.push({ dx, dz });
+            spots.push({ dx, dz });
+        }
+        return spots;
+    };
+}
+
+function addDogWilderness(commands, random) {
+    const { plainRadius, moundExtent, pondExtent, treeExtent, wolfMinRadius } = DOG_ARENA;
+    const scatter = createScatter(random, plainRadius);
+
+    // Wolves claim their rim spots first so terrain never crowds them out.
+    const wolfSpots = scatter(randomInt(random, 3, 5), {
+        extent: 1,
+        spacing: 6,
+        minRadius: wolfMinRadius,
+    });
+
+    for (const { dx, dz } of scatter(randomInt(random, 5, 9), { extent: moundExtent, spacing: 8 })) {
         const x = ARENA.centerX + dx;
         const z = ARENA.centerZ + dz;
+        const height = randomInt(random, 1, 4);
+        const baseRadius = randomInt(random, 2, moundExtent);
+        for (let layer = 1; layer <= height; layer += 1) {
+            const radius = Math.max(1, baseRadius - (layer - 1));
+            const block = layer === height ? 'grass_block' : 'dirt';
+            commands.push(
+                `fill ${x - radius} ${ARENA.floorY + layer} ${z - radius} `
+                + `${x + radius} ${ARENA.floorY + layer} ${z + radius} ${block}`
+            );
+        }
+    }
+
+    for (const { dx, dz } of scatter(randomInt(random, 2, 4), { extent: pondExtent, spacing: 9 })) {
+        const x = ARENA.centerX + dx;
+        const z = ARENA.centerZ + dz;
+        const radius = randomInt(random, 2, pondExtent);
+        const depth = randomInt(random, 1, 2);
         commands.push(
-            `fill ${x - 2} ${ARENA.floorY + 3} ${z - 2} `
-            + `${x + 2} ${ARENA.floorY + 5} ${z + 2} spruce_leaves`,
-            `fill ${x} ${ARENA.floorY + 1} ${z} `
-            + `${x} ${ARENA.floorY + 5} ${z} spruce_log`,
-            `setblock ${x} ${ARENA.floorY + 6} ${z} spruce_leaves`
+            `fill ${x - radius} ${ARENA.floorY - depth} ${z - radius} `
+            + `${x + radius} ${ARENA.floorY} ${z + radius} water`
         );
     }
 
-    const wolfOffsets = [
-        [-28, -17], [-20, 19], [-8, -26], [-4, 17],
-        [9, -14], [16, 27], [24, 6], [29, -24],
-    ];
-    for (const [dx, dz] of wolfOffsets) {
+    for (const { dx, dz } of scatter(randomInt(random, 12, 20), { extent: treeExtent, spacing: 4 })) {
+        const x = ARENA.centerX + dx;
+        const z = ARENA.centerZ + dz;
+        const { log, leaves } = randomPick(random, DOG_TREE_SPECIES);
+        const top = ARENA.floorY + randomInt(random, 4, 7);
         commands.push(
-            `summon wolf ${ARENA.centerX + dx} ${ARENA.floorY + 1} ${ARENA.centerZ + dz}`
+            `fill ${x - 2} ${top - 2} ${z - 2} ${x + 2} ${top - 1} ${z + 2} ${leaves}`,
+            `fill ${x - 1} ${top} ${z - 1} ${x + 1} ${top} ${z + 1} ${leaves}`,
+            `fill ${x} ${ARENA.floorY + 1} ${z} ${x} ${top} ${z} ${log}`,
+            `setblock ${x} ${top + 1} ${z} ${leaves}`
         );
     }
 
-    const skeletonOffsets = [
-        [-30, -29], [-30, -13], [-29, 3], [-30, 20],
-        [-22, -22], [-21, -4], [-20, 12], [-19, 29],
-        [-11, -30], [-10, -15], [-9, 8], [-8, 25],
-        [0, -21], [1, -3], [0, 20], [7, 30],
-        [10, -29], [11, -11], [10, 6], [12, 24],
-        [20, -20], [21, -2], [20, 15], [22, 29],
-        [29, -29], [30, -12], [29, 5], [30, 22],
-    ];
-    for (const [dx, dz] of skeletonOffsets) {
+    for (const { dx, dz } of scatter(randomInt(random, 5, 9), { extent: 1, spacing: 4 })) {
         commands.push(
             `summon skeleton ${ARENA.centerX + dx} ${ARENA.floorY + 1} ${ARENA.centerZ + dz}`
         );
     }
+
+    for (const { dx, dz } of wolfSpots) {
+        commands.push(
+            `summon wolf ${ARENA.centerX + dx} ${ARENA.floorY + 1} ${ARENA.centerZ + dz}`
+        );
+    }
 }
 
-function addDeathRaceHazards(commands) {
-    const x = ARENA.centerX;
-    const z = ARENA.centerZ;
-
-    commands.push(
-        // Keep lava available without making it the central, prescribed solution.
-        `fill ${x + 24} ${ARENA.floorY} ${z + 24} `
-        + `${x + 27} ${ARENA.floorY} ${z + 27} lava`,
-        // A deep pool supports drowning strategies.
-        `fill ${x - 27} ${ARENA.floorY - 3} ${z + 21} `
-        + `${x - 21} ${ARENA.floorY - 3} ${z + 27} stone`,
-        `fill ${x - 27} ${ARENA.floorY - 2} ${z + 21} `
-        + `${x - 21} ${ARENA.floorY} ${z + 27} water`,
-        // A climbable tower makes fall damage possible.
-        `fill ${x - 25} ${ARENA.floorY + 1} ${z - 25} `
-        + `${x - 24} ${ARENA.floorY + 27} ${z - 24} stone`,
-        `fill ${x - 25} ${ARENA.floorY + 27} ${z - 25} `
-        + `${x - 20} ${ARENA.floorY + 27} ${z - 20} stone`,
-        `fill ${x - 23} ${ARENA.floorY + 1} ${z - 25} `
-        + `${x - 23} ${ARENA.floorY + 27} ${z - 25} ladder[facing=east]`,
-        // Cactus and loose blocks leave room for slower or improvised approaches.
-        `fill ${x + 20} ${ARENA.floorY} ${z - 27} `
-        + `${x + 27} ${ARENA.floorY} ${z - 20} sand`,
-        `setblock ${x + 22} ${ARENA.floorY + 1} ${z - 25} cactus`,
-        `setblock ${x + 25} ${ARENA.floorY + 1} ${z - 22} cactus`,
-        `fill ${x - 3} ${ARENA.floorY + 1} ${z + 23} `
-        + `${x + 3} ${ARENA.floorY + 4} ${z + 27} gravel`
-    );
-}
-
-function buildWorldResetCommands(gameId) {
+function buildWorldResetCommands(gameId, options = {}) {
     const minX = ARENA.centerX - ARENA.halfSize;
     const maxX = ARENA.centerX + ARENA.halfSize;
     const minZ = ARENA.centerZ - ARENA.halfSize;
@@ -227,17 +297,11 @@ function buildWorldResetCommands(gameId) {
         commands.push(
             'gamerule doMobSpawning false',
             'difficulty normal',
-            'time set midnight'
+            // Summoned skeletons would burn away at noon, taking the bone hunt with them.
+            'time set midnight',
+            ...flatFloorCommands(bounds)
         );
-        commands.push(
-            `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
-            + `${maxX} ${ARENA.floorY - 3} ${maxZ} bedrock`,
-            `fill ${minX} ${ARENA.floorY - 2} ${minZ} `
-            + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
-            `fill ${minX} ${ARENA.floorY} ${minZ} `
-            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
-        );
-        addDogForest(commands);
+        addDogWilderness(commands, createRandom(options.seed ?? randomSeed()));
     } else if (isDepthRaceGame(gameId)) {
         commands.push(
             'gamerule doMobSpawning false',
@@ -358,27 +422,14 @@ function buildWorldResetCommands(gameId) {
             );
         }
     } else if (gameId === 'death_race') {
+        // Nothing but the plain itself: every death has to be improvised.
         commands.push(
-            'gamerule doMobSpawning true',
+            'gamerule doMobSpawning false',
             'difficulty normal',
-            'time set midnight',
-            `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
-            + `${maxX} ${ARENA.floorY - 3} ${maxZ} bedrock`,
-            `fill ${minX} ${ARENA.floorY - 2} ${minZ} `
-            + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
-            `fill ${minX} ${ARENA.floorY} ${minZ} `
-            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
+            ...flatFloorCommands(bounds)
         );
-        addDeathRaceHazards(commands);
     } else {
-        commands.push(
-            `fill ${minX} ${ARENA.floorY - 3} ${minZ} `
-            + `${maxX} ${ARENA.floorY - 3} ${maxZ} bedrock`,
-            `fill ${minX} ${ARENA.floorY - 2} ${minZ} `
-            + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
-            `fill ${minX} ${ARENA.floorY} ${minZ} `
-            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
-        );
+        commands.push(...flatFloorCommands(bounds));
     }
 
     commands.push(
@@ -397,7 +448,11 @@ function buildWorldResetCommands(gameId) {
 
 function buildParticipantCommands(gameId, participants) {
     const commands = [];
-    const positions = spawnPositions(participants.length);
+    // Dog racers must all start on the bare plain, inside the wilderness ring.
+    const positions = spawnPositions(
+        participants.length,
+        gameId === 'dog_race' ? DOG_ARENA.plainRadius - 3 : undefined
+    );
     participants.forEach((name, index) => {
         assertPlayerName(name);
         const position = positions[index];
@@ -424,9 +479,9 @@ function buildParticipantCommands(gameId, participants) {
     return commands;
 }
 
-function buildResetCommands(gameId, participants) {
+function buildResetCommands(gameId, participants, options = {}) {
     return [
-        ...buildWorldResetCommands(gameId),
+        ...buildWorldResetCommands(gameId, options),
         ...buildParticipantCommands(gameId, participants),
     ];
 }
@@ -478,7 +533,8 @@ export class ContestArenaManager {
         }
         participants.forEach(assertPlayerName);
 
-        const worldCommands = buildWorldResetCommands(preset.id);
+        const seed = options.seed ?? randomSeed();
+        const worldCommands = buildWorldResetCommands(preset.id, { seed });
         for (const command of worldCommands) {
             await this.runCommand(command);
         }
@@ -517,6 +573,7 @@ export class ContestArenaManager {
         const join = getArenaJoinInfo();
         return {
             ...join.arena,
+            seed,
             resetCommandCount: commands.length,
             spectators: warpedSpectators,
             teleportCommand: join.teleportCommand,
