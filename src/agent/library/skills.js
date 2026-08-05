@@ -1960,6 +1960,186 @@ export async function digDown(bot, distance = 10) {
     return true;
 }
 
+export async function plantArea(bot, seedType, x1, z1, x2, z2, y) {
+    /**
+     * Till and sow every plantable column in the rectangle (x1,z1)..(x2,z2) at ground height y.
+     * Tolerates +-1 block of terrain height variation per column.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {string} seedType, the seed to plant, e.g. 'wheat_seeds'.
+     * @param {number} x1, {number} z1, one corner of the rectangle.
+     * @param {number} x2, {number} z2, the opposite corner.
+     * @param {number} y, the ground y level of the field.
+     * @returns {Promise<boolean>} true if at least one column was planted.
+     * @example
+     * await skills.plantArea(bot, 'wheat_seeds', -26, -6, -20, -1, 62);
+     **/
+    const minX = Math.min(Math.floor(x1), Math.floor(x2));
+    const maxX = Math.max(Math.floor(x1), Math.floor(x2));
+    const minZ = Math.min(Math.floor(z1), Math.floor(z2));
+    const maxZ = Math.max(Math.floor(z1), Math.floor(z2));
+    const columns = (maxX - minX + 1) * (maxZ - minZ + 1);
+    const MAX_COLUMNS = 1024;
+    if (columns > MAX_COLUMNS) {
+        log(bot, `Area of ${columns} columns is too large (max ${MAX_COLUMNS}). Split it into smaller rectangles.`);
+        return false;
+    }
+    const groundY = Math.floor(y);
+    const TILLABLE = new Set(['grass_block', 'dirt', 'farmland']);
+    let planted = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (let x = minX; x <= maxX; x++) {
+        for (let z = minZ; z <= maxZ; z++) {
+            if (bot.interrupt_code) {
+                log(bot, `Planting interrupted: planted ${planted}, skipped ${skipped}, failed ${failed}.`);
+                return planted > 0;
+            }
+            // Tolerate uneven terrain by probing around the given ground level.
+            let target = null;
+            for (const dy of [0, -1, 1]) {
+                const block = bot.blockAt(new Vec3(x, groundY + dy, z));
+                if (block && TILLABLE.has(block.name)) {
+                    target = block.position;
+                    break;
+                }
+            }
+            if (!target) {
+                skipped++;
+                continue;
+            }
+            const above = bot.blockAt(new Vec3(target.x, target.y + 1, target.z));
+            if (above && above.name !== 'air' && bot.blockAt(target).name === 'farmland') {
+                skipped++; // already planted
+                continue;
+            }
+            const success = await tillAndSow(bot, target.x, target.y, target.z, seedType);
+            if (success) planted++;
+            else {
+                failed++;
+                // Out of seeds or no hoe ends the whole batch, not just one column.
+                if (bot.output.includes(`No ${seedType}`) || bot.output.includes('no hoes')) {
+                    log(bot, `Stopping: planted ${planted}, skipped ${skipped}, then ran out of seeds or hoes.`);
+                    return planted > 0;
+                }
+            }
+        }
+    }
+    log(bot, `Finished planting area: planted ${planted}, skipped ${skipped} (not tillable or already planted), failed ${failed}.`);
+    return planted > 0;
+}
+
+export async function placeRow(bot, blockType, x, y, z, direction, length) {
+    /**
+     * Place a straight row of blocks starting at (x,y,z), extending in the given direction.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {string} blockType, the block to place.
+     * @param {number} x, {number} y, {number} z, the position of the first block.
+     * @param {string} direction, one of 'north' (-z), 'south' (+z), 'east' (+x), 'west' (-x), 'up' (+y), 'down' (-y).
+     * @param {number} length, the number of blocks in the row.
+     * @returns {Promise<boolean>} true if at least one block was placed.
+     * @example
+     * await skills.placeRow(bot, 'cobblestone', -13, 69, -28, 'east', 8);
+     **/
+    const DIRECTIONS = {
+        north: [0, 0, -1],
+        south: [0, 0, 1],
+        east: [1, 0, 0],
+        west: [-1, 0, 0],
+        up: [0, 1, 0],
+        down: [0, -1, 0],
+    };
+    const step = DIRECTIONS[direction];
+    if (!step) {
+        log(bot, `Unknown direction '${direction}'. Use north, south, east, west, up, or down.`);
+        return false;
+    }
+    const MAX_LENGTH = 64;
+    if (length > MAX_LENGTH) {
+        log(bot, `Row of ${length} is too long (max ${MAX_LENGTH}). Place it in segments.`);
+        return false;
+    }
+    let placed = 0;
+    let consecutiveFailures = 0;
+    for (let i = 0; i < length; i++) {
+        if (bot.interrupt_code) {
+            log(bot, `Row interrupted after placing ${placed}/${length} ${blockType}.`);
+            return placed > 0;
+        }
+        const px = Math.floor(x) + step[0] * i;
+        const py = Math.floor(y) + step[1] * i;
+        const pz = Math.floor(z) + step[2] * i;
+        const existing = bot.blockAt(new Vec3(px, py, pz));
+        if (existing && existing.name === blockType) {
+            consecutiveFailures = 0;
+            continue; // already in place
+        }
+        const success = await placeBlock(bot, blockType, px, py, pz);
+        if (success) {
+            placed++;
+            consecutiveFailures = 0;
+        } else {
+            consecutiveFailures++;
+            if (consecutiveFailures >= 3) {
+                log(bot, `Stopping row after 3 consecutive failures (out of ${blockType}, blocked, or nothing to place on). Placed ${placed}/${length}.`);
+                return placed > 0;
+            }
+        }
+    }
+    log(bot, `Placed row of ${placed}/${length} ${blockType} heading ${direction} from x:${x}, y:${y}, z:${z}.`);
+    return placed > 0;
+}
+
+export async function clearArea(bot, x1, y1, z1, x2, y2, z2) {
+    /**
+     * Break every breakable block inside the box (x1,y1,z1)..(x2,y2,z2), top layer first.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {number} x1, {number} y1, {number} z1, one corner of the box.
+     * @param {number} x2, {number} y2, {number} z2, the opposite corner.
+     * @returns {Promise<boolean>} true if the area was fully cleared.
+     * @example
+     * await skills.clearArea(bot, -49, 63, -14, -47, 66, -12);
+     **/
+    const minX = Math.min(Math.floor(x1), Math.floor(x2));
+    const maxX = Math.max(Math.floor(x1), Math.floor(x2));
+    const minY = Math.min(Math.floor(y1), Math.floor(y2));
+    const maxY = Math.max(Math.floor(y1), Math.floor(y2));
+    const minZ = Math.min(Math.floor(z1), Math.floor(z2));
+    const maxZ = Math.max(Math.floor(z1), Math.floor(z2));
+    const volume = (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+    const MAX_VOLUME = 4096;
+    if (volume > MAX_VOLUME) {
+        log(bot, `Volume of ${volume} blocks is too large (max ${MAX_VOLUME}). Split it into smaller boxes.`);
+        return false;
+    }
+    const SKIP = new Set(['air', 'cave_air', 'void_air', 'water', 'lava', 'bedrock']);
+    let broken = 0;
+    let unbreakable = 0;
+    // Top-down so gravel/sand fall into already-cleared space instead of burying it.
+    for (let py = maxY; py >= minY; py--) {
+        for (let px = minX; px <= maxX; px++) {
+            for (let pz = minZ; pz <= maxZ; pz++) {
+                if (bot.interrupt_code) {
+                    log(bot, `Clearing interrupted: broke ${broken} blocks, ${unbreakable} unbreakable.`);
+                    return false;
+                }
+                const block = bot.blockAt(new Vec3(px, py, pz));
+                if (!block || SKIP.has(block.name)) continue;
+                const success = await breakBlockAt(bot, px, py, pz);
+                if (success) broken++;
+                else {
+                    unbreakable++;
+                    if (bot.output.includes(`Don't have right tools to break ${block.name}`)) {
+                        log(bot, `Stopping: broke ${broken} blocks, but cannot harvest ${block.name} with current tools. Craft a better tool first.`);
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    log(bot, `Cleared area: broke ${broken} blocks (${unbreakable} could not be broken).`);
+    return unbreakable === 0;
+}
+
 export async function goToSurface(bot) {
     /**
      * Navigate to the surface (highest non-air block at current x,z).

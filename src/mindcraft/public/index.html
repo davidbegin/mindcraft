@@ -467,6 +467,38 @@
             animation: recPulse 1.4s ease-in-out infinite;
         }
 
+        .btn-auto {
+            background: rgba(255, 255, 255, 0.04);
+            border-color: var(--border);
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+        .btn-auto:hover:not(:disabled) { background: rgba(102, 217, 232, 0.12); }
+        .btn-auto.on {
+            background: rgba(102, 217, 232, 0.14);
+            border-color: rgba(102, 217, 232, 0.45);
+            color: var(--cyan);
+            animation: autoGlow 2.4s ease-in-out infinite;
+        }
+        @keyframes autoGlow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(102, 217, 232, 0); }
+            50% { box-shadow: 0 0 9px 2px rgba(102, 217, 232, 0.35); }
+        }
+        .auto-armed-dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--cyan);
+            margin-right: 5px;
+            vertical-align: 1px;
+            animation: autoBreathe 2.4s ease-in-out infinite;
+        }
+        @keyframes autoBreathe {
+            0%, 100% { opacity: 0.25; transform: scale(0.8); }
+            50% { opacity: 1; transform: scale(1.15); }
+        }
+
         .rec-group { margin-bottom: 18px; }
         .rec-group h3 {
             margin: 0 0 6px;
@@ -510,6 +542,39 @@
             font-size: 0.8rem;
             margin-bottom: 12px;
             word-break: break-all;
+        }
+        .rec-export {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-inset);
+            margin-bottom: 14px;
+            font-size: 0.82rem;
+        }
+        .rec-export label {
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .rec-export input[type="datetime-local"] {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            padding: 4px 6px;
+            font-size: 0.8rem;
+            color-scheme: dark;
+        }
+        .rec-export-status {
+            color: var(--text-dim);
+            font-size: 0.78rem;
+            word-break: break-all;
+            flex-basis: 100%;
         }
 
         .menu-wrap { position: relative; }
@@ -977,7 +1042,7 @@
 
         .card-controls {
             display: grid;
-            grid-template-columns: 1fr auto auto;
+            grid-template-columns: 1fr auto auto auto;
             gap: 8px;
             margin-top: auto;
         }
@@ -987,6 +1052,17 @@
             color: var(--text-dim);
             font-size: 0.72rem;
             word-break: break-all;
+        }
+
+        .agent-snapshot {
+            display: block;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            object-fit: cover;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-inset);
+            margin: 8px 0;
         }
 
         .msg-input {
@@ -1232,6 +1308,7 @@
             <span class="broadcast-status" id="broadcastStatus"></span>
         </div>
         <div class="footer-actions">
+            <button class="btn btn-ghost" onclick="window.open('/live.html', '_blank')">📺 Live Wall</button>
             <button class="btn btn-ghost" onclick="openRecordings()">🎥 Recordings</button>
             <button class="btn btn-ghost" onclick="disconnectAllAgents()">Disconnect All</button>
             <button class="btn btn-danger" onclick="confirmShutdown()">Full Shutdown</button>
@@ -1273,6 +1350,13 @@
             </div>
             <div class="modal-body">
                 <div class="recordings-hint" id="recordingsHint">Press ⏺ Rec on an agent card to record that bot's first-person view.</div>
+                <div class="rec-export">
+                    <label>From <input type="datetime-local" id="recExportSince"></label>
+                    <label>To <input type="datetime-local" id="recExportUntil" title="Leave empty for “everything since From”"></label>
+                    <button class="btn btn-ghost" onclick="downloadRecordingsZip()">⬇ Download ZIP</button>
+                    <button class="btn btn-ghost" onclick="exportRecordingsFolder()">📁 Export to folder</button>
+                    <span class="rec-export-status" id="recExportStatus"></span>
+                </div>
                 <div id="recordingsList"></div>
             </div>
         </div>
@@ -2533,6 +2617,7 @@
             const statusText = agent.in_game ? phase : 'offline';
             const doingText = actionLabel(st, agent.in_game);
             const isRecording = agent.recording?.recording === true;
+            const isAutoRec = agent.recording?.autoRecord === true;
             const recFile = agent.recording?.file || '';
             const recFolder = agent.recording?.folder || agent.recordingsFolder || `bots/${agent.name}/recordings`;
 
@@ -2583,6 +2668,12 @@
                             ${st?.selfPrompt?.paused ? 'paused' : 'goal'}: ${esc(truncate(st?.selfPrompt?.prompt || ''))}
                         </div>
                     </div>
+
+                    <img class="agent-snapshot" id="snapshot-${agent.name}" alt=""
+                        src="/bots/${encodeURIComponent(agent.name)}/snapshot.jpg?t=${Date.now()}"
+                        title="Rough view of ${esc(agent.name)}, refreshed every ~10s"
+                        onload="this.style.display='block'" onerror="this.style.display='none'"
+                        ${!agent.in_game ? 'style="display:none"' : ''}>
 
                     <div class="vitals">
                         <div class="vital-row">
@@ -2653,13 +2744,22 @@
                             title="${isRecording ? `Stop recording and save the MP4 in ${esc(recFolder)}` : `Record this bot (third-person follow cam) to an MP4 in ${esc(recFolder)}`}">
                             ${isRecording ? '⏹ Stop Rec' : '⏺ Rec'}
                         </button>
+                        <button class="btn btn-auto ${isAutoRec ? 'on' : ''}" id="autoRecBtn-${agent.name}"
+                            onclick="toggleAutoRecording('${esc(agent.name)}')" ${!agent.in_game ? 'disabled' : ''}
+                            title="${isAutoRec
+                                ? 'Auto-recording is ON: clips start when this bot moves during an action and save labeled MP4s when it goes still. Click to turn off.'
+                                : 'Auto-recording is OFF. Click to auto-record labeled clips whenever this bot is doing something.'}">
+                            ${isAutoRec ? '🎬 Auto: ON' : '🎬 Auto: OFF'}
+                        </button>
                         <button class="btn btn-amber" onclick="sendMessage('${esc(agent.name)}', '!stop')" ${!agent.in_game ? 'disabled' : ''}>Stop</button>
                     </div>
 
                     <div class="rec-path" id="recPath-${agent.name}" title="${esc(isRecording && recFile ? recFile : recFolder)}">
                         ${isRecording && recFile
-                            ? `⏺ recording → ${esc(recFile.split('/').pop())}`
-                            : `⏺ Rec saves to ${esc(recFolder)}`}
+                            ? `⏺ recording <span class="rec-live-tag" id="recTimer-${agent.name}">${fmtElapsed(Date.now() - (agent.recording?.startedAt || Date.now()))}</span> → ${esc(recFile.split('/').pop())}`
+                            : (isAutoRec
+                                ? `<span class="auto-armed-dot"></span>auto-record armed — watching for action, labeled clips save to ${esc(recFolder)}`
+                                : `⏺ Rec saves to ${esc(recFolder)}`)}
                     </div>
                 </article>`;
         }
@@ -2687,7 +2787,8 @@
             const changedAgents = agents.filter(a => {
                 const prev = prevAgents[a.name];
                 return !prev || prev.in_game !== a.in_game || prev.viewerPort !== a.viewerPort || prev.socket_connected !== a.socket_connected
-                    || (prev.recording?.recording === true) !== (a.recording?.recording === true);
+                    || (prev.recording?.recording === true) !== (a.recording?.recording === true)
+                    || (prev.recording?.autoRecord === true) !== (a.recording?.autoRecord === true);
             });
 
             changedAgents.forEach(agent => {
@@ -2729,7 +2830,8 @@
             const changedAgents = agents.filter(a => {
                 const prev = prevAgents[a.name];
                 return !prev || prev.in_game !== a.in_game || prev.viewerPort !== a.viewerPort || prev.socket_connected !== a.socket_connected
-                    || (prev.recording?.recording === true) !== (a.recording?.recording === true);
+                    || (prev.recording?.recording === true) !== (a.recording?.recording === true)
+                    || (prev.recording?.autoRecord === true) !== (a.recording?.autoRecord === true);
             });
 
             currentAgents = agents;
@@ -2874,11 +2976,64 @@
                     openRecordings();
                 }
             };
-            if (isRecording) socket.emit('stop-recording', name, done);
-            else socket.emit('start-recording', name, {}, done);
+            // Client-side ack timeout: if the server (or an agent running stale
+            // code) never answers, un-freeze the button and say why.
+            const RECORDING_ACK_TIMEOUT = 25000;
+            const doneOrTimeout = (err, res) => done(err
+                ? { error: 'No response from the server. It may be running outdated code — restart the MindServer and agents.' }
+                : res);
+            if (isRecording) socket.timeout(RECORDING_ACK_TIMEOUT).emit('stop-recording', name, doneOrTimeout);
+            else socket.timeout(RECORDING_ACK_TIMEOUT).emit('start-recording', name, {}, doneOrTimeout);
+        }
+
+        function toggleAutoRecording(name) {
+            const agent = currentAgents.find(a => a.name === name);
+            if (!agent || recordingBusy[name]) return;
+            recordingBusy[name] = true;
+            const enable = agent.recording?.autoRecord !== true;
+            const btn = document.getElementById(`autoRecBtn-${name}`);
+            if (btn) btn.disabled = true;
+            socket.timeout(25000).emit('set-auto-recording', name, enable, (err, res) => {
+                recordingBusy[name] = false;
+                if (!err && res && typeof res === 'object' && 'recording' in res) {
+                    agent.recording = res;
+                }
+                rerenderAgentCard(name);
+                if (err) alert(`Auto-record request for ${name} got no response.\nThe server or agent may be running outdated code — restart the MindServer and agents.`);
+                else if (res?.error) alert(`Auto-record error for ${name}:\n${res.error}`);
+            });
         }
 
         const recordingsModal = document.getElementById('recordingsModal');
+
+        function fmtElapsed(ms) {
+            const s = Math.max(0, Math.floor(ms / 1000));
+            return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        }
+
+        // Tick the live recording timers so an active clip visibly counts up.
+        setInterval(() => {
+            currentAgents.forEach(a => {
+                const rec = a.recording;
+                if (!rec?.recording || !rec.startedAt) return;
+                const elapsed = fmtElapsed(Date.now() - rec.startedAt);
+                const timer = document.getElementById(`recTimer-${a.name}`);
+                if (timer) timer.textContent = elapsed;
+                const chip = document.getElementById(`recChip-${a.name}`);
+                if (chip && !chip.hidden) chip.textContent = `● rec ${elapsed}`;
+            });
+        }, 1000);
+
+        // Refresh the POV snapshot thumbnails. Agents write a new
+        // bots/<name>/snapshot.jpg every ~10s; onload/onerror on the img
+        // show or hide it depending on whether a snapshot exists yet.
+        setInterval(() => {
+            currentAgents.forEach(a => {
+                if (!a.in_game) return;
+                const img = document.getElementById(`snapshot-${a.name}`);
+                if (img) img.src = `/bots/${encodeURIComponent(a.name)}/snapshot.jpg?t=${Date.now()}`;
+            });
+        }, 10000);
 
         function fmtBytes(n) {
             if (n == null) return '—';
@@ -2888,9 +3043,67 @@
             return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
         }
 
+        function toLocalDatetimeValue(date) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        }
+
         function openRecordings() {
             recordingsModal.style.display = 'flex';
+            const sinceEl = document.getElementById('recExportSince');
+            if (!sinceEl.value) sinceEl.value = toLocalDatetimeValue(new Date(Date.now() - 60 * 60 * 1000));
             refreshRecordings();
+        }
+
+        // —— Export clips from a time window ——
+
+        function recExportQuery() {
+            const sinceVal = document.getElementById('recExportSince').value;
+            const untilVal = document.getElementById('recExportUntil').value;
+            if (!sinceVal) {
+                alert('Pick a "From" time first.');
+                return null;
+            }
+            let q = `since=${new Date(sinceVal).getTime()}`;
+            if (untilVal) q += `&until=${new Date(untilVal).getTime()}`;
+            return q;
+        }
+
+        function setRecExportStatus(text) {
+            document.getElementById('recExportStatus').textContent = text;
+        }
+
+        async function downloadRecordingsZip() {
+            const q = recExportQuery();
+            if (!q) return;
+            setRecExportStatus('Preparing ZIP…');
+            try {
+                // Preview first so an empty window shows a message instead of
+                // navigating the page to a JSON error.
+                const info = await fetch(`/api/recordings/export-info?${q}`).then(r => r.json());
+                if (!info.success || !info.count) {
+                    setRecExportStatus(info.error || 'No finished clips in that time range.');
+                    return;
+                }
+                setRecExportStatus(`Zipping ${info.count} clips (${fmtBytes(info.bytes)}) from ${info.bots.join(', ')}…`);
+                window.location.href = `/api/recordings/export.zip?${q}`;
+            } catch (err) {
+                setRecExportStatus(`Export failed: ${err.message}`);
+            }
+        }
+
+        async function exportRecordingsFolder() {
+            const q = recExportQuery();
+            if (!q) return;
+            setRecExportStatus('Copying clips…');
+            try {
+                const res = await fetch(`/api/recordings/export-folder?${q}`).then(r => r.json());
+                setRecExportStatus(res.success
+                    ? `${res.count} clips (${fmtBytes(res.bytes)}) copied to ${res.folder}`
+                    : (res.error || 'Export failed'));
+            } catch (err) {
+                setRecExportStatus(`Export failed: ${err.message}`);
+            }
         }
 
         function closeRecordings() {
@@ -2942,9 +3155,12 @@
         window.toggleDetails = toggleDetails;
         window.renderAgents = renderAgents;
         window.toggleRecording = toggleRecording;
+        window.toggleAutoRecording = toggleAutoRecording;
         window.openRecordings = openRecordings;
         window.closeRecordings = closeRecordings;
         window.refreshRecordings = refreshRecordings;
+        window.downloadRecordingsZip = downloadRecordingsZip;
+        window.exportRecordingsFolder = exportRecordingsFolder;
     </script>
 </body>
 </html>

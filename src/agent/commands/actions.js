@@ -307,12 +307,57 @@ export const actionsList = [
     },
         {
         name: '!placeHere',
-        description: 'Place a given block in the current location. Do NOT use to build structures, only use for single blocks/torches.',
+        description: 'Place a given block in the current location. Do NOT use to build structures or repeatedly, use !placeRow for walls/floors/rows; only use this for single blocks/torches.',
         params: {'type': { type: 'BlockOrItemName', description: 'The block type to place.' }},
         perform: runAsAction(async (agent, type) => {
             let pos = agent.bot.entity.position;
             await skills.placeBlock(agent.bot, type, pos.x, pos.y, pos.z);
         })
+    },
+    {
+        name: '!placeRow',
+        description: 'Place a straight row of blocks in one command. Use this instead of repeated !placeHere for walls, floors, bridges, and pillars.',
+        params: {
+            'type': { type: 'BlockOrItemName', description: 'The block type to place.' },
+            'x': { type: 'float', description: 'The x coordinate of the first block.', domain: [-Infinity, Infinity] },
+            'y': { type: 'float', description: 'The y coordinate of the first block.', domain: [-64, 320] },
+            'z': { type: 'float', description: 'The z coordinate of the first block.', domain: [-Infinity, Infinity] },
+            'direction': { type: 'string', description: "Direction the row extends: 'north', 'south', 'east', 'west', 'up', or 'down'." },
+            'length': { type: 'int', description: 'Number of blocks in the row (max 64).', domain: [1, 64] }
+        },
+        perform: runAsAction(async (agent, type, x, y, z, direction, length) => {
+            await skills.placeRow(agent.bot, type, x, y, z, direction, length);
+        }, false, 10)
+    },
+    {
+        name: '!plantArea',
+        description: 'Till and sow an entire rectangular field in one command. Use this instead of planting seeds one block at a time.',
+        params: {
+            'seed_type': { type: 'ItemName', description: "The seed to plant, e.g. 'wheat_seeds'." },
+            'x1': { type: 'float', description: 'x of the first corner.', domain: [-Infinity, Infinity] },
+            'z1': { type: 'float', description: 'z of the first corner.', domain: [-Infinity, Infinity] },
+            'x2': { type: 'float', description: 'x of the opposite corner.', domain: [-Infinity, Infinity] },
+            'z2': { type: 'float', description: 'z of the opposite corner.', domain: [-Infinity, Infinity] },
+            'y': { type: 'float', description: 'Ground y level of the field.', domain: [-64, 320] }
+        },
+        perform: runAsAction(async (agent, seed_type, x1, z1, x2, z2, y) => {
+            await skills.plantArea(agent.bot, seed_type, x1, z1, x2, z2, y);
+        }, false, 10)
+    },
+    {
+        name: '!clearArea',
+        description: 'Break every block inside a box region, top layer first. Use this to clear blockages, dig out rooms, and remove terrain in one command instead of mining single blocks.',
+        params: {
+            'x1': { type: 'float', description: 'x of the first corner.', domain: [-Infinity, Infinity] },
+            'y1': { type: 'float', description: 'y of the first corner.', domain: [-64, 320] },
+            'z1': { type: 'float', description: 'z of the first corner.', domain: [-Infinity, Infinity] },
+            'x2': { type: 'float', description: 'x of the opposite corner.', domain: [-Infinity, Infinity] },
+            'y2': { type: 'float', description: 'y of the opposite corner.', domain: [-64, 320] },
+            'z2': { type: 'float', description: 'z of the opposite corner.', domain: [-Infinity, Infinity] }
+        },
+        perform: runAsAction(async (agent, x1, y1, z1, x2, y2, z2) => {
+            await skills.clearArea(agent.bot, x1, y1, z1, x2, y2, z2);
+        }, false, 10)
     },
     {
         name: '!attack',
@@ -497,7 +542,7 @@ export const actionsList = [
     },
     {
         name: '!useOn',
-        description: 'Use (right click) the given tool on the nearest target of the given type.',
+        description: 'Use (right click) the given tool on the nearest target of the given type. Do NOT use repeatedly for farming — use !plantArea to till and sow whole fields.',
         params: {
             'tool_name': { type: 'string', description: 'Name of the tool to use, or "hand" for no tool.' },
             'target': { type: 'string', description: 'The target as an entity type, block type, or "nothing" for no target.' }

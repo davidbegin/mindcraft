@@ -4,7 +4,9 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import * as mindcraft from './mindcraft.js';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, mkdtempSync, copyFileSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { spawn } from 'child_process';
 import { hasKey } from '../utils/keys.js';
 import { ColonyCoordinator } from './colony/colony_coordinator.js';
 import { getGpt56Profiles } from './model_profiles.js';
@@ -620,6 +622,62 @@ function listRecordings() {
     }
 }
 
+// —— Recording export (zip download / folder copy) ——
+
+function parseExportWindow(query) {
+    const since = Number(query.since);
+    if (!Number.isFinite(since)) return null;
+    const until = query.until ? Number(query.until) : Infinity;
+    return { since, until: Number.isFinite(until) ? until : Infinity };
+}
+
+/**
+ * Finished clips whose file was completed inside [since, until] (mtime is
+ * when ffmpeg closed the file). Clips still being recorded are excluded —
+ * they are not playable until stopped.
+ */
+function collectRecordingsForExport(since, until) {
+    const liveFiles = new Set(Object.values(agent_connections)
+        .filter(conn => conn.recording?.recording && conn.recording?.file)
+        .map(conn => conn.recording.file));
+    const listing = listRecordings();
+    if (!listing.success) return { error: listing.error, files: [] };
+    const files = [];
+    for (const group of listing.agents) {
+        for (const f of group.files) {
+            const fullPath = path.join(group.folder, f.file);
+            if (liveFiles.has(fullPath)) continue;
+            if (f.mtime >= since && f.mtime <= until) {
+                files.push({ bot: group.agent, name: f.file, path: fullPath, size: f.size, mtime: f.mtime });
+            }
+        }
+    }
+    files.sort((a, b) => a.mtime - b.mtime);
+    return { files };
+}
+
+// The matching slice of the shared manifest goes into every export so the
+// exact start/end timestamps and action labels travel with the clips.
+function manifestSliceForExport(since, until) {
+    const manifestPath = path.join(projectRoot, 'bots', 'recordings-manifest.jsonl');
+    if (!existsSync(manifestPath)) return '';
+    const lines = readFileSync(manifestPath, 'utf8').split('\n').filter(line => {
+        if (!line.trim()) return false;
+        try {
+            const entry = JSON.parse(line);
+            return entry.endedAt >= since && entry.startedAt <= until;
+        } catch (_) {
+            return false;
+        }
+    });
+    return lines.length ? lines.join('\n') + '\n' : '';
+}
+
+function exportStamp(since, until) {
+    const fmt = (ms) => new Date(ms).toISOString().replace(/[:]/g, '-').slice(0, 16);
+    return until === Infinity ? `${fmt(since)}_onward` : `${fmt(since)}_to_${fmt(until)}`;
+}
+
 // Initialize the server
 export function createMindServer(host_public = false, port = 8080) {
     const app = express();
@@ -631,6 +689,79 @@ export function createMindServer(host_public = false, port = 8080) {
     app.use(express.static(path.join(__dirname, 'public')));
     // Serve bot data (POV recordings, screenshots) so the UI can play/download them
     app.use('/bots', express.static(path.join(projectRoot, 'bots')));
+
+    // What an export window would contain, so the UI can preview before downloading.
+    app.get('/api/recordings/export-info', (req, res) => {
+        const window = parseExportWindow(req.query);
+        if (!window) return res.status(400).json({ success: false, error: 'since (epoch ms) is required' });
+        const { files, error } = collectRecordingsForExport(window.since, window.until);
+        if (error) return res.status(500).json({ success: false, error });
+        res.json({
+            success: true,
+            count: files.length,
+            bytes: files.reduce((sum, f) => sum + f.size, 0),
+            bots: [...new Set(files.map(f => f.bot))],
+        });
+    });
+
+    // Stream every finished clip in the window as one flat zip (+ manifest slice).
+    app.get('/api/recordings/export.zip', (req, res) => {
+        const window = parseExportWindow(req.query);
+        if (!window) return res.status(400).json({ success: false, error: 'since (epoch ms) is required' });
+        const { files, error } = collectRecordingsForExport(window.since, window.until);
+        if (error) return res.status(500).json({ success: false, error });
+        if (!files.length) return res.status(404).json({ success: false, error: 'No finished clips in that time range' });
+
+        // zip needs the manifest slice as a real file to include it in the archive
+        const tmpDir = mkdtempSync(path.join(tmpdir(), 'rec-export-'));
+        const manifestTmp = path.join(tmpDir, 'manifest.jsonl');
+        writeFileSync(manifestTmp, manifestSliceForExport(window.since, window.until));
+
+        const stamp = exportStamp(window.since, window.until);
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="recordings_${stamp}.zip"`);
+
+        // -j flattens paths; clip filenames are unique (bot + timestamp + labels)
+        const zip = spawn('zip', ['-q', '-j', '-', manifestTmp, ...files.map(f => f.path)]);
+        zip.stdout.pipe(res);
+        zip.stderr.on('data', (d) => console.error('zip:', d.toString().trim()));
+        zip.on('error', (err) => {
+            console.error('Recording export zip failed:', err.message);
+            if (!res.headersSent) res.status(500).json({ success: false, error: `zip failed: ${err.message}` });
+            else res.end();
+        });
+        zip.on('close', () => {
+            rmSync(tmpDir, { recursive: true, force: true });
+        });
+        res.on('close', () => {
+            if (zip.exitCode === null) zip.kill('SIGKILL');
+        });
+    });
+
+    // Copy every finished clip in the window (+ manifest slice) into a folder on disk.
+    app.get('/api/recordings/export-folder', (req, res) => {
+        const window = parseExportWindow(req.query);
+        if (!window) return res.status(400).json({ success: false, error: 'since (epoch ms) is required' });
+        const { files, error } = collectRecordingsForExport(window.since, window.until);
+        if (error) return res.status(500).json({ success: false, error });
+        if (!files.length) return res.status(404).json({ success: false, error: 'No finished clips in that time range' });
+        try {
+            const folder = path.join(projectRoot, 'bots', 'exports', `recordings_${exportStamp(window.since, window.until)}`);
+            mkdirSync(folder, { recursive: true });
+            for (const f of files) {
+                copyFileSync(f.path, path.join(folder, f.name));
+            }
+            writeFileSync(path.join(folder, 'manifest.jsonl'), manifestSliceForExport(window.since, window.until));
+            res.json({
+                success: true,
+                folder,
+                count: files.length,
+                bytes: files.reduce((sum, f) => sum + f.size, 0),
+            });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
 
     // Socket.io connection handling
     io.on('connection', (socket) => {
@@ -936,6 +1067,10 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('stop-recording', (agentName, callback) => {
             forwardRecordingCommand(agentName, 'stop-recording', undefined, callback);
+        });
+
+        socket.on('set-auto-recording', (agentName, enabled, callback) => {
+            forwardRecordingCommand(agentName, 'set-auto-recording', Boolean(enabled), callback);
         });
 
         socket.on('recording-update', (agentName, status) => {

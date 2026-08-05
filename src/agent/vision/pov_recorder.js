@@ -27,6 +27,89 @@ const RECORD_DEFAULTS = {
 // the bot's own entity, so the follow camera injects it under this id.
 const POV_SELF_ID = 'pov-recorder-self';
 
+// One shared manifest for every agent in this repo. Each line records a clip's
+// bot, action labels, and exact UTC start/end (epoch ms), so overlapping clips
+// from different bots can be lined up on a common timeline when stitching.
+const MANIFEST_PATH = path.resolve('./bots/recordings-manifest.jsonl');
+
+// Turns an action label like '!goToCoordinates' into a filename-safe tag.
+function sanitizeLabel(label) {
+    return String(label).replace(/^!/, '').replace(/[^a-zA-Z0-9_+.-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/**
+ * prismarine-viewer moves entity meshes with 50ms TWEEN animations, but the
+ * tween clock stalls in headless render loops, leaving every entity crawling
+ * from the world origin. Wrap Entities.update to keep the mesh bookkeeping
+ * (create/delete/name tags) and set transforms directly.
+ * Shared by the recorder and the snapshotter.
+ */
+export function disableEntityTweens(viewer) {
+    const entities = viewer.entities;
+    const originalUpdate = entities.update.bind(entities);
+    entities.update = (entity) => {
+        if (!entities.entities[entity.id] || entity.delete) {
+            originalUpdate({ ...entity, pos: undefined, yaw: undefined });
+        }
+        const mesh = entities.entities[entity.id];
+        if (!mesh) return;
+        if (entity.pos) mesh.position.set(entity.pos.x, entity.pos.y, entity.pos.z);
+        if (entity.yaw !== undefined) mesh.rotation.y = entity.yaw;
+    };
+}
+
+/**
+ * Third-person follow camera. Renders the bot itself as a player model with
+ * a name tag (WorldView skips the bot's own entity, so we inject it) and
+ * places the camera behind the bot's facing direction, pulled in when solid
+ * blocks sit between the bot and the camera. Shared by the recorder and the
+ * snapshotter. `smooth` lerps toward the target for fluid video; snapshots
+ * jump straight there.
+ */
+export function applyFollowCamera(viewer, bot, username, followDistance, smooth) {
+    const entity = bot.entity;
+    const pos = entity.position;
+    viewer.updateEntity({
+        id: POV_SELF_ID,
+        name: 'player',
+        username,
+        width: 0.6,
+        height: 1.8,
+        pos,
+        yaw: entity.yaw,
+    });
+
+    const eye = new THREE.Vector3(pos.x, pos.y + 1.6, pos.z);
+    // Directly behind the bot's facing direction, slightly raised.
+    // mineflayer yaw=0 looks toward -z, so +(sin, cos) points backwards.
+    const offset = new THREE.Vector3(
+        Math.sin(entity.yaw) * followDistance,
+        1.1,
+        Math.cos(entity.yaw) * followDistance
+    );
+    const maxDist = offset.length();
+    const dir = offset.clone().normalize();
+    let clearDist = maxDist;
+    for (let t = 0.5; t < maxDist; t += 0.25) {
+        const block = bot.blockAt(new Vec3(
+            eye.x + dir.x * t,
+            eye.y + dir.y * t,
+            eye.z + dir.z * t
+        ));
+        if (block && block.boundingBox === 'block') {
+            clearDist = Math.max(1.0, t - 0.4);
+            break;
+        }
+    }
+    const target = eye.clone().addScaledVector(dir, clearDist);
+    if (smooth) {
+        viewer.camera.position.lerp(target, 0.35);
+    } else {
+        viewer.camera.position.copy(target);
+    }
+    viewer.camera.lookAt(eye);
+}
+
 /**
  * Records the bot to an MP4 file.
  * Renders frames offscreen (node-canvas-webgl + prismarine-viewer) and pipes
@@ -75,7 +158,18 @@ export class PovRecorder {
             frames: this.frames,
             error: this.error,
             camera: this.cameraMode,
+            labels: [...(this.labels || [])],
         };
+    }
+
+    /**
+     * Tag the current recording with what the bot is doing (an action label
+     * like '!goToCoordinates'). Labels accumulate over the clip and are baked
+     * into the final filename and the manifest when the recording stops.
+     */
+    addLabel(label) {
+        if (!this.recording || !label) return;
+        this.labels.add(String(label));
     }
 
     _notify() {
@@ -90,6 +184,7 @@ export class PovRecorder {
         this._cameraPlaced = false;
         this.error = null;
         this.frames = 0;
+        this.labels = new Set(opts.label ? [String(opts.label)] : []);
 
         fs.mkdirSync(this.folder, { recursive: true });
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -103,7 +198,7 @@ export class PovRecorder {
             if (!this._viewer.setVersion(this.bot.version)) {
                 throw new Error(`Minecraft version ${this.bot.version} is not supported by the renderer`);
             }
-            this._disableEntityTweens();
+            disableEntityTweens(this._viewer);
         } catch (err) {
             this._teardownRenderer();
             this.error = `Could not create the offscreen renderer: ${err.message}`;
@@ -156,77 +251,6 @@ export class PovRecorder {
         return this.getStatus();
     }
 
-    /**
-     * prismarine-viewer moves entity meshes with 50ms TWEEN animations, but
-     * the tween clock stalls in this headless render loop, leaving every
-     * entity crawling from the world origin. Wrap Entities.update to keep the
-     * mesh bookkeeping (create/delete/name tags) and set transforms directly.
-     */
-    _disableEntityTweens() {
-        const entities = this._viewer.entities;
-        const originalUpdate = entities.update.bind(entities);
-        entities.update = (entity) => {
-            if (!entities.entities[entity.id] || entity.delete) {
-                originalUpdate({ ...entity, pos: undefined, yaw: undefined });
-            }
-            const mesh = entities.entities[entity.id];
-            if (!mesh) return;
-            if (entity.pos) mesh.position.set(entity.pos.x, entity.pos.y, entity.pos.z);
-            if (entity.yaw !== undefined) mesh.rotation.y = entity.yaw;
-        };
-    }
-
-    /**
-     * Third-person follow camera. Renders the bot itself as a player model
-     * with a name tag (WorldView skips the bot's own entity, so we inject it)
-     * and trails the camera behind the bot's facing direction, pulled in when
-     * solid blocks sit between the bot and the camera.
-     */
-    _updateFollowCamera() {
-        const entity = this.bot.entity;
-        const pos = entity.position;
-        this._viewer.updateEntity({
-            id: POV_SELF_ID,
-            name: 'player',
-            username: this.name,
-            width: 0.6,
-            height: 1.8,
-            pos,
-            yaw: entity.yaw,
-        });
-
-        const eye = new THREE.Vector3(pos.x, pos.y + 1.6, pos.z);
-        // Directly behind the bot's facing direction, slightly raised.
-        // mineflayer yaw=0 looks toward -z, so +(sin, cos) points backwards.
-        const offset = new THREE.Vector3(
-            Math.sin(entity.yaw) * this._followDistance,
-            1.1,
-            Math.cos(entity.yaw) * this._followDistance
-        );
-        const maxDist = offset.length();
-        const dir = offset.clone().normalize();
-        let clearDist = maxDist;
-        for (let t = 0.5; t < maxDist; t += 0.25) {
-            const block = this.bot.blockAt(new Vec3(
-                eye.x + dir.x * t,
-                eye.y + dir.y * t,
-                eye.z + dir.z * t
-            ));
-            if (block && block.boundingBox === 'block') {
-                clearDist = Math.max(1.0, t - 0.4);
-                break;
-            }
-        }
-        const target = eye.clone().addScaledVector(dir, clearDist);
-        if (this._cameraPlaced) {
-            this._viewer.camera.position.lerp(target, 0.35);
-        } else {
-            this._viewer.camera.position.copy(target);
-            this._cameraPlaced = true;
-        }
-        this._viewer.camera.lookAt(eye);
-    }
-
     async _renderFrame() {
         if (!this.recording || this._busy) return;
         this._busy = true;
@@ -235,7 +259,8 @@ export class PovRecorder {
             if (this.cameraMode === 'first-person') {
                 this._viewer.setFirstPersonCamera(pos, this.bot.entity.yaw, this.bot.entity.pitch);
             } else {
-                this._updateFollowCamera();
+                applyFollowCamera(this._viewer, this.bot, this.name, this._followDistance, this._cameraPlaced);
+                this._cameraPlaced = true;
             }
             this._worldView.updatePosition(pos).catch(() => {});
             this._viewer.update();
@@ -294,9 +319,45 @@ export class PovRecorder {
         }
 
         this._teardownRenderer();
+        this._finalizeClip();
         console.log(`[${this.name}] POV recording stopped: ${this.file} (${this.frames} frames)`);
         this._notify();
         return this.getStatus();
+    }
+
+    /**
+     * After ffmpeg has closed the file, bake the action labels into the
+     * filename (name_timestamp__label.mp4) and append the clip to the shared
+     * manifest so multi-bot footage can be correlated by wall-clock time.
+     */
+    _finalizeClip() {
+        const endedAt = Date.now();
+        const labels = [...(this.labels || [])];
+        try {
+            const tag = labels.map(sanitizeLabel).filter(Boolean).join('+').slice(0, 80);
+            if (tag && this.file && fs.existsSync(this.file)) {
+                const renamed = this.file.replace(/\.mp4$/, `__${tag}.mp4`);
+                fs.renameSync(this.file, renamed);
+                this.file = renamed;
+            }
+        } catch (err) {
+            console.warn(`[${this.name}] Could not rename recording with labels:`, err.message);
+        }
+        try {
+            fs.appendFileSync(MANIFEST_PATH, JSON.stringify({
+                bot: this.name,
+                file: this.file,
+                labels,
+                startedAt: this.startedAt,
+                endedAt,
+                startedAtIso: new Date(this.startedAt).toISOString(),
+                endedAtIso: new Date(endedAt).toISOString(),
+                durationMs: endedAt - this.startedAt,
+                frames: this.frames,
+            }) + '\n');
+        } catch (err) {
+            console.warn(`[${this.name}] Could not append to recordings manifest:`, err.message);
+        }
     }
 
     _teardownRenderer() {

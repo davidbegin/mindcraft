@@ -5,6 +5,7 @@ import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
 import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands } from './commands/index.js';
+import { CommandGuard } from './commands/command_guard.js';
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
@@ -13,6 +14,8 @@ import convoManager from './conversation.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
 import { PovRecorder } from './vision/pov_recorder.js';
+import { ActionRecorder } from './vision/action_recorder.js';
+import { PovSnapshotter } from './vision/pov_snapshotter.js';
 import { serverProxy, sendOutputToServer, requestColonyCommand } from './mindserver_proxy.js';
 import { setOutageHandler } from '../models/quota_guard.js';
 import settings from './settings.js';
@@ -29,6 +32,7 @@ export class Agent {
 
         // Initialize components
         this.actions = new ActionManager(this);
+        this.command_guard = new CommandGuard();
         this.prompter = new Prompter(this, settings.profile);
         this.name = (this.prompter.getName() || '').trim();
         console.log(`Initializing agent ${this.name}...`);
@@ -119,10 +123,18 @@ export class Agent {
             try {
                 clearTimeout(spawnTimeout);
                 addBrowserViewer(this.bot, count_id);
-                this.pov_recorder = new PovRecorder(this.bot, this.name, (status) => serverProxy.sendRecordingUpdate(status));
+                this.pov_recorder = new PovRecorder(this.bot, this.name, () => serverProxy.sendRecordingUpdate(this.recordingStatus()));
                 if (settings.record_bot_view) {
+                    // Continuous recording from spawn; supersedes action-based clips.
                     this.pov_recorder.start().catch(err => console.error('Failed to auto-start POV recording:', err));
                 }
+                else if (settings.record_actions) {
+                    await this.setAutoRecording(true);
+                }
+                // Push initial state so the UI's rec/auto buttons are right before any clip exists.
+                serverProxy.sendRecordingUpdate(this.recordingStatus());
+                this.pov_snapshotter = new PovSnapshotter(this.bot, this.name, this.pov_recorder);
+                this.pov_snapshotter.start();
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
 
@@ -555,9 +567,36 @@ export class Agent {
     }
 
     async update(delta) {
+        this._updateDeathWatchdog();
         await this.bot.modes.update();
         this.self_prompter.update(delta);
         await this.checkTaskDone();
+    }
+
+    /**
+     * Some deaths never trigger an auto-respawn, leaving the bot issuing
+     * commands as a corpse indefinitely. Force a respawn if the bot has been
+     * dead for more than a few seconds, and keep retrying while it stays dead.
+     */
+    _updateDeathWatchdog() {
+        const health = this.bot?.health;
+        if (typeof health !== 'number' || health > 0) {
+            this._deadSince = null;
+            return;
+        }
+        const now = Date.now();
+        this._deadSince ??= now;
+        const DEAD_GRACE_MS = 5000;
+        const RESPAWN_RETRY_MS = 10000;
+        if (now - this._deadSince < DEAD_GRACE_MS) return;
+        if (now - (this._lastForcedRespawn ?? 0) < RESPAWN_RETRY_MS) return;
+        this._lastForcedRespawn = now;
+        console.warn(`${this.name} has been dead for ${Math.round((now - this._deadSince) / 1000)}s without respawning; forcing respawn.`);
+        try {
+            this.bot.respawn();
+        } catch (error) {
+            console.error(`${this.name} forced respawn failed:`, error);
+        }
     }
 
     isIdle() {
@@ -643,6 +682,30 @@ export class Agent {
         }
     }
 
+    // Recording status enriched with whether action-based auto-recording is armed,
+    // so the UI's Rec and Auto buttons stay in sync from one payload.
+    recordingStatus() {
+        if (!this.pov_recorder) return null;
+        return { ...this.pov_recorder.getStatus(), autoRecord: this.isAutoRecording() };
+    }
+
+    isAutoRecording() {
+        return !!this.action_recorder?.armed;
+    }
+
+    async setAutoRecording(enabled) {
+        if (enabled) {
+            if (!this.action_recorder)
+                this.action_recorder = new ActionRecorder(this, this.pov_recorder);
+            this.action_recorder.arm();
+        } else if (this.action_recorder) {
+            await this.action_recorder.disarm();
+        }
+        const status = this.recordingStatus();
+        serverProxy.sendRecordingUpdate(status);
+        return status;
+    }
+
     cleanKill(msg='Killing agent process...', code=1) {
         if (this._cleanKilling) {
             return;
@@ -650,6 +713,8 @@ export class Agent {
         this._cleanKilling = true;
         // Fire-and-forget: even if the process exits first, ffmpeg sees EOF on
         // its input pipe and finalizes a playable MP4 on its own.
+        try { this.action_recorder?.stop(); } catch (_) { /* recorder may not exist yet */ }
+        try { this.pov_snapshotter?.stop(); } catch (_) { /* recorder may not exist yet */ }
         try { this.pov_recorder?.stop(); } catch (_) { /* recorder may not exist yet */ }
         this.history.add('system', msg);
         // code === 1 restarts the agent process; other codes leave for good.

@@ -258,17 +258,44 @@ test('expires task leases and permits a new claimant', async () => {
     }, { clock: () => now });
 });
 
-test('heartbeats renew leases for active work', async () => {
+test('recorded progress renews leases but heartbeats do not', async () => {
     let now = 1_000;
     await withColony(async ({ coordinator }) => {
         await coordinator.registerAgent('alice', 'miner');
         await coordinator.proposeTask({ id: 'iron', title: 'Mine iron' });
         await coordinator.claimTask('iron', 'alice', 100);
+
+        // Progress extends the lease past its original expiry.
         now = 1_050;
-        await coordinator.heartbeat('alice', 'busy');
+        await coordinator.recordProgress('alice', 'Mined 12 iron ore at x:3 y:40 z:9');
         now = 1_149;
         assert.deepEqual(await coordinator.expireLeases(), []);
         assert.equal(coordinator.snapshot().tasks.iron.status, 'claimed');
+
+        // Heartbeats alone (a stuck-but-alive agent) let the lease lapse.
+        now = 1_160;
+        await coordinator.heartbeat('alice', 'busy');
+        now = 1_151 + 100;
+        assert.deepEqual(await coordinator.expireLeases(), ['iron']);
+        assert.equal(coordinator.snapshot().tasks.iron.status, 'proposed');
+    }, { clock: () => now, leaseMs: 100 });
+});
+
+test('a lapsed claimant may still finish its task if nobody reclaimed it', async () => {
+    let now = 1_000;
+    await withColony(async ({ coordinator }) => {
+        await coordinator.registerAgent('alice', 'miner');
+        await coordinator.registerAgent('bob', 'miner');
+        await coordinator.proposeTask({ id: 'iron', title: 'Mine iron' });
+        await coordinator.claimTask('iron', 'alice', 100);
+
+        now = 1_201;
+        await coordinator.expireLeases();
+        assert.equal(coordinator.snapshot().tasks.iron.status, 'proposed');
+
+        const completed = await coordinator.completeTask('iron', 'alice', 'Mined and stored all iron at x:3 y:40 z:9.');
+        assert.equal(completed.status, 'completed');
+        assert.equal(completed.claimedBy, 'alice');
     }, { clock: () => now, leaseMs: 100 });
 });
 

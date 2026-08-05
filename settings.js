@@ -39,8 +39,9 @@ const settings = {
 
     "chat_ingame": true, // bot responses are shown in minecraft chat
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages
-    "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
+    "render_bot_view": true, // show bot's view in browser at localhost:3000, 3001... (feeds the Live Wall page; rendering happens in the viewing browser, not the agent)
     "record_bot_view": false, // auto-record bot's first-person POV to mp4 in bots/<name>/recordings on spawn. Recording can also be toggled per-agent in the web UI. Requires ffmpeg.
+    "record_actions": true, // auto-record clips only while the bot is executing an action AND actually moving/interacting; stops after ~8s of stillness and labels the mp4 with the action. Ignored if record_bot_view is on. Requires ffmpeg.
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk
     "allow_vision": false, // allows vision model to interpret screenshots as inputs

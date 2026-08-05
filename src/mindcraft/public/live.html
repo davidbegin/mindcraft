@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mindcraft Live Wall</title>
+    <style>
+        :root {
+            --bg: #0b0e11;
+            --bg-panel: #12161b;
+            --bg-inset: #0e1216;
+            --border: #232b33;
+            --text: #dfe7ee;
+            --text-dim: #8b98a5;
+            --cyan: #66d9e8;
+            --red: #ff8a80;
+            --amber: #ffc078;
+            --green: #69db7c;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-panel);
+            flex: none;
+        }
+        header h1 { font-size: 1rem; margin: 0; }
+        header .meta { color: var(--text-dim); font-size: 0.85rem; }
+        header .spacer { flex: 1; }
+        .btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text);
+            padding: 6px 12px;
+            font-size: 0.82rem;
+            cursor: pointer;
+        }
+        .btn:hover { background: rgba(255, 255, 255, 0.1); }
+        header a { color: var(--cyan); font-size: 0.85rem; text-decoration: none; }
+        header a:hover { text-decoration: underline; }
+
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 10px;
+            padding: 10px;
+            overflow: auto;
+            align-content: start;
+        }
+        .tile {
+            position: relative;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: var(--bg-inset);
+            aspect-ratio: 16 / 9;
+            min-height: 220px;
+        }
+        .tile iframe, .tile img.poster {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            object-fit: cover;
+            background: #000;
+        }
+        .tile .bar {
+            position: absolute;
+            left: 0;
+            right: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: linear-gradient(rgba(6, 8, 10, 0.85), rgba(6, 8, 10, 0));
+            font-size: 0.82rem;
+            z-index: 2;
+        }
+        .tile .bar.bottom {
+            bottom: 0;
+            top: auto;
+            background: linear-gradient(rgba(6, 8, 10, 0), rgba(6, 8, 10, 0.85));
+            color: var(--text-dim);
+            font-size: 0.76rem;
+        }
+        .tile .bar .name { font-weight: 700; }
+        .tile .bar .spacer { flex: 1; }
+        .chip {
+            font-size: 0.68rem;
+            padding: 1px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+        .chip.rec {
+            color: var(--red);
+            border-color: rgba(239, 83, 80, 0.45);
+            background: rgba(239, 83, 80, 0.14);
+            animation: pulse 1.4s ease-in-out infinite;
+        }
+        .chip.idle { color: var(--amber); border-color: rgba(255, 192, 120, 0.4); }
+        .chip.acting { color: var(--green); border-color: rgba(105, 219, 124, 0.4); }
+        .chip.offline { color: var(--text-dim); }
+        .chip.pausedTag {
+            color: var(--cyan);
+            border-color: rgba(102, 217, 232, 0.45);
+            background: rgba(102, 217, 232, 0.12);
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+        .tile .pauseBtn {
+            z-index: 3;
+            background: rgba(6, 8, 10, 0.65);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 7px;
+            padding: 3px 10px;
+            font-size: 0.74rem;
+            cursor: pointer;
+        }
+        .tile .pauseBtn:hover { background: rgba(6, 8, 10, 0.9); }
+        .empty {
+            grid-column: 1 / -1;
+            text-align: center;
+            color: var(--text-dim);
+            padding: 60px 0;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>📺 Live Wall</h1>
+        <span class="meta" id="meta">connecting…</span>
+        <span class="spacer"></span>
+        <button class="btn" onclick="setAllPaused(true)">⏸ Pause all</button>
+        <button class="btn" onclick="setAllPaused(false)">▶ Resume all</button>
+        <a href="/">← dashboard</a>
+    </header>
+    <main id="wall"><div class="empty">Waiting for agents…</div></main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let agents = [];
+        let states = {};
+        const paused = {};      // name -> user chose to pause this tile
+        const idleSince = {};   // name -> ms timestamp when the bot last went idle
+        let wallKey = '';       // membership fingerprint; only rebuild DOM when it changes
+
+        socket.on('connect', () => socket.emit('listen-to-agents'));
+        socket.on('agents-status', (list) => {
+            agents = list || [];
+            const live = liveAgents();
+            const pausedCount = live.filter(a => paused[a.name]).length;
+            document.getElementById('meta').textContent =
+                `${live.length} streaming${pausedCount ? ` · ${pausedCount} paused` : ''}`;
+            renderWall();
+            updateOverlays();
+        });
+        socket.on('state-update', (st) => {
+            states = st || {};
+            updateOverlays();
+        });
+
+        function phaseOf(name) {
+            const st = states[name];
+            const phase = st?.action?.phase;
+            if (phase) return phase;
+            if (st?.action?.thinking) return 'thinking';
+            if (st?.selfPrompt?.loopActive || st?.selfPrompt?.active) return 'planning';
+            if (st?.selfPrompt?.paused) return 'paused';
+            if (st?.action?.isIdle === false) return 'acting';
+            return 'idle';
+        }
+
+        function doingOf(name) {
+            const st = states[name];
+            return st?.action?.current || '';
+        }
+
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        function fmtElapsed(ms) {
+            const s = Math.max(0, Math.floor(ms / 1000));
+            return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+        }
+
+        function liveAgents() {
+            return agents.filter(a => a.in_game);
+        }
+
+        function viewerUrl(agent) {
+            return `http://${location.hostname}:${agent.viewerPort}`;
+        }
+
+        function snapshotUrl(name) {
+            return `/bots/${encodeURIComponent(name)}/snapshot.jpg?t=${Date.now()}`;
+        }
+
+        function feedHtml(agent) {
+            if (paused[agent.name] || !agent.viewerPort) {
+                // Paused: no live stream, just the periodic snapshot as a poster.
+                return `<img class="poster" id="feed-${esc(agent.name)}" src="${snapshotUrl(agent.name)}"
+                    onerror="this.style.visibility='hidden'" onload="this.style.visibility='visible'" alt="">`;
+            }
+            return `<iframe id="feed-${esc(agent.name)}" src="${viewerUrl(agent)}" allow="autoplay"></iframe>`;
+        }
+
+        function renderWall() {
+            const wall = document.getElementById('wall');
+            const live = liveAgents();
+            const key = live.map(a => `${a.name}:${a.viewerPort}:${paused[a.name] ? 'p' : 'l'}`).join('|');
+            if (key === wallKey) return;
+            wallKey = key;
+
+            if (!live.length) {
+                wall.innerHTML = '<div class="empty">No agents in game right now.</div>';
+                return;
+            }
+            wall.innerHTML = live.map(a => `
+                <div class="tile" id="tile-${esc(a.name)}">
+                    ${feedHtml(a)}
+                    <div class="bar" style="top:0">
+                        <span class="name">${esc(a.name)}</span>
+                        <span class="chip rec" id="wallRec-${esc(a.name)}" hidden>● rec</span>
+                        <span class="chip pausedTag" id="wallPaused-${esc(a.name)}" ${paused[a.name] ? '' : 'hidden'}>⏸ paused — snapshot every 10s</span>
+                        <span class="spacer"></span>
+                        <span class="chip" id="wallPhase-${esc(a.name)}">…</span>
+                        <button class="pauseBtn" onclick="togglePause('${esc(a.name)}')">${paused[a.name] ? '▶ Live' : '⏸ Pause'}</button>
+                    </div>
+                    <div class="bar bottom">
+                        <span id="wallDoing-${esc(a.name)}"></span>
+                        <span class="spacer"></span>
+                        <span id="wallIdleHint-${esc(a.name)}"></span>
+                    </div>
+                </div>`).join('');
+        }
+
+        function updateOverlays() {
+            const now = Date.now();
+            for (const agent of liveAgents()) {
+                const name = agent.name;
+                const phase = phaseOf(name);
+                if (phase === 'acting' || phase === 'busy') delete idleSince[name];
+                else if (!idleSince[name]) idleSince[name] = now;
+
+                const phaseEl = document.getElementById(`wallPhase-${name}`);
+                if (phaseEl) {
+                    phaseEl.textContent = phase;
+                    phaseEl.className = `chip ${phase === 'acting' || phase === 'busy' ? 'acting' : 'idle'}`;
+                }
+                const doingEl = document.getElementById(`wallDoing-${name}`);
+                if (doingEl) doingEl.textContent = doingOf(name);
+
+                // Nudge: a bot that has sat idle a while is a good pause candidate.
+                const hintEl = document.getElementById(`wallIdleHint-${name}`);
+                if (hintEl) {
+                    const idleMs = idleSince[name] ? now - idleSince[name] : 0;
+                    hintEl.textContent = (!paused[name] && idleMs > 30000)
+                        ? `idle ${fmtElapsed(idleMs)} — pause to save GPU?` : '';
+                }
+
+                const recEl = document.getElementById(`wallRec-${name}`);
+                if (recEl) {
+                    const rec = agent.recording;
+                    recEl.hidden = rec?.recording !== true;
+                    if (rec?.recording && rec.startedAt) recEl.textContent = `● rec ${fmtElapsed(now - rec.startedAt)}`;
+                }
+            }
+        }
+
+        function togglePause(name) {
+            paused[name] = !paused[name];
+            wallKey = '';
+            renderWall();
+            updateOverlays();
+        }
+
+        function setAllPaused(value) {
+            for (const a of liveAgents()) paused[a.name] = value;
+            wallKey = '';
+            renderWall();
+            updateOverlays();
+        }
+
+        // Keep paused posters roughly current and recording timers ticking.
+        setInterval(() => {
+            for (const a of liveAgents()) {
+                if (!paused[a.name]) continue;
+                const img = document.getElementById(`feed-${a.name}`);
+                if (img && img.tagName === 'IMG') img.src = snapshotUrl(a.name);
+            }
+        }, 10000);
+        setInterval(updateOverlays, 1000);
+    </script>
+</body>
+</html>

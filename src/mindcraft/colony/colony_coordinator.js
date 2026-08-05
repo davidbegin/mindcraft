@@ -442,12 +442,8 @@ export class ColonyCoordinator {
             }
             agent.heartbeatAt = now;
             agent.updatedAt = now;
-            for (const task of Object.values(this.state.tasks)) {
-                if (task.status === 'claimed' && task.claimedBy === agentId) {
-                    task.leaseExpiresAt = now + this.leaseMs;
-                    task.updatedAt = now;
-                }
-            }
+            // Deliberately does NOT renew task leases: a stuck-but-alive agent
+            // must record progress to keep its claims (see recordProgress).
             return clone(agent);
         }, { journalWhen: () => false });
     }
@@ -496,6 +492,7 @@ export class ColonyCoordinator {
 
     async claimNextTask(agentId) {
         assertNonEmptyString(agentId, 'agentId');
+        let newClaim = false;
         return this._mutate('task.claimed-next', { agentId }, now => {
             if (this.state.paused) {
                 throw new Error('Colony is paused');
@@ -522,7 +519,13 @@ export class ColonyCoordinator {
             next.claimedBy = agentId;
             next.leaseExpiresAt = now + this.leaseMs;
             next.updatedAt = now;
+            newClaim = true;
             return clone(next);
+        }, {
+            // No-op re-claims (agent already holds a live lease) are read-only
+            // polling and would otherwise flood the journal.
+            journalWhen: () => newClaim,
+            journalData: task => ({ agentId, taskId: task.id }),
         });
     }
 
@@ -534,6 +537,12 @@ export class ColonyCoordinator {
             const entry = { id: this.idFactory(), agentId, summary, at: now };
             this.state.progress.push(entry);
             this.state.progress = this.state.progress.slice(-200);
+            for (const task of Object.values(this.state.tasks)) {
+                if (task.status === 'claimed' && task.claimedBy === agentId) {
+                    task.leaseExpiresAt = now + this.leaseMs;
+                    task.updatedAt = now;
+                }
+            }
             return clone(entry);
         });
     }
@@ -628,7 +637,10 @@ export class ColonyCoordinator {
                 }
             }
             return expired;
-        }, { journalWhen: result => result.length > 0 });
+        }, {
+            journalWhen: result => result.length > 0,
+            journalData: taskIds => ({ taskIds }),
+        });
     }
 
     async pause(reason = '') {
@@ -891,6 +903,15 @@ export class ColonyCoordinator {
         return this._mutate(`task.${status}`, { taskId, agentId, ...details }, now => {
             const task = this._requireTask(taskId);
             this._expireTask(task, now);
+            // Grace path: if this agent's lease lapsed but nobody else has
+            // claimed the task since, let the agent still report its outcome.
+            const isLapsedClaimant = task.status === 'proposed' &&
+                task.claimedBy === null &&
+                task.lastClaimedBy === agentId;
+            if (isLapsedClaimant) {
+                task.status = 'claimed';
+                task.claimedBy = agentId;
+            }
             if (task.status !== 'claimed' || task.claimedBy !== agentId) {
                 throw new Error('Task is not claimed by this agent');
             }
@@ -898,6 +919,9 @@ export class ColonyCoordinator {
             task.result = details.result ?? null;
             task.error = details.error ?? null;
             task.attempts = (task.attempts ?? 0) + (status === 'failed' ? 1 : 0);
+            if (status === 'failed') {
+                task.lastClaimedBy = agentId;
+            }
             task.claimedBy = status === 'failed' ? null : task.claimedBy;
             task.leaseExpiresAt = null;
             task.updatedAt = now;
@@ -991,7 +1015,10 @@ export class ColonyCoordinator {
                 persisted = true;
                 if (!options.journalWhen || options.journalWhen(result)) {
                     try {
-                        await this._appendJournal({ at: now, type, data });
+                        const journalData = options.journalData
+                            ? options.journalData(result)
+                            : data;
+                        await this._appendJournal({ at: now, type, data: journalData });
                     } catch (error) {
                         console.error(`Colony journal append failed for ${type}:`, error);
                     }
@@ -1020,6 +1047,7 @@ export class ColonyCoordinator {
     _expireTask(task, now) {
         if (task.status === 'claimed' && task.leaseExpiresAt <= now) {
             task.status = 'proposed';
+            task.lastClaimedBy = task.claimedBy;
             task.claimedBy = null;
             task.leaseExpiresAt = null;
             task.updatedAt = now;

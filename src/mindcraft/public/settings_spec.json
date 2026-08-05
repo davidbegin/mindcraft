@@ -114,13 +114,18 @@
     },
     "render_bot_view": {
         "type": "boolean",
-        "description": "Whether to render bot view for user observation. Does not give bot vision.",
-        "default": false
+        "description": "Whether to render bot view for user observation (feeds the Live Wall page and card viewers). Does not give bot vision.",
+        "default": true
     },
     "record_bot_view": {
         "type": "boolean",
         "description": "Whether to auto-record the bot's first-person POV to MP4 files in bots/<name>/recordings on spawn. Recording can also be toggled per-agent from the UI. Requires ffmpeg.",
         "default": false
+    },
+    "record_actions": {
+        "type": "boolean",
+        "description": "Auto-record clips only while the bot is executing an action and actually moving or interacting. Stops after ~8s of stillness, labels the MP4 with the action, and logs every clip to bots/recordings-manifest.jsonl for stitching. Ignored if record_bot_view is on. Requires ffmpeg.",
+        "default": true
     },
     "allow_insecure_coding": {
         "type": "boolean",

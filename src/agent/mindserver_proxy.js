@@ -124,7 +124,7 @@ class MindServerProxy {
                     return;
                 }
                 const status = await this.agent.pov_recorder.start(options || {});
-                callback?.({ success: !status.error, error: status.error, ...status });
+                callback?.({ success: !status.error, error: status.error, ...status, autoRecord: this.agent.isAutoRecording() });
             } catch (error) {
                 callback?.({ success: false, error: error.message });
             }
@@ -137,6 +137,19 @@ class MindServerProxy {
                     return;
                 }
                 const status = await this.agent.pov_recorder.stop();
+                callback?.({ success: true, ...status, autoRecord: this.agent.isAutoRecording() });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
+        this.socket.on('set-auto-recording', async (enabled, callback) => {
+            try {
+                if (!this.agent?.pov_recorder) {
+                    callback?.({ success: false, error: 'Agent has not spawned yet' });
+                    return;
+                }
+                const status = await this.agent.setAutoRecording(Boolean(enabled));
                 callback?.({ success: true, ...status });
             } catch (error) {
                 callback?.({ success: false, error: error.message });

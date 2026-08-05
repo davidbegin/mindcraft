@@ -2,6 +2,7 @@ import { getBlockId, getItemId } from "../../utils/mcdata.js";
 import { actionsList } from './actions.js';
 import { colonyActionList, colonyQueryList } from './colony.js';
 import { queryList } from './queries.js';
+import { ALLOWED_WHILE_DEAD } from './command_guard.js';
 
 let suppressNoDomainWarning = true;
 
@@ -224,10 +225,17 @@ export async function executeCommand(agent, message) {
         }
         if (numArgs !== numParams(command))
             return `Command ${command.name} was given ${numArgs} args, but requires ${numParams(command)} args.`;
-        else {
-            const result = await command.perform(agent, ...parsed.args);
-            return result;
+        const health = agent.bot?.health;
+        if (typeof health === 'number' && health <= 0 && !ALLOWED_WHILE_DEAD.has(command.name)) {
+            return 'You are dead and cannot act. Wait a moment to respawn, then reassess: your items dropped at your death position.';
         }
+        const rejection = agent.command_guard?.check(command.name, parsed.args);
+        if (rejection) {
+            return rejection;
+        }
+        const result = await command.perform(agent, ...parsed.args);
+        agent.command_guard?.record(command.name, parsed.args, result);
+        return result;
     }
 }
 
