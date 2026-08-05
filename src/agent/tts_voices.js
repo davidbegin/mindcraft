@@ -116,6 +116,13 @@ function poolLookup(nameOrId) {
     return String(nameOrId);
 }
 
+function poolName(nameOrId) {
+    if (!nameOrId) return null;
+    return Object.keys(VOICE_POOL).find(
+        name => name.toLowerCase() === String(nameOrId).toLowerCase()
+    ) || String(nameOrId);
+}
+
 // djb2: stable across restarts and processes so a bot always gets the same
 // voice even when nothing is pinned in voices.json.
 function hashName(name) {
@@ -132,6 +139,18 @@ export function autoVoiceName(botName) {
     return names[hashName(String(botName || 'bot')) % names.length];
 }
 
+/** Resolve the human-facing pool name, or preserve a raw ElevenLabs voice ID. */
+export function resolveVoiceName(botName, requestedVoice = null) {
+    if (requestedVoice) return poolName(requestedVoice);
+    const config = loadConfig();
+    const pinned = config.bots?.[botName];
+    if (pinned) return poolName(pinned);
+    if (typeof config.default_voice === 'string' && config.default_voice.trim()) {
+        return poolName(config.default_voice.trim());
+    }
+    return autoVoiceName(botName);
+}
+
 /**
  * Resolve the ElevenLabs voice ID for a bot.
  * Priority: explicit voice from the profile's speak_model, then the
@@ -139,12 +158,5 @@ export function autoVoiceName(botName) {
  * deterministic pick from VOICE_POOL.
  */
 export function resolveVoice(botName, requestedVoice = null) {
-    if (requestedVoice) return poolLookup(requestedVoice);
-    const config = loadConfig();
-    const pinned = config.bots?.[botName];
-    if (pinned) return poolLookup(pinned);
-    if (typeof config.default_voice === 'string' && config.default_voice.trim()) {
-        return poolLookup(config.default_voice.trim());
-    }
-    return VOICE_POOL[autoVoiceName(botName)];
+    return poolLookup(resolveVoiceName(botName, requestedVoice));
 }

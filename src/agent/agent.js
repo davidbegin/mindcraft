@@ -16,6 +16,7 @@ import { addBrowserViewer } from './vision/browser_viewer.js';
 import { PovRecorder } from './vision/pov_recorder.js';
 import { ActionRecorder } from './vision/action_recorder.js';
 import { PovSnapshotter } from './vision/pov_snapshotter.js';
+import { addContestAudioToRecorders } from './contest_audio.js';
 import {
     serverProxy,
     sendOutputToServer,
@@ -27,6 +28,11 @@ import { setOutageHandler } from '../models/quota_guard.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { generateSpeech, playSpeech, isSystemSpeakModel } from './speak.js';
+import {
+    getHumanCommandAcknowledgement,
+    getSpokenChatText,
+    isGameOperationalMessage,
+} from './speech_policy.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 import { Vec3 } from 'vec3';
 
@@ -442,6 +448,16 @@ export class Agent {
             if (command_name) { // contains query or command
                 res = truncCommandMessage(res); // everything after the command is ignored
                 this.history.add(this.name, res);
+
+                // Prompt instructions are not enough to guarantee that every
+                // model includes conversational text before a command. Human
+                // players must still hear an acknowledgement through TTS.
+                const acknowledgement = from_human
+                    ? getHumanCommandAcknowledgement(res, source)
+                    : null;
+                if (acknowledgement) {
+                    await this.routeResponse(source, acknowledgement);
+                }
                 
                 if (!commandExists(command_name)) {
                     this.history.add('system', `Command ${command_name} does not exist.`);
@@ -530,14 +546,10 @@ export class Agent {
     }
 
     async openChat(message, { addressed = false } = {}) {
-        let to_translate = message;
-        let remaining = '';
         let command_name = containsCommand(message);
-        let translate_up_to = command_name ? message.indexOf(command_name) : -1;
-        if (translate_up_to != -1) { // don't translate the command
-            to_translate = to_translate.substring(0, translate_up_to);
-            remaining = message.substring(translate_up_to);
-        }
+        const to_translate = getSpokenChatText(message);
+        const translate_up_to = command_name ? message.indexOf(command_name) : -1;
+        const remaining = translate_up_to === -1 ? '' : message.substring(translate_up_to);
         message = (await handleTranslation(to_translate)).trim() + " " + remaining;
         // newlines are interpreted as separate chats, which triggers spam filters. replace them with spaces
         message = message.replaceAll('\n', ' ');
@@ -563,6 +575,10 @@ export class Agent {
      */
     _speakChat(text, addressed = false) {
         if (!text || !text.trim()) return;
+        if (settings.game_session && isGameOperationalMessage(text)) {
+            console.log(`[${this.name}] voice: silent (game operational status): "${text.trim().slice(0, 60)}"`);
+            return;
+        }
         const model = this.prompter.profile.speak_model;
         const shouldSpeak = addressed || settings.game_session?.speakAll;
         const volume = (settings.speak && shouldSpeak) ? this._getSpeechVolume() : null;
@@ -573,12 +589,28 @@ export class Agent {
         if (!audible && !recording) return;
 
         if (audible && settings.game_session?.serverBroadcastVoice) {
-            requestContestSpeech(text).then(audio => {
-                if (audio && this.pov_recorder?.recording) {
-                    this.pov_recorder.addAudio(audio);
-                }
-            }).catch(err => {
+            requestContestSpeech(text).catch(err => {
                 console.error(`[${this.name}] Server contest TTS failed:`, err.message);
+                // Keep the line audible if the centralized browser/host route
+                // is temporarily unavailable. Game profiles are forced to
+                // ElevenLabs, so this remains the same configured bot voice.
+                const fallbackAudio = generateSpeech(text, model, this.name);
+                if (recording) {
+                    fallbackAudio.then(audio => {
+                        this.addContestRecordingAudio({
+                            sessionId: this.contest_recording_session,
+                            audio,
+                            atMs: Date.now(),
+                        });
+                    }).catch(() => {});
+                }
+                playSpeech({
+                    text,
+                    model,
+                    botName: this.name,
+                    volume,
+                    audioPromise: fallbackAudio,
+                });
             });
             return;
         }
@@ -602,6 +634,14 @@ export class Agent {
         } else {
             audioPromise.catch(err => console.error(`[${this.name}] TTS generation failed:`, err.message));
         }
+    }
+
+    addContestRecordingAudio(payload) {
+        return addContestAudioToRecorders(
+            [this.pov_recorder, ...this.contest_recorders],
+            this.contest_recording_session,
+            payload
+        );
     }
 
     /**

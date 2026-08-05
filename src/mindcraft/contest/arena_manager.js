@@ -16,6 +16,16 @@ const GAME_KITS = Object.freeze({
         'bread 16',
         'torch 32',
     ]),
+    netherite_race: Object.freeze([
+        'iron_pickaxe 1',
+        'stick 2',
+        'crafting_table 1',
+        'furnace 1',
+        'coal 4',
+        'gold_ingot 4',
+        'bread 16',
+        'torch 32',
+    ]),
     tower_battle: Object.freeze([
         'cobblestone 256',
         'oak_planks 128',
@@ -138,6 +148,59 @@ function buildWorldResetCommands(gameId) {
             commands.push(
                 `setblock ${ARENA.centerX + dx} ${y} `
                 + `${ARENA.centerZ + dz} diamond_ore`
+            );
+        }
+    } else if (gameId === 'netherite_race') {
+        fillLayers(
+            commands,
+            bounds,
+            ARENA.mineBottomY,
+            82,
+            'netherrack'
+        );
+        fillLayers(
+            commands,
+            bounds,
+            83,
+            ARENA.floorY - 2,
+            'stone'
+        );
+        commands.push(
+            `fill ${minX} ${ARENA.floorY - 1} ${minZ} `
+            + `${maxX} ${ARENA.floorY - 1} ${maxZ} dirt`,
+            `fill ${minX} ${ARENA.floorY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
+        );
+
+        const diamondOres = [
+            [-27, 90, -21], [-24, 85, -7], [-22, 94, 12], [-19, 87, 25],
+            [-14, 92, -17], [-11, 84, 3], [-9, 96, 20], [-5, 89, -27],
+            [-2, 86, -12], [1, 93, 8], [4, 84, 25], [7, 95, -20],
+            [10, 88, -4], [13, 91, 16], [16, 85, 28], [19, 94, -11],
+            [22, 87, 5], [25, 92, 22], [27, 84, -25], [29, 96, 1],
+            [-28, 88, 27], [-16, 95, -29], [6, 90, 29], [24, 86, -30],
+        ];
+        for (const [dx, y, dz] of diamondOres) {
+            commands.push(
+                `setblock ${ARENA.centerX + dx} ${y} `
+                + `${ARENA.centerZ + dz} diamond_ore`
+            );
+        }
+
+        const ancientDebris = [
+            [-29, 72, -24], [-27, 79, -9], [-25, 75, 8], [-23, 81, 24],
+            [-20, 70, -16], [-18, 77, 1], [-16, 73, 18], [-13, 80, -28],
+            [-11, 76, -11], [-9, 71, 7], [-7, 78, 26], [-4, 74, -21],
+            [-2, 81, -5], [1, 72, 13], [3, 79, 29], [6, 75, -14],
+            [8, 70, 4], [10, 77, 21], [13, 73, -26], [15, 80, -8],
+            [17, 76, 10], [20, 71, 27], [22, 78, -19], [24, 74, -2],
+            [26, 81, 15], [28, 72, -29], [30, 79, -12], [29, 75, 6],
+            [-30, 70, 29], [-21, 78, 30], [5, 73, -30], [18, 80, 30],
+        ];
+        for (const [dx, y, dz] of ancientDebris) {
+            commands.push(
+                `setblock ${ARENA.centerX + dx} ${y} `
+                + `${ARENA.centerZ + dz} ancient_debris`
             );
         }
     } else {

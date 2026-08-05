@@ -138,6 +138,38 @@ test('celebrates an automatic diamond-race winner', async () => {
     ));
 });
 
+test('celebrates an automatic netherite-race winner', async () => {
+    const commands = [];
+    const contest = runningContest({
+        title: 'First Netherite',
+        rules: { type: 'netherite_race', winItem: 'netherite_ingot' },
+    });
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: async command => commands.push(command),
+    });
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    commands.length = 0;
+
+    const completed = {
+        ...contest,
+        status: 'completed',
+        winnerIds: ['bob'],
+        results: [
+            { participantId: 'bob', score: -20_000, rank: 1 },
+            { participantId: 'alice', score: 0, rank: null, disqualified: true },
+        ],
+    };
+    assert.equal(formatContestScore(completed, completed.results[0]), 'netherite forged');
+    await hud.sync({ activeContest: null, contests: [completed] });
+
+    assert.ok(commands.some(command =>
+        command.includes('title @a title {"text":"NETHERITE FORGED!","color":"dark_purple"')
+    ));
+    assert.ok(commands.some(command => command.includes('"bob WINS!"')));
+    assert.ok(commands.some(command => command.includes('1. bob — netherite forged')));
+});
+
 test('cleans up the HUD and explains cancellation', async () => {
     const commands = [];
     const contest = runningContest();

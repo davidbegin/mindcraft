@@ -11,7 +11,8 @@ process.env.MINDCRAFT_VOICES_PATH = configPath;
 
 const {
     VOICE_POOL, VOICE_DESCRIPTIONS, DEFAULT_ELEVENLABS_MODEL,
-    getVoicesConfig, saveVoicesConfig, autoVoiceName, resolveVoice, getElevenLabsModel,
+    getVoicesConfig, saveVoicesConfig, autoVoiceName, resolveVoice, resolveVoiceName,
+    getElevenLabsModel,
 } = await import('../src/agent/tts_voices.js');
 
 test('every pool voice has a description', () => {
@@ -29,6 +30,7 @@ test('defaults when no config file exists', () => {
     });
     assert.equal(getElevenLabsModel(), DEFAULT_ELEVENLABS_MODEL);
     // Unpinned bots get a stable auto-assigned pool voice.
+    assert.equal(resolveVoiceName('andy'), autoVoiceName('andy'));
     assert.equal(resolveVoice('andy'), VOICE_POOL[autoVoiceName('andy')]);
     assert.equal(resolveVoice('andy'), resolveVoice('andy'));
 });
@@ -48,12 +50,15 @@ test('saveVoicesConfig writes and resolveVoice honors priority', () => {
 
     assert.equal(getElevenLabsModel(), 'eleven_turbo_v2_5');
     // Pinned beats default; pool names are case-insensitive.
+    assert.equal(resolveVoiceName('andy'), 'Grimblewood');
     assert.equal(resolveVoice('andy'), VOICE_POOL.Grimblewood);
     // Non-pool values pass through as raw ElevenLabs voice IDs.
+    assert.equal(resolveVoiceName('custom_bot'), 'RawVoiceId123');
     assert.equal(resolveVoice('custom_bot'), 'RawVoiceId123');
     // Unpinned bots use the default voice when one is set.
     assert.equal(resolveVoice('someone_else'), VOICE_POOL.Giggles);
     // An explicit speak_model voice beats everything.
+    assert.equal(resolveVoiceName('andy', 'inferno'), 'Inferno');
     assert.equal(resolveVoice('andy', 'Inferno'), VOICE_POOL.Inferno);
 });
 

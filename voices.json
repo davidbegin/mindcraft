@@ -3,6 +3,7 @@
     "elevenlabs_model": "eleven_flash_v2_5",
     "bots": {
         "andy": "Giggles",
+        "billy": "Giggles",
         "explorer": "Sasquatch",
         "explorer2": "DudeDavis",
         "explorer3": "Cyrien",

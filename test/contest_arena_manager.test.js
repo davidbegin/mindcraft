@@ -49,6 +49,39 @@ test('radically resets the arena and every diamond-race participant', async () =
     }
 });
 
+test('builds a netherite race that requires crafting a diamond pickaxe', async () => {
+    const commands = [];
+    const manager = new ContestArenaManager({
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') return listReply(['alice', 'bob']);
+            return 'ok';
+        },
+    });
+
+    await manager.prepare(
+        getContestGamePreset('netherite_race'),
+        ['alice', 'bob'],
+        { spectators: [] }
+    );
+
+    assert.ok(commands.some(command => command.endsWith(' diamond_ore')));
+    assert.ok(commands.some(command => command.endsWith(' ancient_debris')));
+    assert.ok(commands.some(command => command.endsWith(' netherrack')));
+    for (const name of ['alice', 'bob']) {
+        assert.ok(commands.includes(`give ${name} iron_pickaxe 1`));
+        assert.ok(commands.includes(`give ${name} stick 2`));
+        assert.ok(commands.includes(`give ${name} crafting_table 1`));
+        assert.ok(commands.includes(`give ${name} furnace 1`));
+        assert.ok(commands.includes(`give ${name} coal 4`));
+        assert.ok(commands.includes(`give ${name} gold_ingot 4`));
+        assert.equal(
+            commands.some(command => command.startsWith(`give ${name} diamond_pickaxe`)),
+            false
+        );
+    }
+});
+
 test('builds a blank tower arena with equal kits and no diamond ore', async () => {
     const commands = [];
     const manager = new ContestArenaManager({

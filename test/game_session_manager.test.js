@@ -60,6 +60,7 @@ async function withManager(run, overrides = {}) {
             getPreset: () => preset,
             getProfiles: () => profiles,
             getExistingAgentNames: () => ['colony_bot'],
+            resolveParticipantVoice: (name, voice) => voice || `AutoVoice-${name}`,
             buildAgentSettings: (profile, gameSession) => ({ profile, game_session: gameSession }),
             createAgent: async settings => {
                 calls.push(['create', settings]);
@@ -94,15 +95,18 @@ test('provisions isolated agents, records, directs, and cleans up after completi
                 { profileId: 'smart', name: 'thinker' },
             ],
             systemPrompt: 'Be entertaining.',
+            durationMs: 150_000,
         });
 
         assert.equal(result.contest.status, 'running');
+        assert.equal(result.contest.durationMs, 150_000);
         assert.equal(manager.view().recording.enabled, true);
         assert.deepEqual(
             calls.filter(([type]) => type === 'directive').map(([, name]) => name),
             ['speedy', 'thinker']
         );
-        const createdSettings = calls.find(([type]) => type === 'create')[1];
+        const createdAgents = calls.filter(([type]) => type === 'create').map(([, settings]) => settings);
+        const createdSettings = createdAgents[0];
         assert.equal(createdSettings.game_session.systemPrompt, 'Be entertaining.');
         assert.deepEqual(createdSettings.game_session.participantIds, ['speedy', 'thinker']);
         assert.deepEqual(createdSettings.game_session.rivalIds, ['thinker']);
@@ -113,7 +117,16 @@ test('provisions isolated agents, records, directs, and cleans up after completi
             api: 'elevenlabs',
             voice: 'Trickster',
         });
+        assert.deepEqual(createdAgents[1].profile.speak_model, {
+            api: 'elevenlabs',
+            voice: 'AutoVoice-thinker',
+        });
         assert.equal(manager.view().participants[0].voice, 'Trickster');
+        assert.equal(manager.view().participants[1].voice, 'AutoVoice-thinker');
+        assert.equal(
+            coordinator.snapshot().contests['game-1'].metadata.gameSession.participants[1].voice,
+            'AutoVoice-thinker'
+        );
         const speedyDirective = calls.find(
             ([type, name]) => type === 'directive' && name === 'speedy'
         )[2];

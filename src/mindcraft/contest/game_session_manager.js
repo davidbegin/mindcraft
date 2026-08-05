@@ -52,6 +52,7 @@ export class GameSessionManager {
             'getPreset',
             'getProfiles',
             'getExistingAgentNames',
+            'resolveParticipantVoice',
             'buildAgentSettings',
             'createAgent',
             'destroyAgent',
@@ -95,7 +96,10 @@ export class GameSessionManager {
             request.participants,
             this.getProfiles(),
             this.getExistingAgentNames()
-        );
+        ).map(participant => ({
+            ...participant,
+            voice: this.resolveParticipantVoice(participant.name, participant.voice),
+        }));
         const systemPrompt = String(request.systemPrompt || '').trim();
         if (systemPrompt.length > 4000) {
             throw new Error('Game system prompt must be 4000 characters or fewer');

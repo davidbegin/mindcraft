@@ -1672,9 +1672,32 @@
             gap: 6px;
         }
 
+        .game-setup-duration {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .game-setup-duration label,
         .game-setup-prompt label {
             font-size: 0.85rem;
             color: var(--text-dim);
+        }
+
+        .game-setup-duration input {
+            width: 100px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            padding: 7px 9px;
+            font: inherit;
+        }
+
+        .game-setup-duration input:focus {
+            outline: none;
+            border-color: var(--border-strong);
         }
 
         .game-setup-prompt textarea {
@@ -2045,6 +2068,12 @@
                 <div class="game-setup-actions">
                     <button type="button" id="gameSetupAddParticipantBtn" class="btn btn-ghost">+ Add participant</button>
                 </div>
+                <div class="game-setup-duration">
+                    <label for="gameSetupDurationMinutes">Duration (minutes)</label>
+                    <input id="gameSetupDurationMinutes" type="number" min="0.5" max="60" step="0.5"
+                        inputmode="decimal" aria-describedby="gameSetupDurationHint">
+                    <span id="gameSetupDurationHint" class="games-sub">0.5–60 minutes</span>
+                </div>
                 <div class="game-setup-prompt">
                     <label for="gameSetupSystemPrompt">System prompt (optional)</label>
                     <textarea id="gameSetupSystemPrompt" maxlength="4000" rows="4"
@@ -2093,6 +2122,8 @@
 
         const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
         const MAX_GAME_SYSTEM_PROMPT = 4000;
+        const MIN_GAME_DURATION_MINUTES = 0.5;
+        const MAX_GAME_DURATION_MINUTES = 60;
 
         const ITEM_ICON_CDN = 'https://mc.nerothe.com/img/1.21.4';
         const ROLE_COLORS = {
@@ -2750,9 +2781,13 @@
             for (const participant of list) {
                 const chip = document.createElement('span');
                 chip.className = 'contest-participant-chip';
-                const model = participant.model || 'model';
-                const provider = participant.provider ? ` · ${participant.provider}` : '';
-                chip.innerHTML = `<strong>${esc(participant.name || '?')}</strong> ${esc(model)}${esc(provider)}`;
+                const model = participant.model || 'Unknown model';
+                const voice = participant.voice || 'Voice not recorded';
+                chip.innerHTML = `
+                    <strong>${esc(participant.name || 'Unknown character')}</strong>
+                    · ${esc(model)}
+                    · Voice: ${esc(voice)}
+                `;
                 box.appendChild(chip);
             }
         }
@@ -3095,16 +3130,27 @@
             count.textContent = String(textarea.value.length);
         }
 
-        function defaultGameSetupParticipants() {
+        function defaultGameSetupParticipants(gameId) {
             const profiles = configuredGameProfiles();
             const count = profiles.length >= 2 ? 2 : Math.min(1, profiles.length);
             const reserved = new Set(currentAgents.map(agent => agent.name));
+            const game = contestGames.find(item => item.id === gameId);
+            const characters = Array.isArray(game?.defaultCharacters)
+                ? game.defaultCharacters
+                : [];
             const rows = [];
             for (let i = 0; i < count; i++) {
                 const profile = profiles[i % profiles.length];
-                const name = nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
+                const character = characters[i] || null;
+                const name = character
+                    ? sanitizeMinecraftName(character.name)
+                    : nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
                 reserved.add(name);
-                rows.push({ profileId: profile.id, name, voice: null });
+                rows.push({
+                    profileId: profile.id,
+                    name,
+                    voice: character?.voice || null,
+                });
             }
             return rows;
         }
@@ -3234,8 +3280,10 @@
             }
             const game = contestGames.find(item => item.id === gameId);
             gameSetupGameId = gameId;
-            gameSetupParticipants = defaultGameSetupParticipants();
+            gameSetupParticipants = defaultGameSetupParticipants(gameId);
             document.getElementById('gameSetupTitle').textContent = `Set up ${game?.title || gameId}`;
+            document.getElementById('gameSetupDurationMinutes').value =
+                String((game?.durationMs || 60_000) / 60_000);
             document.getElementById('gameSetupSystemPrompt').value = '';
             updateGameSetupPromptCount();
             setGameSetupError('');
@@ -3280,6 +3328,12 @@
             if (prompt.length > MAX_GAME_SYSTEM_PROMPT) {
                 return `System prompt must be ${MAX_GAME_SYSTEM_PROMPT} characters or fewer`;
             }
+            const durationMinutes = Number(document.getElementById('gameSetupDurationMinutes')?.value);
+            if (!Number.isFinite(durationMinutes)
+                || durationMinutes < MIN_GAME_DURATION_MINUTES
+                || durationMinutes > MAX_GAME_DURATION_MINUTES) {
+                return `Duration must be between ${MIN_GAME_DURATION_MINUTES} and ${MAX_GAME_DURATION_MINUTES} minutes`;
+            }
             return null;
         }
 
@@ -3297,6 +3351,8 @@
                 voice: voice || null,
             }));
             const systemPrompt = String(document.getElementById('gameSetupSystemPrompt')?.value || '').trim();
+            const durationMs =
+                Number(document.getElementById('gameSetupDurationMinutes').value) * 60_000;
 
             contestBusy = true;
             setGameSetupError('');
@@ -3305,7 +3361,12 @@
             document.getElementById('submitGameSetupBtn').disabled = true;
             renderGameCards();
 
-            socket.emit('contest-start-game', { gameId, participants, systemPrompt }, (result) => {
+            socket.emit('contest-start-game', {
+                gameId,
+                participants,
+                systemPrompt,
+                durationMs,
+            }, (result) => {
                 contestBusy = false;
                 document.getElementById('submitGameSetupBtn').disabled = false;
                 if (!result?.success) {

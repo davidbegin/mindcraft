@@ -10,7 +10,7 @@ import { spawn } from 'child_process';
 import { hasKey } from '../utils/keys.js';
 import {
     VOICE_POOL, VOICE_DESCRIPTIONS, DEFAULT_ELEVENLABS_MODEL,
-    getVoicesConfig, saveVoicesConfig, autoVoiceName, resolveVoice,
+    getVoicesConfig, saveVoicesConfig, autoVoiceName, resolveVoice, resolveVoiceName,
 } from '../agent/tts_voices.js';
 import { TTSConfig as elevenLabsTTSConfig } from '../models/elevenlabs.js';
 import { ColonyCoordinator } from './colony/colony_coordinator.js';
@@ -21,6 +21,7 @@ import {
     ContestLoop,
     ContestRecordingManager,
     GameSessionManager,
+    TowerHighScoreStore,
     buildGameSystemPrompt,
     defaultJudge,
     filterRecordingManifest,
@@ -64,6 +65,7 @@ let contestCoordinator = null;
 let contestReady = null;
 let contestLoop = null;
 let gameSessionManager = null;
+let towerHighScores = null;
 const contestArenaManager = new ContestArenaManager();
 const contestHud = new ContestHud({ getLeader: getContestLeader });
 const contestRecordingManager = new ContestRecordingManager({
@@ -215,7 +217,18 @@ function emitContestUpdate(socket = io) {
         socket.emit('contest-update', {
             ...contestCoordinator.view(),
             gameSession: gameSessionManager?.view() ?? null,
+            towerHighScores: towerHighScores?.list() ?? [],
         });
+    }
+}
+
+async function recordTowerHighScores(view) {
+    if (!towerHighScores) return [];
+    try {
+        return await towerHighScores.recordContests(view?.contests || []);
+    } catch (error) {
+        console.error('Could not persist tower high scores:', error);
+        return [];
     }
 }
 
@@ -228,13 +241,16 @@ async function ensureContest(options) {
         contestReady = (existsSync(path.join(root, 'state.json'))
             ? ContestCoordinator.load(coordinatorOptions)
             : ContestCoordinator.create(coordinatorOptions)
-        ).then(coordinator => {
+        ).then(async coordinator => {
             contestCoordinator = coordinator;
+            towerHighScores = await TowerHighScoreStore.create({ root });
+            await recordTowerHighScores(coordinator.view());
             gameSessionManager = new GameSessionManager({
                 coordinator,
                 getPreset: getContestGamePreset,
                 getProfiles: getAvailableProfiles,
                 getExistingAgentNames: () => Object.keys(agent_connections),
+                resolveParticipantVoice: resolveVoiceName,
                 buildAgentSettings: buildGameAgentSettings,
                 createAgent: settings => mindcraft.createAgent(settings),
                 destroyAgent: destroyGameAgent,
@@ -253,6 +269,7 @@ async function ensureContest(options) {
                 intervalMs: resolved.tick_interval_ms ?? 1000,
                 onTick: view => contestHud.sync(view),
                 onUpdate: async view => {
+                    await recordTowerHighScores(view);
                     emitContestUpdate();
                     if (gameSessionManager) {
                         await gameSessionManager.syncWithContestView(view);

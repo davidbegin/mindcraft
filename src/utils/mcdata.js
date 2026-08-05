@@ -282,7 +282,11 @@ export function getItemCraftingRecipes(itemName) {
 }
 
 export function isSmeltable(itemName) {
-    const misc_smeltables = ['beef', 'chicken', 'cod', 'mutton', 'porkchop', 'rabbit', 'salmon', 'tropical_fish', 'potato', 'kelp', 'sand', 'cobblestone', 'clay_ball'];
+    const misc_smeltables = [
+        'beef', 'chicken', 'cod', 'mutton', 'porkchop', 'rabbit', 'salmon',
+        'tropical_fish', 'potato', 'kelp', 'sand', 'cobblestone', 'clay_ball',
+        'ancient_debris',
+    ];
     return itemName.includes('raw') || itemName.includes('log') || misc_smeltables.includes(itemName);
 }
 

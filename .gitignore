@@ -46,3 +46,4 @@ code/.env
 # contest runtime state (generated while games run)
 contests/journal.jsonl
 contests/state.json
+contests/tower_high_scores.json

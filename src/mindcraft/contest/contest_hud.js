@@ -2,6 +2,18 @@ import { runMinecraftCommand } from '../minecraft_server.js';
 
 const BOSSBAR_ID = 'mindcraft:contest';
 const ALL_PLAYERS = '@a';
+const ITEM_RACE_PRESENTATIONS = Object.freeze({
+    diamond_race: Object.freeze({
+        score: 'diamond found',
+        winnerLabel: 'DIAMOND FOUND!',
+        titleColor: 'aqua',
+    }),
+    netherite_race: Object.freeze({
+        score: 'netherite forged',
+        winnerLabel: 'NETHERITE FORGED!',
+        titleColor: 'dark_purple',
+    }),
+});
 
 function textComponent(text, options = {}) {
     return JSON.stringify({ text, ...options });
@@ -19,9 +31,8 @@ export function formatContestScore(contest, result) {
     if (contest.rules?.type === 'tower_battle') {
         return `${result.score} blocks`;
     }
-    if (contest.rules?.type === 'diamond_race') {
-        return 'diamond found';
-    }
+    const itemRace = ITEM_RACE_PRESENTATIONS[contest.rules?.type];
+    if (itemRace) return itemRace.score;
     return `${result.score} points`;
 }
 
@@ -176,16 +187,16 @@ export class ContestHud {
     async _announceCompleted(contest) {
         const winners = contest.winnerIds || [];
         const winnerResults = rankedResults(contest).filter(result => result.rank === 1);
-        const isDiamondRace = contest.rules?.type === 'diamond_race';
-        const winnerLabel = isDiamondRace
-            ? 'DIAMOND FOUND!'
+        const itemRace = ITEM_RACE_PRESENTATIONS[contest.rules?.type];
+        const winnerLabel = itemRace
+            ? itemRace.winnerLabel
             : winners.length > 1 ? 'TIE!' : 'WINNER!';
         const names = winners.length > 0 ? winners.join(' & ') : 'No winner';
         const score = winnerResults[0] ? formatContestScore(contest, winnerResults[0]) : '';
-        const subtitle = isDiamondRace && winners.length > 0
+        const subtitle = itemRace && winners.length > 0
             ? `${names} WINS!`
             : score ? `${names} · ${score}` : names;
-        const titleColor = isDiamondRace ? 'aqua' : 'green';
+        const titleColor = itemRace?.titleColor || 'green';
         const resultLines = rankedResults(contest).map(result => {
             const resultScore = formatContestScore(contest, result);
             return `${result.rank}. ${result.participantId}${resultScore ? ` — ${resultScore}` : ''}`;
@@ -197,7 +208,7 @@ export class ContestHud {
             `title ${ALL_PLAYERS} title ${textComponent(winnerLabel, { color: titleColor, bold: true })}`,
             `title ${ALL_PLAYERS} subtitle ${textComponent(subtitle, { color: 'gold', bold: true })}`,
             `playsound ui.toast.challenge_complete master ${ALL_PLAYERS} ~ ~ ~ 1 1 1`,
-            ...(isDiamondRace ? [
+            ...(itemRace ? [
                 `playsound entity.firework_rocket.large_blast master ${ALL_PLAYERS} ~ ~ ~ 1 1 1`,
                 `playsound entity.player.levelup master ${ALL_PLAYERS} ~ ~ ~ 1 1.4 1`,
             ] : []),

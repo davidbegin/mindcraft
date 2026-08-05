@@ -7,6 +7,7 @@ export {
     measureTowers,
     scoreTowerBattle,
 } from './tower_scoring.js';
+export { TowerHighScoreStore } from './tower_high_scores.js';
 export { ContestLoop } from './contest_loop.js';
 export {
     ContestHud,
@@ -15,6 +16,7 @@ export {
     formatContestTime,
 } from './contest_hud.js';
 export {
+    CONTEST_BOT_CHARACTERS,
     CONTEST_GAME_PRESETS,
     getContestGamePreset,
     listContestGamePresets,
