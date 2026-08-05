@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Mindcraft Spy</title>
     <script src="/socket.io/socket.io.js"></script>
+    <script src="bot_voice.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1582,7 +1583,7 @@
         }
 
         .game-setup-modal {
-            width: min(640px, 94vw);
+            width: min(900px, 94vw);
             height: auto;
             max-height: min(88vh, 760px);
         }
@@ -1596,7 +1597,7 @@
 
         .game-setup-row {
             display: grid;
-            grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+            grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.8fr) minmax(0, 1.35fr) auto;
             gap: 8px;
             align-items: center;
             padding: 10px;
@@ -1626,6 +1627,27 @@
 
         .game-setup-row input.invalid {
             border-color: var(--red);
+        }
+
+        .game-setup-voice {
+            display: flex;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .game-setup-voice select {
+            min-width: 0;
+        }
+
+        .game-setup-voice-status {
+            min-height: 18px;
+            margin: 0 0 8px;
+            font-size: 0.78rem;
+            color: var(--text-mute);
+        }
+
+        .game-setup-voice-status.error {
+            color: var(--red);
         }
 
         .game-setup-row .name-hint {
@@ -1690,6 +1712,84 @@
         .contest-participant-chip strong {
             color: var(--text);
             font-weight: 600;
+        }
+
+        .game-players {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+
+        .game-player-card {
+            min-width: 0;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg-card);
+        }
+
+        .game-player-snapshot {
+            display: block;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            object-fit: cover;
+            background: var(--bg-inset);
+            image-rendering: pixelated;
+        }
+
+        .game-player-details {
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+            padding: 12px;
+        }
+
+        .game-player-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .game-player-head h4 {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
+            margin: 0;
+            font-size: 1rem;
+        }
+
+        .game-player-intelligence {
+            color: var(--cyan);
+            font-family: var(--mono);
+            font-size: 0.76rem;
+            overflow-wrap: anywhere;
+        }
+
+        .game-player-action {
+            color: var(--text);
+            font-size: 0.88rem;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+        }
+
+        .game-player-action .label {
+            margin-right: 5px;
+            color: var(--text-mute);
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+        }
+
+        .game-player-location {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 10px;
+            color: var(--text-mute);
+            font-family: var(--mono);
+            font-size: 0.74rem;
         }
 
         .contest-watch-link {
@@ -1778,6 +1878,7 @@
                     Pick a game above and choose model profiles to start.
                 </div>
                 <div id="contestParticipantChips" class="contest-participant-chips" hidden></div>
+                <div id="gamePlayers" class="game-players" hidden></div>
                 <div id="contestResults" class="contest-results" hidden></div>
                 <div class="contest-live-row" style="margin-top:10px;">
                     <button id="cancelContestBtn" class="btn btn-danger" hidden>Cancel contest</button>
@@ -1940,6 +2041,7 @@
             </div>
             <div class="modal-body">
                 <div id="gameSetupParticipants" class="game-setup-participants"></div>
+                <div id="gameSetupVoiceStatus" class="game-setup-voice-status"></div>
                 <div class="game-setup-actions">
                     <button type="button" id="gameSetupAddParticipantBtn" class="btn btn-ghost">+ Add participant</button>
                 </div>
@@ -1964,20 +2066,7 @@
 
     <script>
         const socket = io({ path: window.location.pathname + 'socket.io' });
-        let botVoicePlayback = Promise.resolve();
-        function queueBotVoice(payload) {
-            if (!payload?.audio) return;
-            botVoicePlayback = botVoicePlayback.catch(() => {}).then(() => new Promise(resolve => {
-                const audio = new Audio(`data:audio/mpeg;base64,${payload.audio}`);
-                audio.onended = resolve;
-                audio.onerror = resolve;
-                audio.play().catch(error => {
-                    console.warn(`Could not play ${payload.agentName || 'bot'} voice:`, error.message);
-                    resolve();
-                });
-            }));
-        }
-        socket.on('bot-voice', queueBotVoice);
+        initBotVoice(socket);
         const agentsDiv = document.getElementById('agents');
         let settingsSpec = {};
         let profileData = null;
@@ -2668,6 +2757,99 @@
             }
         }
 
+        function gamePlayerAgent(name) {
+            return currentAgents.find(agent => agent.name === name) || null;
+        }
+
+        function renderGamePlayers(participants) {
+            const box = document.getElementById('gamePlayers');
+            if (!box) return;
+            const list = Array.isArray(participants) ? participants : [];
+            if (!list.length) {
+                box.hidden = true;
+                box.replaceChildren();
+                return;
+            }
+
+            box.hidden = false;
+            box.innerHTML = list.map(participant => {
+                const name = participant.name || '?';
+                const agent = gamePlayerAgent(name);
+                const st = lastStates[name];
+                const inGame = agent?.in_game === true;
+                const joining = agent?.socket_connected === true && !inGame;
+                const phase = joining ? 'joining' : actionPhase(st, inGame);
+                const dotClass = inGame ? 'on' : (joining ? 'joining' : '');
+                const intelligence = st?.skin?.label
+                    || participant.model
+                    || agent?.gameSession?.model
+                    || 'Unknown model';
+                const provider = participant.provider || agent?.gameSession?.provider || '';
+                const gp = st?.gameplay || {};
+                const position = gp.position;
+                const coordinates = position
+                    ? `${Math.round(position.x)} ${Math.round(position.y)} ${Math.round(position.z)}`
+                    : 'Location pending';
+
+                return `
+                    <article class="game-player-card" data-game-player="${esc(name)}">
+                        <img class="game-player-snapshot" id="gameSnapshot-${name}" alt="Current view from ${esc(name)}"
+                            src="/bots/${encodeURIComponent(name)}/snapshot.jpg?t=${Date.now()}"
+                            title="Current view from ${esc(name)}, refreshed every ~10s"
+                            onerror="this.style.visibility='hidden'" onload="this.style.visibility='visible'">
+                        <div class="game-player-details">
+                            <div class="game-player-head">
+                                <h4><span class="live-dot ${dotClass}" id="gameDot-${name}"></span>${esc(name)}</h4>
+                                <span class="chip ${actionChipClass(phase)}" id="gameStatus-${name}">${esc(phase)}</span>
+                            </div>
+                            <div class="game-player-intelligence" id="gameIntelligence-${name}">
+                                ${esc(intelligence)}${provider ? ` · ${esc(provider)}` : ''}
+                            </div>
+                            <div class="game-player-action">
+                                <span class="label">Doing</span>
+                                <span id="gameAction-${name}">${esc(joining ? 'Joining the game…' : actionLabel(st, inGame))}</span>
+                            </div>
+                            <div class="game-player-location">
+                                <span id="gameCoords-${name}">${esc(coordinates)}</span>
+                                <span id="gamePlace-${name}">${esc([gp.biome, gp.dimension].filter(Boolean).join(' · ') || 'World data pending')}</span>
+                            </div>
+                        </div>
+                    </article>
+                `;
+            }).join('');
+        }
+
+        function patchGamePlayer(name, st) {
+            const card = document.querySelector(`[data-game-player="${CSS.escape(name)}"]`);
+            if (!card) return;
+            const agent = gamePlayerAgent(name);
+            const inGame = agent?.in_game === true;
+            const joining = agent?.socket_connected === true && !inGame;
+            const phase = joining ? 'joining' : actionPhase(st, inGame);
+            const status = document.getElementById(`gameStatus-${name}`);
+            if (status) {
+                status.textContent = phase;
+                status.className = `chip ${actionChipClass(phase)}`;
+            }
+            const dot = document.getElementById(`gameDot-${name}`);
+            if (dot) dot.className = `live-dot ${inGame ? 'on' : (joining ? 'joining' : '')}`;
+            const action = document.getElementById(`gameAction-${name}`);
+            if (action) action.textContent = joining ? 'Joining the game…' : actionLabel(st, inGame);
+            const intelligence = document.getElementById(`gameIntelligence-${name}`);
+            if (intelligence && st?.skin?.label) {
+                const provider = agent?.gameSession?.provider;
+                intelligence.textContent = `${st.skin.label}${provider ? ` · ${provider}` : ''}`;
+                if (st.skin.color) intelligence.style.color = st.skin.color;
+            }
+            const gp = st?.gameplay || {};
+            const coords = document.getElementById(`gameCoords-${name}`);
+            if (coords && gp.position) {
+                coords.textContent = `${Math.round(gp.position.x)} ${Math.round(gp.position.y)} ${Math.round(gp.position.z)}`;
+            }
+            const place = document.getElementById(`gamePlace-${name}`);
+            if (place) place.textContent = [gp.biome, gp.dimension].filter(Boolean).join(' · ') || 'World data pending';
+        }
+
         function updateWatchLiveButton(session) {
             const btn = document.getElementById('watchLiveBtn');
             if (!btn) return;
@@ -2820,6 +3002,7 @@
                 updateGameSessionExport(null);
                 renderContestResults(null);
             }
+            renderGamePlayers(provisioning || active ? sessionParticipants : null);
             renderGameCards();
         }
 
@@ -2859,6 +3042,52 @@
             el.textContent = message || '';
         }
 
+        function setGameSetupVoiceStatus(message, isError = false) {
+            const el = document.getElementById('gameSetupVoiceStatus');
+            if (!el) return;
+            el.textContent = message || '';
+            el.classList.toggle('error', Boolean(isError));
+        }
+
+        function effectiveGameVoice(participant) {
+            if (participant.voice) return participant.voice;
+            if (!voicesState) return null;
+            return voicesState.config.bots[participant.name]
+                || voicesState.config.default_voice
+                || autoVoiceFor(participant.name);
+        }
+
+        function gameVoiceOptionsHtml(participant) {
+            if (!voicesState) return '<option value="">Loading voices…</option>';
+            const automatic = effectiveGameVoice({ ...participant, voice: null });
+            return [
+                `<option value="" ${participant.voice ? '' : 'selected'}>Auto — ${esc(automatic)}</option>`,
+                ...voicesState.pool.map(voice =>
+                    `<option value="${esc(voice.name)}" ${participant.voice === voice.name ? 'selected' : ''}>${esc(voice.name)} — ${esc(voice.description)}</option>`
+                ),
+            ].join('');
+        }
+
+        function loadGameSetupVoices() {
+            setGameSetupVoiceStatus(voicesState ? '' : 'Loading voice choices…');
+            socket.timeout(10000).emit('get-voices', (err, res) => {
+                if (!gameSetupGameId) return;
+                if (err || !res?.success) {
+                    setGameSetupVoiceStatus(
+                        err ? 'Could not load voices from the server.' : res?.error || 'Could not load voices.',
+                        true
+                    );
+                    renderGameSetupParticipants();
+                    return;
+                }
+                voicesState = res;
+                setGameSetupVoiceStatus(
+                    res.previewAvailable ? 'Choose a voice and press ▶ to hear a sample.' : 'Voice previews require ELEVENLABS_API_KEY.'
+                );
+                renderGameSetupParticipants();
+            });
+        }
+
         function updateGameSetupPromptCount() {
             const textarea = document.getElementById('gameSetupSystemPrompt');
             const count = document.getElementById('gameSetupPromptCount');
@@ -2875,7 +3104,7 @@
                 const profile = profiles[i % profiles.length];
                 const name = nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
                 reserved.add(name);
-                rows.push({ profileId: profile.id, name });
+                rows.push({ profileId: profile.id, name, voice: null });
             }
             return rows;
         }
@@ -2912,6 +3141,13 @@
                     <input type="text" data-field="name" maxlength="16" spellcheck="false"
                         class="${nameValid && !duplicate ? '' : 'invalid'}"
                         value="${esc(participant.name || '')}" aria-label="Participant name">
+                    <div class="game-setup-voice">
+                        <select data-field="voice" aria-label="Voice for ${esc(participant.name || `participant ${index + 1}`)}"
+                            ${voicesState ? '' : 'disabled'}>${gameVoiceOptionsHtml(participant)}</select>
+                        <button type="button" class="btn btn-ghost btn-preview" data-action="preview-voice"
+                            ${voicesState?.previewAvailable ? '' : 'disabled'}
+                            title="${voicesState?.previewAvailable ? 'Preview this voice' : 'Voice preview unavailable'}">▶</button>
+                    </div>
                     <button type="button" class="btn btn-ghost" data-action="remove" ${gameSetupParticipants.length <= 1 ? 'disabled' : ''}>Remove</button>
                     <div class="name-hint ${nameValid && !duplicate ? '' : 'error'}">${esc(hint)}</div>
                 `;
@@ -2955,6 +3191,24 @@
                                     ? 'Name is already taken'
                                     : 'Minecraft-safe name';
                     }
+                    const automaticOption = row.querySelector('[data-field="voice"] option[value=""]');
+                    if (automaticOption && !participant.voice) {
+                        automaticOption.textContent = `Auto — ${effectiveGameVoice(participant)}`;
+                    }
+                });
+
+                row.querySelector('[data-field="voice"]').addEventListener('change', (event) => {
+                    gameSetupParticipants[index].voice = event.target.value || null;
+                });
+
+                row.querySelector('[data-action="preview-voice"]').addEventListener('click', (event) => {
+                    const voice = effectiveGameVoice(gameSetupParticipants[index]);
+                    playVoicePreview(
+                        voice,
+                        gameSetupParticipants[index].name,
+                        event.currentTarget,
+                        setGameSetupVoiceStatus
+                    );
                 });
 
                 row.querySelector('[data-action="remove"]').addEventListener('click', () => {
@@ -2989,6 +3243,7 @@
                 'Temporary bots are created for this match, then cleaned up afterward.';
             renderGameSetupParticipants();
             document.getElementById('gameSetupModal').style.display = 'flex';
+            loadGameSetupVoices();
         }
 
         function closeGameSetup() {
@@ -2996,6 +3251,8 @@
             gameSetupGameId = null;
             gameSetupParticipants = [];
             setGameSetupError('');
+            setGameSetupVoiceStatus('');
+            if (previewAudio) { previewAudio.pause(); previewAudio = null; }
         }
 
         function validateGameSetup() {
@@ -3034,9 +3291,10 @@
                 return;
             }
             const gameId = gameSetupGameId;
-            const participants = gameSetupParticipants.map(({ profileId, name }) => ({
+            const participants = gameSetupParticipants.map(({ profileId, name, voice }) => ({
                 profileId,
                 name,
+                voice: voice || null,
             }));
             const systemPrompt = String(document.getElementById('gameSetupSystemPrompt')?.value || '').trim();
 
@@ -3078,6 +3336,7 @@
             gameSetupParticipants.push({
                 profileId: profile.id,
                 name: nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved),
+                voice: null,
             });
             renderGameSetupParticipants();
         });
@@ -3452,6 +3711,7 @@
                 const st = lastStates[name];
                 if (!st || st.error) return;
                 patchAgentCard(name, st);
+                patchGamePlayer(name, st);
             });
             drawColonyMap();
         });
@@ -4190,6 +4450,7 @@
             updateQuickCreateState();
             updateAgentCount();
             if (typeof renderGameCards === 'function') renderGameCards();
+            if (currentView === 'games') renderContestState(contestState);
 
             if (!agentsDiv.children.length || agentsDiv.querySelector('.empty-agents')) {
                 if (!agents.length) {
@@ -4383,6 +4644,8 @@
                 if (!a.in_game) return;
                 const img = document.getElementById(`snapshot-${a.name}`);
                 if (img) img.src = `/bots/${encodeURIComponent(a.name)}/snapshot.jpg?t=${Date.now()}`;
+                const gameImg = document.getElementById(`gameSnapshot-${a.name}`);
+                if (gameImg) gameImg.src = `/bots/${encodeURIComponent(a.name)}/snapshot.jpg?t=${Date.now()}`;
             });
         }, 10000);
 
@@ -4654,22 +4917,22 @@
                 || null;
         }
 
-        function playVoicePreview(voice, botName, btn) {
+        function playVoicePreview(voice, botName, btn, setStatus = setVoicesStatus) {
             if (!voice) return;
             if (previewAudio) { previewAudio.pause(); previewAudio = null; }
             btn.disabled = true;
             btn.textContent = '…';
-            setVoicesStatus('Generating preview…');
+            setStatus('Generating preview…');
             socket.timeout(20000).emit('preview-voice', { voice, botName }, (err, res) => {
                 btn.disabled = !voicesState?.previewAvailable;
                 btn.textContent = '▶';
                 if (err || !res?.success) {
-                    setVoicesStatus(`Preview failed: ${err ? 'no response from the server' : res?.error || 'unknown error'}`, true);
+                    setStatus(`Preview failed: ${err ? 'no response from the server' : res?.error || 'unknown error'}`, true);
                     return;
                 }
-                setVoicesStatus('');
+                setStatus('');
                 previewAudio = new Audio('data:audio/mpeg;base64,' + res.audio);
-                previewAudio.play().catch(e => setVoicesStatus(`Could not play audio: ${e.message}`, true));
+                previewAudio.play().catch(e => setStatus(`Could not play audio: ${e.message}`, true));
             });
         }
 

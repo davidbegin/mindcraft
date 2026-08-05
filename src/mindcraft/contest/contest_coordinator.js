@@ -348,6 +348,36 @@ export class ContestCoordinator {
         });
     }
 
+    async declareWinner(contestId, participantId, payload = {}) {
+        assertNonEmptyString(participantId, 'participantId');
+        return this._enqueue(async () => {
+            const contest = this._requireContest(contestId);
+            if (contest.status !== 'running') {
+                throw new Error('Contest is not accepting a winner');
+            }
+            if (!contest.participantIds.includes(participantId)) {
+                throw new Error(`Participant is not registered: ${participantId}`);
+            }
+            const now = this.clock();
+            if (now >= contest.deadlineAt) {
+                await this._finalizeContest(contest, 'deadline');
+                throw new Error('Contest deadline has passed');
+            }
+            contest.submissions[participantId] = {
+                participantId,
+                payload: clone(payload),
+                submittedAt: now,
+            };
+            await this._commit('winner.detected', {
+                contestId,
+                participantId,
+                payload: clone(payload),
+            });
+            await this._finalizeContest(contest, 'winner-detected');
+            return clone(contest);
+        });
+    }
+
     async tick() {
         return this._enqueue(async () => {
             const contest = this.state.activeContestId

@@ -71,6 +71,52 @@ test('supports injected judging rules and preserves ties', async () => {
     });
 });
 
+test('first detected win item completes the contest immediately', async () => {
+    let now = 5_000;
+    await withCoordinator(async ({ coordinator, root }) => {
+        const contestId = await createAndStart(coordinator, {
+            rules: {
+                type: 'diamond_race',
+                winItem: 'diamond',
+                metrics: [{
+                    path: 'elapsedMs',
+                    weight: 1,
+                    direction: 'minimize',
+                }],
+            },
+        });
+        now = 8_250;
+        const completed = await coordinator.declareWinner(
+            contestId,
+            'alice',
+            { item: 'diamond', elapsedMs: 3_250 }
+        );
+
+        assert.equal(completed.status, 'completed');
+        assert.deepEqual(completed.winnerIds, ['alice']);
+        assert.equal(completed.completedAt, now);
+        assert.equal(coordinator.snapshot().activeContestId, null);
+        assert.equal(completed.submissions.alice.payload.item, 'diamond');
+        assert.equal(completed.results.find(result => result.participantId === 'bob').rank, null);
+
+        await assert.rejects(
+            coordinator.declareWinner(contestId, 'bob', {
+                item: 'diamond',
+                elapsedMs: 3_251,
+            }),
+            /not accepting a winner/
+        );
+        const events = (await readFile(
+            path.join(root, 'journal.jsonl'),
+            'utf8'
+        )).trim().split('\n').map(line => JSON.parse(line));
+        assert.ok(events.some(event =>
+            event.type === 'winner.detected'
+            && event.data.participantId === 'alice'
+        ));
+    }, { clock: () => now });
+});
+
 test('deadline tick judges missing submissions and persists reloadable state', async () => {
     let now = 10_000;
     await withCoordinator(async ({ coordinator, root }) => {

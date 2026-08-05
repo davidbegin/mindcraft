@@ -176,10 +176,16 @@ export class ContestHud {
     async _announceCompleted(contest) {
         const winners = contest.winnerIds || [];
         const winnerResults = rankedResults(contest).filter(result => result.rank === 1);
-        const winnerLabel = winners.length > 1 ? 'TIE!' : 'WINNER!';
+        const isDiamondRace = contest.rules?.type === 'diamond_race';
+        const winnerLabel = isDiamondRace
+            ? 'DIAMOND FOUND!'
+            : winners.length > 1 ? 'TIE!' : 'WINNER!';
         const names = winners.length > 0 ? winners.join(' & ') : 'No winner';
         const score = winnerResults[0] ? formatContestScore(contest, winnerResults[0]) : '';
-        const subtitle = score ? `${names} · ${score}` : names;
+        const subtitle = isDiamondRace && winners.length > 0
+            ? `${names} WINS!`
+            : score ? `${names} · ${score}` : names;
+        const titleColor = isDiamondRace ? 'aqua' : 'green';
         const resultLines = rankedResults(contest).map(result => {
             const resultScore = formatContestScore(contest, result);
             return `${result.rank}. ${result.participantId}${resultScore ? ` — ${resultScore}` : ''}`;
@@ -188,12 +194,16 @@ export class ContestHud {
         await this._commands([
             `bossbar remove ${BOSSBAR_ID}`,
             `title ${ALL_PLAYERS} times 10 120 30`,
-            `title ${ALL_PLAYERS} title ${textComponent(winnerLabel, { color: 'green', bold: true })}`,
+            `title ${ALL_PLAYERS} title ${textComponent(winnerLabel, { color: titleColor, bold: true })}`,
             `title ${ALL_PLAYERS} subtitle ${textComponent(subtitle, { color: 'gold', bold: true })}`,
             `playsound ui.toast.challenge_complete master ${ALL_PLAYERS} ~ ~ ~ 1 1 1`,
+            ...(isDiamondRace ? [
+                `playsound entity.firework_rocket.large_blast master ${ALL_PLAYERS} ~ ~ ~ 1 1 1`,
+                `playsound entity.player.levelup master ${ALL_PLAYERS} ~ ~ ~ 1 1.4 1`,
+            ] : []),
             `tellraw ${ALL_PLAYERS} ${textComponent(
                 `[${contest.title}] ${winnerLabel} ${subtitle}`,
-                { color: 'green', bold: true }
+                { color: titleColor, bold: true }
             )}`,
             ...resultLines.map(line =>
                 `tellraw ${ALL_PLAYERS} ${textComponent(line, { color: 'yellow' })}`
