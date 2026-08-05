@@ -77,13 +77,18 @@ class ConversationManager {
             let delta = Date.now() - last_time;
             last_time = Date.now();
             let convo_partner = this.activeConversation.name;
-            const timeout = settings.colony?.conversation_timeout_ms ?? 90000;
-            if (settings.colony?.enabled && this.activeConversation.started_at &&
+            const coordinatedMode = settings.colony?.enabled || settings.game_session;
+            const timeout = settings.game_session
+                ? (settings.game_session.conversationTimeoutMs ?? 20_000)
+                : (settings.colony?.conversation_timeout_ms ?? 90_000);
+            if (coordinatedMode && this.activeConversation.started_at &&
                 Date.now() - this.activeConversation.started_at >= timeout) {
                 this.endConversation(convo_partner);
                 agent.history.add(
                     'system',
-                    `Conversation with ${convo_partner} reached the colony time limit. Resume your assigned physical work.`
+                    settings.game_session
+                        ? `Banter with ${convo_partner} is over. Keep playing to win and talk again later.`
+                        : `Conversation with ${convo_partner} reached the colony time limit. Resume your assigned physical work.`
                 );
                 return;
             }
@@ -143,6 +148,9 @@ class ConversationManager {
         convo.active = true;
         this.activeConversation = convo;
         this._startMonitor();
+        if (settings.game_session && settings.chat_bot_messages) {
+            await agent.openChat(`(To ${send_to}) ${message}`, { addressed: true });
+        }
         this.sendToBot(send_to, message, true, false);
     }
 

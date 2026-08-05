@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 import convoManager from './conversation.js';
 import { setSettings } from './settings.js';
-import { getFullState } from './library/full_state.js';
+import { getFullState, getWallState } from './library/full_state.js';
 
 // agent's individual connection to the mindserver
 // always connect to localhost
@@ -105,6 +105,26 @@ class MindServerProxy {
             }
         });
 
+        this.socket.on('game-directive', async (directive, callback) => {
+            try {
+                if (!this.agent || !directive?.prompt) {
+                    callback?.({ success: false, error: 'Agent is not ready for a game directive' });
+                    return;
+                }
+                this.agent.history.add('system', `GAME DIRECTIVE\n${directive.prompt}`);
+                if (convoManager.inConversation()) {
+                    this.agent.self_prompter.setPromptPaused(directive.prompt);
+                    callback?.({ success: true, status: 'queued_during_conversation' });
+                    return;
+                }
+                const result = this.agent.self_prompter.start(directive.prompt);
+                callback?.({ success: true, status: 'started', detail: result });
+            } catch (error) {
+                console.error('Error applying game directive:', error);
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
         this.socket.on('model-probe', async (callback) => {
             try {
                 if (!this.agent?.prompter) {
@@ -143,6 +163,24 @@ class MindServerProxy {
             }
         });
 
+        this.socket.on('start-contest-recording', async (options, callback) => {
+            try {
+                const result = await this.agent.startContestRecording(options || {});
+                callback?.({ success: true, ...result });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
+        this.socket.on('stop-contest-recording', async (callback) => {
+            try {
+                const result = await this.agent.stopContestRecording();
+                callback?.({ success: true, ...result });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
         this.socket.on('set-auto-recording', async (enabled, callback) => {
             try {
                 if (!this.agent?.pov_recorder) {
@@ -162,6 +200,16 @@ class MindServerProxy {
                 callback(state);
             } catch (error) {
                 console.error('Error getting full state:', error);
+                callback(null);
+            }
+        });
+
+        this.socket.on('get-wall-state', (callback) => {
+            try {
+                const state = getWallState(this.agent);
+                callback(state);
+            } catch (error) {
+                console.error('Error getting wall state:', error);
                 callback(null);
             }
         });

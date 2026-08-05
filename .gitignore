@@ -42,3 +42,7 @@ src/mindcraft-py/__pycache__/
 # local secrets
 code/.env
 .env
+
+# contest runtime state (generated while games run)
+contests/journal.jsonl
+contests/state.json

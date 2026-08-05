@@ -129,7 +129,7 @@
     },
     "record_bot_view": {
         "type": "boolean",
-        "description": "Whether to auto-record the bot's first-person POV to MP4 files in bots/<name>/recordings on spawn. Recording can also be toggled per-agent from the UI. Requires ffmpeg.",
+        "description": "Whether to auto-record the bot's third-person follow view to MP4 files in bots/<name>/recordings on spawn. Recording can also be toggled per-agent from the UI. Requires ffmpeg.",
         "default": false
     },
     "record_actions": {
@@ -172,6 +172,15 @@
             "spawn_cooldown_ms": 30000,
             "model_probe_base_ms": 60000,
             "model_probe_max_ms": 900000
+        }
+    },
+    "contest": {
+        "type": "object",
+        "description": "Persistent timed contest coordination and judging loop settings.",
+        "default": {
+            "enabled": true,
+            "state_dir": "./contests",
+            "tick_interval_ms": 1000
         }
     }
 }

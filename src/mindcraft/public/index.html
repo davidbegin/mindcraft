@@ -36,6 +36,10 @@
 
         * { box-sizing: border-box; }
 
+        /* Class rules like .btn set display, which would otherwise beat the
+           user-agent [hidden] rule and leave "hidden" controls visible. */
+        [hidden] { display: none !important; }
+
         html, body {
             margin: 0;
             min-height: 100%;
@@ -130,6 +134,33 @@
             color: var(--text-dim);
             font-size: 0.85rem;
         }
+
+        .view-nav {
+            display: inline-flex;
+            gap: 4px;
+            padding: 3px;
+            border-radius: 10px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+        }
+
+        .view-nav button {
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        .view-nav button:hover { color: var(--text); }
+
+        .view-nav button.active {
+            background: var(--lime-dim);
+            color: var(--lime);
+            border: 1px solid rgba(159, 232, 112, 0.28);
+        }
+
+        .view-panel[hidden] { display: none !important; }
 
         .meta-chip {
             background: var(--bg-elevated);
@@ -930,11 +961,61 @@
         }
 
         .coords {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 100%;
             font-family: var(--mono);
-            font-size: 0.95rem;
+            font-size: 0.82rem;
             font-weight: 600;
             letter-spacing: -0.02em;
             color: var(--text);
+            background: var(--bg-inset);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 10px;
+            cursor: pointer;
+            user-select: all;
+            transition: border-color 0.15s, background 0.15s, color 0.15s;
+        }
+
+        .coords:hover:not(.empty) {
+            border-color: var(--lime);
+            background: var(--lime-dim);
+            color: var(--lime);
+        }
+
+        .coords.empty {
+            cursor: default;
+            color: var(--text-mute);
+            user-select: none;
+        }
+
+        .coords.copied {
+            border-color: var(--lime);
+            background: var(--lime-dim);
+            color: var(--lime);
+        }
+
+        .coords-cmd {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .coords-hint {
+            flex-shrink: 0;
+            font-family: var(--font);
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            color: var(--text-mute);
+            text-transform: uppercase;
+        }
+
+        .coords:hover:not(.empty) .coords-hint,
+        .coords.copied .coords-hint {
+            color: inherit;
         }
 
         .where-meta {
@@ -1323,6 +1404,301 @@
 
         .footer-left { color: var(--text-dim); font-size: 0.85rem; }
 
+        /* —— Contests / Games —— */
+        .games-strip {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px 18px;
+            margin-bottom: 16px;
+            box-shadow: var(--shadow);
+        }
+
+        .games-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+
+        .games-head h2 {
+            margin: 0 0 4px;
+            font-size: 1.05rem;
+            font-weight: 600;
+        }
+
+        .games-sub {
+            color: var(--text-dim);
+            max-width: 640px;
+        }
+
+        .game-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 12px;
+        }
+
+        .game-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 180px;
+        }
+
+        .game-card h3 {
+            margin: 0;
+            font-size: 1rem;
+            letter-spacing: -0.02em;
+        }
+
+        .game-card p {
+            margin: 0;
+            color: var(--text-dim);
+            flex: 1;
+        }
+
+        .game-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .game-chip {
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-mute);
+            background: var(--bg-inset);
+        }
+
+        .game-chip.hot {
+            color: var(--amber);
+            border-color: rgba(240, 180, 41, 0.35);
+            background: var(--amber-dim);
+        }
+
+        .game-chip.fresh {
+            color: var(--cyan);
+            border-color: rgba(94, 200, 192, 0.35);
+            background: rgba(94, 200, 192, 0.12);
+        }
+
+        .game-card .btn { align-self: flex-start; }
+
+        .contest-live {
+            margin-top: 14px;
+            padding: 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(159, 232, 112, 0.28);
+            background: rgba(159, 232, 112, 0.06);
+        }
+
+        .contest-live.idle {
+            border-color: var(--border);
+            background: var(--bg-inset);
+        }
+
+        .contest-live h3 {
+            margin: 0 0 6px;
+            font-size: 0.95rem;
+        }
+
+        .contest-live-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px 16px;
+            align-items: center;
+            color: var(--text-dim);
+            font-size: 0.88rem;
+        }
+
+        .contest-live-row strong { color: var(--text); }
+
+        .contest-results {
+            margin-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .contest-result-row {
+            display: grid;
+            grid-template-columns: 40px 1fr auto;
+            gap: 10px;
+            align-items: center;
+            padding: 6px 8px;
+            border-radius: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            font-family: var(--mono);
+            font-size: 0.8rem;
+        }
+
+        .contest-result-row .rank { color: var(--lime); font-weight: 700; }
+        .contest-status-msg {
+            margin-top: 10px;
+            font-size: 0.85rem;
+            color: var(--text-mute);
+            min-height: 1.2em;
+        }
+        .contest-status-msg.error { color: var(--red); }
+
+        .contest-join {
+            margin-top: 12px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border: 1px solid rgba(94, 200, 192, 0.28);
+            background: rgba(94, 200, 192, 0.08);
+            color: var(--text-dim);
+            font-size: 0.88rem;
+            line-height: 1.45;
+        }
+
+        .contest-join strong { color: var(--text); }
+
+        .contest-join code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            color: var(--cyan);
+            background: rgba(0, 0, 0, 0.28);
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        .contest-join .join-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .game-setup-modal {
+            width: min(640px, 94vw);
+            height: auto;
+            max-height: min(88vh, 760px);
+        }
+
+        .game-setup-participants {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .game-setup-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: center;
+            padding: 10px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-inset);
+        }
+
+        .game-setup-row select,
+        .game-setup-row input[type="text"],
+        .game-setup-prompt textarea {
+            width: 100%;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            padding: 7px 9px;
+            font: inherit;
+        }
+
+        .game-setup-row select:focus,
+        .game-setup-row input[type="text"]:focus,
+        .game-setup-prompt textarea:focus {
+            outline: none;
+            border-color: var(--border-strong);
+        }
+
+        .game-setup-row input.invalid {
+            border-color: var(--red);
+        }
+
+        .game-setup-row .name-hint {
+            grid-column: 1 / -1;
+            font-size: 0.75rem;
+            color: var(--text-mute);
+        }
+
+        .game-setup-row .name-hint.error {
+            color: var(--red);
+        }
+
+        .game-setup-actions {
+            display: flex;
+            justify-content: flex-start;
+            margin-bottom: 14px;
+        }
+
+        .game-setup-prompt {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .game-setup-prompt label {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        .game-setup-prompt textarea {
+            resize: vertical;
+            min-height: 96px;
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            line-height: 1.4;
+        }
+
+        .game-setup-prompt-count {
+            align-self: flex-end;
+            font-size: 0.75rem;
+            color: var(--text-mute);
+            font-family: var(--mono);
+        }
+
+        .contest-participant-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .contest-participant-chip {
+            font-size: 0.78rem;
+            font-family: var(--mono);
+            padding: 4px 8px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-dim);
+        }
+
+        .contest-participant-chip strong {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .contest-watch-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+        }
+
         @media (max-width: 720px) {
             body { padding: 14px 12px 120px; }
             .card-top { grid-template-columns: 56px 1fr auto; }
@@ -1331,6 +1707,9 @@
             .paper-doll { grid-template-columns: repeat(5, 36px); }
             .slot { width: 36px; height: 36px; }
             .colony-map { height: 180px; }
+            .game-setup-row {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -1340,6 +1719,10 @@
             <h1>Mindcraft</h1>
             <span class="tag">spy</span>
         </div>
+        <nav class="view-nav" aria-label="Main views">
+            <button type="button" id="viewColonyBtn" class="active" data-view="colony">Colony</button>
+            <button type="button" id="viewGamesBtn" data-view="games">Games</button>
+        </nav>
         <span id="msStatus" class="status-pill offline">mindserver offline</span>
         <div class="topbar-meta">
             <span class="meta-chip" id="agentCountMeta">0 agents</span>
@@ -1347,6 +1730,7 @@
         </div>
     </header>
 
+    <div id="colonyView" class="view-panel">
     <section id="colonyPanel" class="colony-strip">
         <div class="colony-head">
             <div>
@@ -1372,6 +1756,39 @@
     </section>
 
     <div id="agents"></div>
+    </div>
+
+    <div id="gamesView" class="view-panel" hidden>
+        <section class="games-strip">
+            <div class="games-head">
+                <div>
+                    <h2>Bot Games</h2>
+                    <div class="games-sub">
+                        Same Minecraft server as the colony — not a new world or port. Set up temporary contest bots from model profiles, reset a remote arena, and watch them compete.
+                    </div>
+                </div>
+            </div>
+            <div id="contestJoinCard" class="contest-join">
+                Loading join address…
+            </div>
+            <div id="gameGrid" class="game-grid"></div>
+            <div id="contestLive" class="contest-live idle">
+                <h3 id="contestLiveTitle">No active contest</h3>
+                <div class="contest-live-row" id="contestLiveRow">
+                    Pick a game above and choose model profiles to start.
+                </div>
+                <div id="contestParticipantChips" class="contest-participant-chips" hidden></div>
+                <div id="contestResults" class="contest-results" hidden></div>
+                <div class="contest-live-row" style="margin-top:10px;">
+                    <button id="cancelContestBtn" class="btn btn-danger" hidden>Cancel contest</button>
+                    <button id="warpSpectatorsBtn" class="btn btn-ghost" hidden>Warp me to arena</button>
+                    <a id="watchLiveBtn" class="btn btn-primary contest-watch-link" hidden href="/live.html" target="_blank" rel="noopener">Watch Live</a>
+                    <button id="exportGameSessionBtn" class="btn btn-ghost" hidden>Export session</button>
+                </div>
+                <div id="contestStatusMsg" class="contest-status-msg"></div>
+            </div>
+        </section>
+    </div>
 
     <div class="page-footer">
         <div class="quick-create">
@@ -1389,7 +1806,7 @@
             <span class="broadcast-status" id="broadcastStatus"></span>
         </div>
         <div class="footer-actions">
-            <button class="btn btn-ghost" onclick="window.open('/live.html', '_blank')">📺 Live Wall</button>
+            <button class="btn btn-ghost" onclick="window.open(focusedAgent ? '/live.html?focus=' + encodeURIComponent(focusedAgent) : '/live.html', '_blank')">📺 Live Wall</button>
             <button class="btn btn-ghost" onclick="openVoices()">🎙 Voices</button>
             <button class="btn btn-ghost" onclick="openRecordings()">🎥 Recordings</button>
             <button class="btn btn-ghost" onclick="disconnectAllAgents()">Disconnect All</button>
@@ -1431,7 +1848,7 @@
                 </div>
             </div>
             <div class="modal-body">
-                <div class="recordings-hint" id="recordingsHint">Press ⏺ Rec on an agent card to record that bot's first-person view.</div>
+                <div class="recordings-hint" id="recordingsHint">Press ⏺ Rec on an agent card to record that bot's third-person follow view.</div>
                 <div class="rec-export">
                     <label>From <input type="datetime-local" id="recExportSince"></label>
                     <label>To <input type="datetime-local" id="recExportUntil" title="Leave empty for “everything since From”"></label>
@@ -1515,6 +1932,36 @@
         </div>
     </div>
 
+    <div id="gameSetupModal" class="modal-backdrop">
+        <div class="modal game-setup-modal">
+            <div class="modal-header">
+                <h2 id="gameSetupTitle">Set up game</h2>
+                <button type="button" id="closeGameSetupBtn" class="btn btn-danger">Close</button>
+            </div>
+            <div class="modal-body">
+                <div id="gameSetupParticipants" class="game-setup-participants"></div>
+                <div class="game-setup-actions">
+                    <button type="button" id="gameSetupAddParticipantBtn" class="btn btn-ghost">+ Add participant</button>
+                </div>
+                <div class="game-setup-prompt">
+                    <label for="gameSetupSystemPrompt">System prompt (optional)</label>
+                    <textarea id="gameSetupSystemPrompt" maxlength="4000" rows="4"
+                        placeholder="Extra instructions for every temporary contest bot…"
+                        spellcheck="true"></textarea>
+                    <div class="game-setup-prompt-count"><span id="gameSetupPromptCount">0</span>/4000</div>
+                </div>
+                <div id="gameSetupError" class="contest-status-msg error"></div>
+            </div>
+            <div class="modal-footer">
+                <div class="footer-left" id="gameSetupFooter">Pick profiles and unique Minecraft names, then start.</div>
+                <div class="footer-actions">
+                    <button type="button" id="cancelGameSetupBtn" class="btn btn-ghost">Cancel</button>
+                    <button type="button" id="submitGameSetupBtn" class="btn btn-primary">Start game</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const socket = io({ path: window.location.pathname + 'socket.io' });
         const agentsDiv = document.getElementById('agents');
@@ -1529,8 +1976,20 @@
         let availableProfiles = [];
         let renderedProfileKey = '';
         let colonyState = null;
+        let contestState = null;
+        let contestGames = [];
+        let contestGamesError = '';
+        let contestBusy = false;
+        let contestJoin = null;
+        let currentView = 'colony';
+        let contestClockTimer = null;
+        let gameSetupGameId = null;
+        let gameSetupParticipants = [];
         let focusedAgent = null;
         let lastStates = {};
+
+        const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
+        const MAX_GAME_SYSTEM_PROMPT = 4000;
 
         const ITEM_ICON_CDN = 'https://mc.nerothe.com/img/1.21.4';
         const ROLE_COLORS = {
@@ -2004,17 +2463,661 @@
             subscribeToState();
             loadProfiles();
             loadColonyState();
+            loadContestState();
             Object.keys(agentSettings).forEach(name => delete agentSettings[name]);
         });
         socket.on('disconnect', () => updateStatus(false));
         socket.on('connect_error', () => updateStatus(false));
         socket.on('colony-update', renderColonyState);
+        socket.on('contest-update', renderContestState);
+
+        function setView(view) {
+            currentView = view === 'games' ? 'games' : 'colony';
+            document.getElementById('colonyView').hidden = currentView !== 'colony';
+            document.getElementById('gamesView').hidden = currentView !== 'games';
+            document.getElementById('viewColonyBtn').classList.toggle('active', currentView === 'colony');
+            document.getElementById('viewGamesBtn').classList.toggle('active', currentView === 'games');
+            if (currentView === 'games') loadContestState();
+        }
+
+        document.getElementById('viewColonyBtn').addEventListener('click', () => setView('colony'));
+        document.getElementById('viewGamesBtn').addEventListener('click', () => setView('games'));
 
         function loadColonyState() {
             socket.emit('colony-status', (result) => {
                 if (result?.success) renderColonyState(result.data);
             });
         }
+
+        function loadContestState() {
+            let answered = false;
+            // An older MindServer process has no contest handlers, so the ack
+            // never fires and the panel would sit on "Loading…" forever.
+            const noHandler = setTimeout(() => {
+                if (answered) return;
+                contestGamesError = 'This MindServer build has no contest support. Restart it (node main.js) to load games.';
+                renderGameCards();
+                setContestStatus(contestGamesError, true);
+            }, 3000);
+
+            socket.emit('contest-status', (result) => {
+                answered = true;
+                clearTimeout(noHandler);
+                if (result?.join) contestJoin = result.join;
+                renderContestJoinCard();
+                if (Array.isArray(result?.games) && result.games.length) {
+                    contestGames = result.games;
+                    contestGamesError = '';
+                } else if (!result?.success) {
+                    contestGamesError = result?.error || 'Contest coordinator unavailable';
+                }
+                renderGameCards();
+                if (result?.success) {
+                    setContestStatus('');
+                    renderContestState(result.data);
+                } else if (result?.error) {
+                    setContestStatus(result.error, true);
+                }
+            });
+        }
+
+        function renderContestJoinCard() {
+            const card = document.getElementById('contestJoinCard');
+            if (!card) return;
+            const join = contestJoin;
+            if (!join?.address) {
+                card.textContent = 'Join address unavailable until MindServer reconnects.';
+                return;
+            }
+            const center = join.arena?.center || join.arenaReset?.center;
+            const coords = center
+                ? `${center.x} ${center.y} ${center.z}`
+                : '100000 100 100000';
+            const tp = join.teleportCommand || `/tp @s ${coords}`;
+            card.innerHTML = `
+                <div><strong>Join Minecraft here:</strong> <code>${esc(join.address)}</code></div>
+                <div>This page is the spy UI on port <code>${esc(String(join.mindserverPort || 8080))}</code>. Live Wall ports (<code>3000+</code>) are camera views only — not where you join.</div>
+                <div>Contests happen in the <strong>same world</strong>. Bots (and any human already online) get teleported to arena <code>${esc(coords)}</code>.</div>
+                <div>If you are already connected, run <code>${esc(tp)}</code> or click <strong>Warp me to arena</strong> during a live contest.</div>
+            `;
+        }
+
+        function setContestStatus(message, isError = false) {
+            const el = document.getElementById('contestStatusMsg');
+            el.textContent = message || '';
+            el.classList.toggle('error', Boolean(isError && message));
+        }
+
+        function formatCountdown(deadlineAt) {
+            if (!deadlineAt) return '—';
+            const remaining = Math.max(0, deadlineAt - Date.now());
+            const totalSec = Math.floor(remaining / 1000);
+            const min = Math.floor(totalSec / 60);
+            const sec = String(totalSec % 60).padStart(2, '0');
+            return `${min}:${sec}`;
+        }
+
+        function renderGameCards() {
+            const grid = document.getElementById('gameGrid');
+            grid.replaceChildren();
+            const profileCount = availableProfiles.length;
+            const active = contestState?.activeContest;
+            const gameSession = contestState?.gameSession;
+            const sessionBusy = Boolean(gameSession && gameSession.status !== 'failed');
+            const blocked = contestBusy
+                || Boolean(active && ['running', 'draft', 'judging'].includes(active.status))
+                || sessionBusy;
+
+            for (const game of contestGames) {
+                const card = document.createElement('article');
+                card.className = 'game-card';
+                const chips = [
+                    `<span class="game-chip">${esc(game.durationLabel)}</span>`,
+                ];
+                if (game.pvp) chips.push('<span class="game-chip hot">PVP</span>');
+                if (game.radicalReset) chips.push('<span class="game-chip fresh">Reset arena</span>');
+
+                const canStart = !blocked && profileCount > 0;
+                let label = 'Set up game';
+                if (blocked) label = contestBusy || sessionBusy ? 'Starting…' : 'In progress';
+                else if (profileCount === 0) label = 'No profiles';
+
+                card.innerHTML = `
+                    <h3>${esc(game.title)}</h3>
+                    <p>${esc(game.blurb)}</p>
+                    <div class="game-meta">${chips.join('')}</div>
+                    <button class="btn btn-primary" data-game-id="${esc(game.id)}" ${canStart ? '' : 'disabled'}>
+                        ${esc(label)}
+                    </button>
+                `;
+                const btn = card.querySelector('button');
+                btn.addEventListener('click', () => openGameSetup(game.id));
+                grid.appendChild(card);
+            }
+
+            if (contestGames.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'games-sub';
+                empty.textContent = contestGamesError
+                    || 'Loading game presets…';
+                grid.appendChild(empty);
+            }
+        }
+
+        function renderContestResults(contest) {
+            const box = document.getElementById('contestResults');
+            const results = contest?.results || [];
+            if (!results.length) {
+                box.hidden = true;
+                box.replaceChildren();
+                return;
+            }
+            box.hidden = false;
+            box.replaceChildren();
+            for (const result of results) {
+                const row = document.createElement('div');
+                row.className = 'contest-result-row';
+                const rank = result.rank == null ? '—' : `#${result.rank}`;
+                const score = result.score == null ? 'DQ' : result.score;
+                row.innerHTML = `
+                    <span class="rank">${esc(String(rank))}</span>
+                    <span>${esc(result.participantId)}</span>
+                    <span>${esc(String(score))}</span>
+                `;
+                box.appendChild(row);
+            }
+        }
+
+        function renderContestParticipantChips(participants) {
+            const box = document.getElementById('contestParticipantChips');
+            if (!box) return;
+            const list = Array.isArray(participants) ? participants : [];
+            if (!list.length) {
+                box.hidden = true;
+                box.replaceChildren();
+                return;
+            }
+            box.hidden = false;
+            box.replaceChildren();
+            for (const participant of list) {
+                const chip = document.createElement('span');
+                chip.className = 'contest-participant-chip';
+                const model = participant.model || 'model';
+                const provider = participant.provider ? ` · ${participant.provider}` : '';
+                chip.innerHTML = `<strong>${esc(participant.name || '?')}</strong> ${esc(model)}${esc(provider)}`;
+                box.appendChild(chip);
+            }
+        }
+
+        function updateWatchLiveButton(session) {
+            const btn = document.getElementById('watchLiveBtn');
+            if (!btn) return;
+            const sessionKey = session?.sessionId || session?.contestId || null;
+            if (!sessionKey) {
+                btn.hidden = true;
+                btn.removeAttribute('href');
+                return;
+            }
+            btn.hidden = false;
+            btn.href = `/live.html?session=${encodeURIComponent(sessionKey)}`;
+        }
+
+        function updateGameSessionExport(sessionKey) {
+            const btn = document.getElementById('exportGameSessionBtn');
+            if (!sessionKey) {
+                btn.hidden = true;
+                delete btn.dataset.session;
+                return;
+            }
+            btn.hidden = false;
+            btn.dataset.session = sessionKey;
+        }
+
+        document.getElementById('exportGameSessionBtn').addEventListener('click', async (event) => {
+            const btn = event.currentTarget;
+            const session = btn.dataset.session;
+            if (!session) return;
+            btn.disabled = true;
+            setContestStatus('Preparing synchronized session export…');
+            try {
+                const query = `session=${encodeURIComponent(session)}`;
+                const info = await fetch(`/api/recordings/export-info?${query}`).then(response => response.json());
+                if (!info.success || !info.count) {
+                    throw new Error(info.error || 'No finished session recordings are available');
+                }
+                window.location.href = `/api/recordings/export.zip?${query}`;
+                setContestStatus(`Exporting ${info.count} synchronized clip${info.count === 1 ? '' : 's'}…`);
+            } catch (error) {
+                setContestStatus(error.message, true);
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        function renderContestState(state) {
+            contestState = state || null;
+            const live = document.getElementById('contestLive');
+            const title = document.getElementById('contestLiveTitle');
+            const row = document.getElementById('contestLiveRow');
+            const cancelBtn = document.getElementById('cancelContestBtn');
+            const warpBtn = document.getElementById('warpSpectatorsBtn');
+            const gameSession = state?.gameSession || null;
+            const active = state?.activeContest
+                || (state?.contests || []).find(c => c.status === 'running' || c.status === 'judging')
+                || null;
+            const latestDone = !active
+                ? (state?.contests || []).find(c =>
+                    c.status === 'completed' || c.status === 'cancelled'
+                )
+                : null;
+
+            clearInterval(contestClockTimer);
+            contestClockTimer = null;
+
+            const sessionParticipants = gameSession?.participants
+                || active?.metadata?.gameSession?.participants
+                || null;
+            const provisioning = gameSession && ['provisioning', 'preparing', 'recording'].includes(gameSession.status);
+
+            if (provisioning && !active) {
+                live.classList.remove('idle');
+                title.textContent = `${gameSession.title || 'Game'} · ${gameSession.status}`;
+                row.innerHTML = `
+                    <span>Provisioning <strong>${esc(String(gameSession.participants?.length || 0))}</strong> temporary bots</span>
+                    ${gameSession.error
+                        ? `<span class="contest-status-msg error">${esc(gameSession.error)}</span>`
+                        : '<span>Waiting for agents to join the world…</span>'}
+                `;
+                renderContestParticipantChips(sessionParticipants);
+                cancelBtn.hidden = false;
+                warpBtn.hidden = true;
+                updateWatchLiveButton(gameSession);
+                updateGameSessionExport(null);
+                renderContestResults(null);
+                if (gameSession.error) setContestStatus(gameSession.error, true);
+            } else if (active) {
+                live.classList.remove('idle');
+                const sessionStatus = gameSession?.status && gameSession.status !== 'running'
+                    ? ` · ${gameSession.status}`
+                    : '';
+                title.textContent = `${active.title} · ${active.status}${sessionStatus}`;
+                const arena = active.metadata?.arenaReset?.center || gameSession?.arenaReset?.center;
+                const updateRow = () => {
+                    row.innerHTML = `
+                        <span><strong>${esc(String(active.participantIds?.length || sessionParticipants?.length || 0))}</strong> bots</span>
+                        <span>Time left <strong id="contestCountdown">${esc(formatCountdown(active.deadlineAt))}</strong></span>
+                        <span>Submitted <strong>${Object.keys(active.submissions || {}).length}</strong> / ${active.participantIds?.length || 0}</span>
+                        ${(gameSession?.recording || active.metadata?.recording)?.enabled
+                            ? `<span>● Recording <strong>${esc(String((gameSession?.recording || active.metadata.recording).cameraCount))}</strong> synced angles</span>`
+                            : ''}
+                        ${arena
+                            ? `<span>Arena <code>${esc(`${arena.x} ${arena.y} ${arena.z}`)}</code></span>`
+                            : ''}
+                        ${contestJoin?.address
+                            ? `<span>Join <code>${esc(contestJoin.address)}</code></span>`
+                            : ''}
+                    `;
+                };
+                updateRow();
+                if (active.status === 'running' && active.deadlineAt) {
+                    contestClockTimer = setInterval(() => {
+                        const el = document.getElementById('contestCountdown');
+                        if (el) el.textContent = formatCountdown(active.deadlineAt);
+                    }, 250);
+                }
+                renderContestParticipantChips(sessionParticipants);
+                cancelBtn.hidden = !['running', 'draft', 'judging'].includes(active.status)
+                    && !provisioning;
+                warpBtn.hidden = !['running', 'judging'].includes(active.status);
+                updateWatchLiveButton(gameSession || {
+                    sessionId: active.metadata?.gameSession?.sessionId,
+                    contestId: active.id,
+                });
+                updateGameSessionExport(null);
+                renderContestResults(active);
+            } else if (latestDone) {
+                live.classList.toggle('idle', latestDone.status !== 'completed');
+                title.textContent = `${latestDone.title} · ${latestDone.status}`;
+                const winners = (latestDone.winnerIds || []).join(', ') || 'none';
+                row.innerHTML = `<span>Winners: <strong>${esc(winners)}</strong></span>`;
+                renderContestParticipantChips(
+                    latestDone.metadata?.gameSession?.participants || null
+                );
+                cancelBtn.hidden = true;
+                warpBtn.hidden = true;
+                updateWatchLiveButton(null);
+                updateGameSessionExport(latestDone.id);
+                renderContestResults(latestDone);
+            } else {
+                live.classList.add('idle');
+                title.textContent = 'No active contest';
+                row.textContent = 'Pick a game above and choose model profiles to start.';
+                renderContestParticipantChips(null);
+                cancelBtn.hidden = true;
+                warpBtn.hidden = true;
+                updateWatchLiveButton(null);
+                updateGameSessionExport(null);
+                renderContestResults(null);
+            }
+            renderGameCards();
+        }
+
+        function configuredGameProfiles() {
+            return availableProfiles.filter(profile => profile?.id && profile.configured !== false);
+        }
+
+        function sanitizeMinecraftName(value) {
+            return String(value || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 16);
+        }
+
+        function nextUniqueMinecraftName(baseName, reserved) {
+            const cleaned = sanitizeMinecraftName(baseName) || 'bot';
+            const base = cleaned.length >= 3 ? cleaned : `${cleaned}bot`.slice(0, 16);
+            if (!reserved.has(base) && AGENT_NAME_PATTERN.test(base)) return base;
+            for (let suffix = 2; suffix < 1000; suffix++) {
+                const suffixText = String(suffix);
+                const candidate = `${base.slice(0, 16 - suffixText.length)}${suffixText}`;
+                if (!reserved.has(candidate) && AGENT_NAME_PATTERN.test(candidate)) return candidate;
+            }
+            throw new Error(`Could not generate a unique name for ${baseName}`);
+        }
+
+        function reservedGameNames(exceptIndex = -1) {
+            const names = new Set(currentAgents.map(agent => agent.name));
+            gameSetupParticipants.forEach((participant, index) => {
+                if (index === exceptIndex) return;
+                const name = sanitizeMinecraftName(participant.name);
+                if (name) names.add(name);
+            });
+            return names;
+        }
+
+        function setGameSetupError(message) {
+            const el = document.getElementById('gameSetupError');
+            if (!el) return;
+            el.textContent = message || '';
+        }
+
+        function updateGameSetupPromptCount() {
+            const textarea = document.getElementById('gameSetupSystemPrompt');
+            const count = document.getElementById('gameSetupPromptCount');
+            if (!textarea || !count) return;
+            count.textContent = String(textarea.value.length);
+        }
+
+        function defaultGameSetupParticipants() {
+            const profiles = configuredGameProfiles();
+            const count = profiles.length >= 2 ? 2 : Math.min(1, profiles.length);
+            const reserved = new Set(currentAgents.map(agent => agent.name));
+            const rows = [];
+            for (let i = 0; i < count; i++) {
+                const profile = profiles[i % profiles.length];
+                const name = nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
+                reserved.add(name);
+                rows.push({ profileId: profile.id, name });
+            }
+            return rows;
+        }
+
+        function renderGameSetupParticipants() {
+            const box = document.getElementById('gameSetupParticipants');
+            const addBtn = document.getElementById('gameSetupAddParticipantBtn');
+            const profiles = configuredGameProfiles();
+            if (!box) return;
+            box.replaceChildren();
+
+            gameSetupParticipants.forEach((participant, index) => {
+                const row = document.createElement('div');
+                row.className = 'game-setup-row';
+                const nameValid = AGENT_NAME_PATTERN.test(participant.name || '');
+                const reserved = reservedGameNames(index);
+                const duplicate = nameValid && reserved.has(participant.name);
+                const hint = !participant.name
+                    ? 'Name required (3–16 letters, numbers, or underscores)'
+                    : !nameValid
+                        ? 'Use 3–16 letters, numbers, or underscores'
+                        : duplicate
+                            ? 'Name is already taken'
+                            : 'Minecraft-safe name';
+
+                const options = profiles.map(profile => {
+                    const label = `${profile.name} — ${profile.model}${profile.provider ? ` (${profile.provider})` : ''}`;
+                    const selected = profile.id === participant.profileId ? ' selected' : '';
+                    return `<option value="${esc(profile.id)}"${selected}>${esc(label)}</option>`;
+                }).join('');
+
+                row.innerHTML = `
+                    <select data-field="profileId" aria-label="Participant profile">${options || '<option value="">No profiles</option>'}</select>
+                    <input type="text" data-field="name" maxlength="16" spellcheck="false"
+                        class="${nameValid && !duplicate ? '' : 'invalid'}"
+                        value="${esc(participant.name || '')}" aria-label="Participant name">
+                    <button type="button" class="btn btn-ghost" data-action="remove" ${gameSetupParticipants.length <= 1 ? 'disabled' : ''}>Remove</button>
+                    <div class="name-hint ${nameValid && !duplicate ? '' : 'error'}">${esc(hint)}</div>
+                `;
+
+                row.querySelector('[data-field="profileId"]').addEventListener('change', (event) => {
+                    const profileId = event.target.value;
+                    const profile = profiles.find(item => item.id === profileId);
+                    gameSetupParticipants[index].profileId = profileId;
+                    if (profile) {
+                        const reservedNames = reservedGameNames(index);
+                        gameSetupParticipants[index].name = nextUniqueMinecraftName(
+                            profile.name || profile.id || 'bot',
+                            reservedNames
+                        );
+                    }
+                    renderGameSetupParticipants();
+                });
+
+                row.querySelector('[data-field="name"]').addEventListener('input', (event) => {
+                    const input = event.target;
+                    const cursor = input.selectionStart;
+                    const cleaned = sanitizeMinecraftName(input.value);
+                    gameSetupParticipants[index].name = cleaned;
+                    if (input.value !== cleaned) {
+                        input.value = cleaned;
+                        const nextCursor = Math.min(cursor, cleaned.length);
+                        input.setSelectionRange(nextCursor, nextCursor);
+                    }
+                    const nameValid = AGENT_NAME_PATTERN.test(cleaned);
+                    const reserved = reservedGameNames(index);
+                    const duplicate = nameValid && reserved.has(cleaned);
+                    input.classList.toggle('invalid', !(nameValid && !duplicate));
+                    const hint = row.querySelector('.name-hint');
+                    if (hint) {
+                        hint.classList.toggle('error', !(nameValid && !duplicate));
+                        hint.textContent = !cleaned
+                            ? 'Name required (3–16 letters, numbers, or underscores)'
+                            : !nameValid
+                                ? 'Use 3–16 letters, numbers, or underscores'
+                                : duplicate
+                                    ? 'Name is already taken'
+                                    : 'Minecraft-safe name';
+                    }
+                });
+
+                row.querySelector('[data-action="remove"]').addEventListener('click', () => {
+                    if (gameSetupParticipants.length <= 1) return;
+                    gameSetupParticipants.splice(index, 1);
+                    renderGameSetupParticipants();
+                });
+
+                box.appendChild(row);
+            });
+
+            if (addBtn) {
+                addBtn.disabled = profiles.length === 0;
+            }
+        }
+
+        function openGameSetup(gameId) {
+            if (contestBusy) return;
+            const profiles = configuredGameProfiles();
+            if (!profiles.length) {
+                setContestStatus('No configured model profiles available', true);
+                return;
+            }
+            const game = contestGames.find(item => item.id === gameId);
+            gameSetupGameId = gameId;
+            gameSetupParticipants = defaultGameSetupParticipants();
+            document.getElementById('gameSetupTitle').textContent = `Set up ${game?.title || gameId}`;
+            document.getElementById('gameSetupSystemPrompt').value = '';
+            updateGameSetupPromptCount();
+            setGameSetupError('');
+            document.getElementById('gameSetupFooter').textContent =
+                'Temporary bots are created for this match, then cleaned up afterward.';
+            renderGameSetupParticipants();
+            document.getElementById('gameSetupModal').style.display = 'flex';
+        }
+
+        function closeGameSetup() {
+            document.getElementById('gameSetupModal').style.display = 'none';
+            gameSetupGameId = null;
+            gameSetupParticipants = [];
+            setGameSetupError('');
+        }
+
+        function validateGameSetup() {
+            const profiles = configuredGameProfiles();
+            const profileIds = new Set(profiles.map(profile => profile.id));
+            if (!gameSetupGameId) return 'No game selected';
+            if (!gameSetupParticipants.length) return 'Add at least one participant';
+            const seenNames = new Set();
+            const taken = new Set(currentAgents.map(agent => agent.name));
+            for (let i = 0; i < gameSetupParticipants.length; i++) {
+                const participant = gameSetupParticipants[i];
+                const name = String(participant.name || '').trim();
+                if (!AGENT_NAME_PATTERN.test(name)) {
+                    return `Participant ${i + 1} name must be 3–16 letters, numbers, or underscores`;
+                }
+                if (taken.has(name) || seenNames.has(name)) {
+                    return `Agent name is already in use: ${name}`;
+                }
+                if (!participant.profileId || !profileIds.has(participant.profileId)) {
+                    return `Participant ${i + 1} needs a configured profile`;
+                }
+                seenNames.add(name);
+            }
+            const prompt = document.getElementById('gameSetupSystemPrompt')?.value || '';
+            if (prompt.length > MAX_GAME_SYSTEM_PROMPT) {
+                return `System prompt must be ${MAX_GAME_SYSTEM_PROMPT} characters or fewer`;
+            }
+            return null;
+        }
+
+        function submitGameSetup() {
+            if (contestBusy) return;
+            const validationError = validateGameSetup();
+            if (validationError) {
+                setGameSetupError(validationError);
+                return;
+            }
+            const gameId = gameSetupGameId;
+            const participants = gameSetupParticipants.map(({ profileId, name }) => ({
+                profileId,
+                name,
+            }));
+            const systemPrompt = String(document.getElementById('gameSetupSystemPrompt')?.value || '').trim();
+
+            contestBusy = true;
+            setGameSetupError('');
+            setContestStatus('Provisioning temporary contest bots (this can take up to ~90s)…');
+            document.getElementById('gameSetupFooter').textContent = 'Provisioning… waiting for MindServer ack.';
+            document.getElementById('submitGameSetupBtn').disabled = true;
+            renderGameCards();
+
+            socket.emit('contest-start-game', { gameId, participants, systemPrompt }, (result) => {
+                contestBusy = false;
+                document.getElementById('submitGameSetupBtn').disabled = false;
+                if (!result?.success) {
+                    const message = result?.error || 'Failed to start contest';
+                    setGameSetupError(message);
+                    setContestStatus(message, true);
+                    document.getElementById('gameSetupFooter').textContent = 'Fix the error and try again.';
+                    renderGameCards();
+                    return;
+                }
+                closeGameSetup();
+                setContestStatus(`Started ${result.data?.contest?.title || result.data?.gameSession?.title || gameId}`);
+                if (result.data?.join) {
+                    contestJoin = result.data.join;
+                    renderContestJoinCard();
+                }
+                loadContestState();
+                renderGameCards();
+            });
+        }
+
+        document.getElementById('gameSetupAddParticipantBtn').addEventListener('click', () => {
+            const profiles = configuredGameProfiles();
+            if (!profiles.length) return;
+            const used = new Set(gameSetupParticipants.map(p => p.profileId));
+            const profile = profiles.find(item => !used.has(item.id)) || profiles[0];
+            const reserved = reservedGameNames();
+            gameSetupParticipants.push({
+                profileId: profile.id,
+                name: nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved),
+            });
+            renderGameSetupParticipants();
+        });
+
+        document.getElementById('closeGameSetupBtn').addEventListener('click', () => {
+            if (!contestBusy) closeGameSetup();
+        });
+        document.getElementById('cancelGameSetupBtn').addEventListener('click', () => {
+            if (!contestBusy) closeGameSetup();
+        });
+        document.getElementById('submitGameSetupBtn').addEventListener('click', submitGameSetup);
+        document.getElementById('gameSetupSystemPrompt').addEventListener('input', updateGameSetupPromptCount);
+        document.getElementById('gameSetupModal').addEventListener('click', (event) => {
+            if (event.target === event.currentTarget && !contestBusy) closeGameSetup();
+        });
+
+        document.getElementById('warpSpectatorsBtn').addEventListener('click', () => {
+            if (contestBusy) return;
+            contestBusy = true;
+            setContestStatus('Warping human players to the arena overlook…');
+            socket.emit('contest-control', {
+                action: 'warp-spectators',
+            }, (result) => {
+                contestBusy = false;
+                if (!result?.success) {
+                    setContestStatus(result?.error || 'Warp failed', true);
+                    return;
+                }
+                const address = result.data?.address || contestJoin?.address || 'the Minecraft server';
+                const coords = result.data?.arena?.spectator
+                    || result.data?.arena?.center;
+                const who = (result.data?.spectators || []).join(', ') || 'no human players online';
+                setContestStatus(
+                    coords
+                        ? `Warped spectators (${who}) to ${coords.x} ${coords.y} ${coords.z} on ${address}`
+                        : `Warped spectators (${who}) on ${address}`
+                );
+            });
+        });
+
+        document.getElementById('cancelContestBtn').addEventListener('click', () => {
+            const active = contestState?.activeContest;
+            const gameSession = contestState?.gameSession;
+            const contestId = active?.id || gameSession?.contestId;
+            if (!contestId || contestBusy) return;
+            contestBusy = true;
+            setContestStatus('Cancelling…');
+            socket.emit('contest-control', {
+                action: 'cancel',
+                contestId,
+                reason: 'Cancelled from the Mindcraft UI',
+            }, (result) => {
+                contestBusy = false;
+                if (!result?.success) {
+                    setContestStatus(result?.error || 'Cancel failed', true);
+                    return;
+                }
+                setContestStatus('Contest cancelled.');
+                loadContestState();
+            });
+        });
 
         function renderColonyState(state) {
             if (!state) return;
@@ -2056,6 +3159,7 @@
             // Refresh role chips / tasks on cards without full re-render
             currentAgents.forEach(a => updateCardColonyBits(a.name));
             drawColonyMap();
+            if (currentView === 'games') renderContestState(contestState);
         }
 
         document.getElementById('colonyToggleBtn').addEventListener('click', () => {
@@ -2082,12 +3186,15 @@
                     status.textContent = result?.error || 'Could not load profiles';
                     status.classList.add('error');
                     updateQuickCreateState();
+                    if (currentView === 'games') renderGameCards();
                     return;
                 }
                 availableProfiles = result.profiles || [];
                 status.textContent = '';
                 status.classList.remove('error');
                 updateQuickCreateState();
+                if (currentView === 'games') renderGameCards();
+                if (gameSetupGameId) renderGameSetupParticipants();
             });
         }
 
@@ -2386,8 +3493,7 @@
 
             const coords = document.getElementById(`coords-${name}`);
             if (coords && gp.position) {
-                const p = gp.position;
-                coords.textContent = `${fmtCoord(p.x)}  ${fmtCoord(p.y)}  ${fmtCoord(p.z)}`;
+                setCoordsEl(coords, tpCommand(gp.position));
             }
 
             const biome = document.getElementById(`biome-${name}`);
@@ -2492,6 +3598,63 @@
             const v = Number(n);
             if (!Number.isFinite(v)) return '—';
             return v.toFixed(1);
+        }
+
+        function tpCommand(pos) {
+            if (!pos) return null;
+            const x = Number(pos.x), y = Number(pos.y), z = Number(pos.z);
+            if (![x, y, z].every(Number.isFinite)) return null;
+            return `/tp @s ${fmtCoord(x)} ${fmtCoord(y)} ${fmtCoord(z)}`;
+        }
+
+        function setCoordsEl(el, cmd) {
+            if (!el) return;
+            const cmdEl = el.querySelector('.coords-cmd');
+            const hintEl = el.querySelector('.coords-hint');
+            if (!cmd) {
+                el.classList.add('empty');
+                el.dataset.cmd = '';
+                el.title = '';
+                el.disabled = true;
+                if (cmdEl) cmdEl.textContent = '—  —  —';
+                if (hintEl) hintEl.textContent = '';
+                return;
+            }
+            el.classList.remove('empty');
+            el.disabled = false;
+            el.dataset.cmd = cmd;
+            el.title = 'Click to copy — paste in Minecraft chat to warp here';
+            if (cmdEl) cmdEl.textContent = cmd;
+            if (hintEl && !el.classList.contains('copied')) hintEl.textContent = 'copy';
+        }
+
+        async function copyAgentTp(name, event) {
+            if (event) event.stopPropagation();
+            const el = document.getElementById(`coords-${name}`);
+            const cmd = el?.dataset?.cmd;
+            if (!cmd) return;
+            try {
+                await navigator.clipboard.writeText(cmd);
+            } catch {
+                // Fallback for older browsers / insecure contexts
+                const ta = document.createElement('textarea');
+                ta.value = cmd;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            el.classList.add('copied');
+            const hintEl = el.querySelector('.coords-hint');
+            if (hintEl) hintEl.textContent = 'copied';
+            clearTimeout(el._copyTimer);
+            el._copyTimer = setTimeout(() => {
+                el.classList.remove('copied');
+                if (hintEl) hintEl.textContent = 'copy';
+            }, 1200);
         }
 
         function updateCardColonyBits(name) {
@@ -2781,13 +3944,14 @@
             const isAutoRec = agent.recording?.autoRecord === true;
             const recFile = agent.recording?.file || '';
             const recFolder = agent.recording?.folder || agent.recordingsFolder || `bots/${agent.name}/recordings`;
+            const tpCmd = tpCommand(gp.position);
 
             // Card HTML is swapped wholesale, so repaint the skin avatar once it lands.
             queueMicrotask(() => updateAvatar(agent.name, st?.skin));
 
             return `
                 <article class="agent-card ${focused} ${offline}" id="agent-${agent.name}" data-name="${esc(agent.name)}"
-                    onclick="if(!event.target.closest('button,input,a,.menu-wrap,.slot,.inventory-panel')) focusAgent('${esc(agent.name)}')">
+                    onclick="if(!event.target.closest('button,input,a,.menu-wrap,.slot,.inventory-panel,.coords')) focusAgent('${esc(agent.name)}')">
                     <div class="card-top">
                         <div class="avatar-wrap">
                             <img id="avatar-${agent.name}" src="${esc(avatarUrl(agent.name))}"
@@ -2856,7 +4020,14 @@
                     </div>
 
                     <div class="where">
-                        <div class="coords" id="coords-${agent.name}">${gp.position ? `${fmtCoord(gp.position.x)}  ${fmtCoord(gp.position.y)}  ${fmtCoord(gp.position.z)}` : '—  —  —'}</div>
+                        <button type="button" class="coords ${tpCmd ? '' : 'empty'}" id="coords-${agent.name}"
+                            data-cmd="${esc(tpCmd || '')}"
+                            title="${tpCmd ? 'Click to copy — paste in Minecraft chat to warp here' : ''}"
+                            onclick="copyAgentTp('${esc(agent.name)}', event)"
+                            ${tpCmd ? '' : 'disabled'}>
+                            <span class="coords-cmd">${tpCmd || '—  —  —'}</span>
+                            <span class="coords-hint">${tpCmd ? 'copy' : ''}</span>
+                        </button>
                         <div class="where-meta">
                             <span id="biome-${agent.name}">${esc(gp.biome || '—')}</span>
                             <span id="dim-${agent.name}">${esc(gp.dimension || '—')}</span>
@@ -2997,6 +4168,7 @@
             currentAgents = agents;
             updateQuickCreateState();
             updateAgentCount();
+            if (typeof renderGameCards === 'function') renderGameCards();
 
             if (!agentsDiv.children.length || agentsDiv.querySelector('.empty-agents')) {
                 if (!agents.length) {
@@ -3574,6 +4746,7 @@
         window.sendMessage = sendMessage;
         window.broadcastMessage = broadcastMessage;
         window.toggleDetails = toggleDetails;
+        window.copyAgentTp = copyAgentTp;
         window.renderAgents = renderAgents;
         window.toggleRecording = toggleRecording;
         window.toggleAutoRecording = toggleAutoRecording;

@@ -14,6 +14,12 @@ import { isModelHealthy, resetOutage } from './quota_guard.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+export function appendSystemPromptAddendum(prompt, addendum) {
+    const extra = String(addendum || '').trim();
+    if (!extra) return prompt;
+    return `${prompt}\n\nGAME SESSION SYSTEM ADDENDUM\n${extra}`;
+}
+
 export class Prompter {
     constructor(agent, profile) {
         this.agent = agent;
@@ -239,6 +245,10 @@ export class Prompter {
 
             let prompt = this.profile.conversing;
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
+            prompt = appendSystemPromptAddendum(
+                prompt,
+                settings.game_session?.systemPrompt
+            );
             let generation;
 
             try {

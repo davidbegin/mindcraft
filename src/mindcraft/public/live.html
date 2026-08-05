@@ -30,7 +30,8 @@
         header {
             display: flex;
             align-items: center;
-            gap: 14px;
+            flex-wrap: wrap;
+            gap: 10px 14px;
             padding: 10px 16px;
             border-bottom: 1px solid var(--border);
             background: var(--bg-panel);
@@ -38,7 +39,7 @@
         }
         header h1 { font-size: 1rem; margin: 0; }
         header .meta { color: var(--text-dim); font-size: 0.85rem; }
-        header .spacer { flex: 1; }
+        header .spacer { flex: 1; min-width: 8px; }
         .btn {
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid var(--border);
@@ -49,17 +50,94 @@
             cursor: pointer;
         }
         .btn:hover { background: rgba(255, 255, 255, 0.1); }
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .btn.accent {
+            border-color: rgba(102, 217, 232, 0.45);
+            color: var(--cyan);
+            background: rgba(102, 217, 232, 0.1);
+        }
+        .pager {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
         header a { color: var(--cyan); font-size: 0.85rem; text-decoration: none; }
         header a:hover { text-decoration: underline; }
 
-        main {
+        .map-strip {
+            flex: none;
+            display: flex;
+            gap: 12px;
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-panel);
+            align-items: stretch;
+        }
+        .map-strip .focus-meta {
+            min-width: 160px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 6px;
+            font-size: 0.82rem;
+            color: var(--text-dim);
+        }
+        .map-strip .focus-meta strong { color: var(--text); font-weight: 600; }
+        .colony-map {
+            position: relative;
+            flex: 1;
+            height: 140px;
+            border-radius: 10px;
+            background:
+                linear-gradient(rgba(42, 53, 48, 0.45) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(42, 53, 48, 0.45) 1px, transparent 1px),
+                var(--bg-inset);
+            background-size: 28px 28px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        .colony-map svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .map-empty {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            pointer-events: none;
+        }
+        .map-empty.hidden { display: none; }
+
+        main#wall {
             flex: 1;
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(3, 1fr);
             gap: 10px;
             padding: 10px;
             overflow: auto;
-            align-content: start;
+            align-content: stretch;
+            min-height: 0;
+        }
+        @media (max-aspect-ratio: 4/5) {
+            main#wall {
+                grid-template-columns: repeat(3, 1fr);
+                grid-template-rows: repeat(4, 1fr);
+            }
+        }
+        @media (max-width: 900px) {
+            main#wall {
+                grid-template-columns: repeat(2, 1fr);
+                grid-template-rows: auto;
+            }
         }
         .tile {
             display: flex;
@@ -68,11 +146,18 @@
             border-radius: 10px;
             overflow: hidden;
             background: var(--bg-inset);
+            min-height: 0;
+            cursor: pointer;
+        }
+        .tile.selected {
+            border-color: var(--cyan);
+            box-shadow: 0 0 0 1px rgba(102, 217, 232, 0.35);
         }
         .tile .feed {
             position: relative;
+            flex: 1;
             aspect-ratio: 16 / 9;
-            min-height: 220px;
+            min-height: 120px;
             background: #000;
         }
         .tile .feed iframe, .tile .feed img.poster {
@@ -98,7 +183,20 @@
             z-index: 2;
         }
         .tile .bar .name { font-weight: 700; }
+        .tile .bar .model {
+            color: var(--text-dim);
+            font-size: 0.72rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 42%;
+        }
         .tile .bar .spacer { flex: 1; }
+        header .session-label {
+            color: var(--cyan);
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
         .tile .caption {
             padding: 8px 12px 9px;
             border-top: 1px solid var(--border);
@@ -106,6 +204,7 @@
             flex-direction: column;
             gap: 3px;
             min-height: 52px;
+            flex: none;
         }
         .tile .caption .goal {
             font-size: 0.82rem;
@@ -157,8 +256,11 @@
         }
         .chip.idle { color: var(--amber); border-color: rgba(255, 192, 120, 0.4); }
         .chip.acting { color: var(--green); border-color: rgba(105, 219, 124, 0.4); }
-        .chip.offline { color: var(--text-dim); }
-        .chip.pausedTag {
+        .chip.snapshotTag {
+            color: var(--text-dim);
+            border-color: var(--border);
+        }
+        .chip.liveTag {
             color: var(--cyan);
             border-color: rgba(102, 217, 232, 0.45);
             background: rgba(102, 217, 232, 0.12);
@@ -177,55 +279,149 @@
         .tile .pauseBtn:hover { background: rgba(6, 8, 10, 0.9); }
         .empty {
             grid-column: 1 / -1;
+            grid-row: 1 / -1;
             text-align: center;
             color: var(--text-dim);
             padding: 60px 0;
+            align-self: center;
+        }
+        .shortcuts {
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            opacity: 0.75;
         }
     </style>
 </head>
 <body>
     <header>
-        <h1>📺 Live Wall</h1>
+        <h1 id="pageTitle">Live Wall</h1>
+        <span class="session-label" id="sessionLabel" hidden></span>
         <span class="meta" id="meta">connecting…</span>
+        <div class="pager">
+            <button class="btn" id="prevPageBtn" onclick="prevPage()" aria-label="Previous page">‹</button>
+            <button class="btn" id="nextPageBtn" onclick="nextPage()" aria-label="Next page">›</button>
+        </div>
+        <button class="btn" id="aroundBtn" onclick="aroundSelected()">Around selected</button>
+        <button class="btn" id="clearFocusBtn" onclick="clearFocus()" hidden>Clear focus</button>
+        <button class="btn accent" id="livePageBtn" onclick="liveThisPage()">Live page</button>
+        <button class="btn" onclick="pausePage()">Pause page</button>
         <span class="spacer"></span>
-        <button class="btn" onclick="setAllPaused(true)">⏸ Pause all</button>
-        <button class="btn" onclick="setAllPaused(false)">▶ Resume all</button>
+        <button class="btn" onclick="setAllLive(false)">Pause all</button>
+        <button class="btn" onclick="setAllLive(true)">Resume all</button>
+        <span class="shortcuts" title="←/→ page · f around · p pause page · l live page · Esc clear">⌨ ←→ f p l</span>
         <a href="/">← dashboard</a>
     </header>
+    <div class="map-strip">
+        <div class="focus-meta">
+            <div>Focus: <strong id="focusLabel">all agents (paged)</strong></div>
+            <div id="focusDistHint">Click a map pin or tile, then Around</div>
+        </div>
+        <div class="colony-map" id="colonyMap">
+            <svg id="colonyMapSvg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="map-empty" id="mapEmpty">Waiting for in-game positions…</div>
+        </div>
+    </div>
     <main id="wall"><div class="empty">Waiting for agents…</div></main>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
+        const PAGE_SIZE = 12;
+        const MAX_LIVE = 4;
+        const ROLE_COLORS = {
+            explorer: '#5ec8c0',
+            miner: '#c4a574',
+            builder: '#9fe870',
+            farmer: '#8bc34a',
+            logistics: '#64b5f6',
+            combat: '#ef5350',
+            enchanter: '#ce93d8',
+            redstone: '#ff7043',
+            generalist: '#90a4ae'
+        };
+
+        const params = new URLSearchParams(location.search);
+        const sessionFilter = params.get('session') || null;
         const socket = io();
         let agents = [];
         let states = {};
         let colonyState = null;
-        const paused = {};      // name -> user chose to pause this tile
-        const idleSince = {};   // name -> ms timestamp when the bot last went idle
-        let wallKey = '';       // membership fingerprint; only rebuild DOM when it changes
+        const liveSet = new Set();   // names currently showing iframe (≤ MAX_LIVE)
+        const idleSince = {};
+        let wallKey = '';
+        let pageIndex = 0;
+        let viewMode = 'page'; // 'page' | 'around'
+        let focusName = params.get('focus') || null;
+        let focusXZ = null;
+        let selectedName = focusName;
+        if (focusName) viewMode = 'around';
+
+        if (sessionFilter) {
+            document.title = `Game Session · ${sessionFilter}`;
+            document.getElementById('pageTitle').textContent = 'Game Live Wall';
+            const sessionLabel = document.getElementById('sessionLabel');
+            sessionLabel.hidden = false;
+            sessionLabel.textContent = sessionFilter;
+            document.getElementById('focusLabel').textContent = 'session agents (paged)';
+            document.getElementById('focusDistHint').textContent = 'Click a map pin or tile, then Around';
+            document.getElementById('mapEmpty').textContent = 'Waiting for session agent positions…';
+            document.getElementById('wall').innerHTML = '<div class="empty">Waiting for game session agents…</div>';
+        }
 
         socket.on('connect', () => {
-            socket.emit('listen-to-agents');
+            socket.emit('listen-to-wall');
             socket.emit('colony-status', (result) => {
-                if (result?.success) { colonyState = result.data; updateOverlays(); }
+                if (result?.success) { colonyState = result.data; refreshUi(); }
             });
         });
         socket.on('colony-update', (state) => {
-            if (state) { colonyState = state; updateOverlays(); }
+            if (state) { colonyState = state; refreshUi(); }
         });
         socket.on('agents-status', (list) => {
             agents = list || [];
-            const live = liveAgents();
-            const pausedCount = live.filter(a => paused[a.name]).length;
-            document.getElementById('meta').textContent =
-                `${live.length} streaming${pausedCount ? ` · ${pausedCount} paused` : ''}`;
-            renderWall();
-            updateOverlays();
+            pruneLiveSet();
+            clampPage();
+            refreshUi();
         });
         socket.on('state-update', (st) => {
             states = st || {};
-            updateOverlays();
+            refreshUi();
         });
+
+        function refreshUi() {
+            renderWall();
+            updateOverlays();
+            updateMeta();
+            drawMiniMap();
+            updateChrome();
+        }
+
+        function matchesSession(agent) {
+            if (!sessionFilter) return true;
+            const gs = agent?.gameSession;
+            if (!gs) return false;
+            const sid = gs.sessionId != null ? String(gs.sessionId) : '';
+            const cid = gs.contestId != null ? String(gs.contestId) : '';
+            return sid === sessionFilter
+                || cid === sessionFilter
+                || sid === `contest-${sessionFilter}`;
+        }
+
+        function modelLabel(agent) {
+            const gs = agent?.gameSession;
+            if (!gs) return '';
+            const parts = [gs.model, gs.provider].filter(Boolean);
+            return parts.join(' · ');
+        }
+
+        function sessionEmptyMessage() {
+            const matching = agents.filter(matchesSession);
+            if (matching.length) {
+                const anyInGame = matching.some(a => a.in_game);
+                if (anyInGame) return 'No session agents on this page.';
+                return 'Game session agents are registered but not in-game yet…';
+            }
+            return 'No agents for this game session — waiting to start, or the game has finished.';
+        }
 
         function phaseOf(name) {
             const st = states[name];
@@ -239,8 +435,7 @@
         }
 
         function doingOf(name) {
-            const st = states[name];
-            return st?.action?.current || '';
+            return states[name]?.action?.current || '';
         }
 
         function roleOf(name) {
@@ -259,7 +454,6 @@
             ) || null;
         }
 
-        // What the bot is trying to accomplish: colony task first, then its self-prompt goal.
         function goalOf(name) {
             const task = taskOf(name);
             if (task) {
@@ -273,6 +467,12 @@
             return null;
         }
 
+        function positionOf(name) {
+            const pos = states[name]?.gameplay?.position;
+            if (!pos || typeof pos.x !== 'number' || typeof pos.z !== 'number') return null;
+            return pos;
+        }
+
         function esc(s) {
             return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
@@ -283,7 +483,79 @@
         }
 
         function liveAgents() {
-            return agents.filter(a => a.in_game);
+            return agents.filter(a => a.in_game && matchesSession(a));
+        }
+
+        function xzDistance(a, b) {
+            return Math.hypot(a.x - b.x, a.z - b.z);
+        }
+
+        function resolveFocusCenter() {
+            if (focusName) {
+                const pos = positionOf(focusName);
+                if (pos) return { x: pos.x, z: pos.z, label: focusName };
+            }
+            if (focusXZ) return { x: focusXZ.x, z: focusXZ.z, label: `pin (${Math.round(focusXZ.x)}, ${Math.round(focusXZ.z)})` };
+            return null;
+        }
+
+        function rosterAgents() {
+            const all = liveAgents().slice().sort((a, b) => a.name.localeCompare(b.name));
+            if (viewMode !== 'around') return all;
+
+            const center = resolveFocusCenter();
+            if (!center) return all;
+
+            const ranked = all.map(agent => {
+                const pos = positionOf(agent.name);
+                const dist = pos ? xzDistance(pos, center) : Number.POSITIVE_INFINITY;
+                return { agent, dist };
+            }).sort((a, b) => {
+                if (a.dist !== b.dist) return a.dist - b.dist;
+                return a.agent.name.localeCompare(b.agent.name);
+            });
+
+            // Keep focus agent first when focusing by name.
+            if (focusName) {
+                ranked.sort((a, b) => {
+                    if (a.agent.name === focusName) return -1;
+                    if (b.agent.name === focusName) return 1;
+                    if (a.dist !== b.dist) return a.dist - b.dist;
+                    return a.agent.name.localeCompare(b.agent.name);
+                });
+            }
+            return ranked.map(r => r.agent);
+        }
+
+        function pageCount() {
+            return Math.max(1, Math.ceil(rosterAgents().length / PAGE_SIZE) || 1);
+        }
+
+        function clampPage() {
+            const max = pageCount() - 1;
+            if (pageIndex > max) pageIndex = max;
+            if (pageIndex < 0) pageIndex = 0;
+        }
+
+        function windowAgents() {
+            const roster = rosterAgents();
+            const start = pageIndex * PAGE_SIZE;
+            return roster.slice(start, start + PAGE_SIZE);
+        }
+
+        function pruneLiveSet() {
+            const names = new Set(liveAgents().map(a => a.name));
+            for (const name of [...liveSet]) {
+                if (!names.has(name)) liveSet.delete(name);
+            }
+            while (liveSet.size > MAX_LIVE) {
+                const first = liveSet.values().next().value;
+                liveSet.delete(first);
+            }
+        }
+
+        function isLive(name) {
+            return liveSet.has(name);
         }
 
         function viewerUrl(agent) {
@@ -295,37 +567,75 @@
         }
 
         function feedHtml(agent) {
-            if (paused[agent.name] || !agent.viewerPort) {
-                // Paused: no live stream, just the periodic snapshot as a poster.
+            if (!isLive(agent.name) || !agent.viewerPort) {
                 return `<img class="poster" id="feed-${esc(agent.name)}" src="${snapshotUrl(agent.name)}"
                     onerror="this.style.visibility='hidden'" onload="this.style.visibility='visible'" alt="">`;
             }
             return `<iframe id="feed-${esc(agent.name)}" src="${viewerUrl(agent)}" allow="autoplay"></iframe>`;
         }
 
+        function promoteLive(name) {
+            if (liveSet.has(name)) return;
+            if (liveSet.size >= MAX_LIVE) {
+                // Evict least-recently added (Set iteration order).
+                const oldest = liveSet.values().next().value;
+                liveSet.delete(oldest);
+            }
+            liveSet.add(name);
+        }
+
+        function demoteLive(name) {
+            liveSet.delete(name);
+        }
+
         function renderWall() {
             const wall = document.getElementById('wall');
-            const live = liveAgents();
-            const key = live.map(a => `${a.name}:${a.viewerPort}:${paused[a.name] ? 'p' : 'l'}`).join('|');
+            const visible = windowAgents();
+            const focusKey = viewMode === 'around'
+                ? `around:${focusName || ''}:${focusXZ ? `${focusXZ.x},${focusXZ.z}` : ''}`
+                : `page:${pageIndex}`;
+            const key = [
+                sessionFilter || '',
+                focusKey,
+                selectedName || '',
+                visible.map(a => `${a.name}:${a.viewerPort}:${isLive(a.name) ? 'l' : 's'}:${modelLabel(a)}`).join('|')
+            ].join('||');
             if (key === wallKey) return;
             wallKey = key;
 
-            if (!live.length) {
-                wall.innerHTML = '<div class="empty">No agents in game right now.</div>';
+            if (!liveAgents().length) {
+                wall.innerHTML = sessionFilter
+                    ? `<div class="empty">${esc(sessionEmptyMessage())}</div>`
+                    : '<div class="empty">No agents in game right now.</div>';
                 return;
             }
-            wall.innerHTML = live.map(a => `
-                <div class="tile" id="tile-${esc(a.name)}">
+            if (!visible.length) {
+                wall.innerHTML = sessionFilter
+                    ? `<div class="empty">${esc(sessionEmptyMessage())}</div>`
+                    : '<div class="empty">No agents on this page.</div>';
+                return;
+            }
+            wall.innerHTML = visible.map(a => {
+                const model = modelLabel(a);
+                return `
+                <div class="tile ${selectedName === a.name ? 'selected' : ''}" id="tile-${esc(a.name)}"
+                    data-name="${esc(a.name)}"
+                    onclick="onTileClick(event, '${esc(a.name)}')">
                     <div class="feed">
                         ${feedHtml(a)}
                         <div class="bar">
                             <span class="name">${esc(a.name)}</span>
+                            ${model ? `<span class="model" title="${esc(model)}">${esc(model)}</span>` : ''}
                             <span class="chip" id="wallRole-${esc(a.name)}" hidden></span>
                             <span class="chip rec" id="wallRec-${esc(a.name)}" hidden>● rec</span>
-                            <span class="chip pausedTag" id="wallPaused-${esc(a.name)}" ${paused[a.name] ? '' : 'hidden'}>⏸ paused — snapshot every 10s</span>
+                            <span class="chip ${isLive(a.name) ? 'liveTag' : 'snapshotTag'}" id="wallFeedMode-${esc(a.name)}">
+                                ${isLive(a.name) ? '● live' : 'snapshot'}
+                            </span>
                             <span class="spacer"></span>
                             <span class="chip" id="wallPhase-${esc(a.name)}">…</span>
-                            <button class="pauseBtn" onclick="togglePause('${esc(a.name)}')">${paused[a.name] ? '▶ Live' : '⏸ Pause'}</button>
+                            <button class="pauseBtn" onclick="event.stopPropagation(); toggleLive('${esc(a.name)}')">
+                                ${isLive(a.name) ? '⏸ Pause' : '▶ Go live'}
+                            </button>
                         </div>
                     </div>
                     <div class="caption">
@@ -335,12 +645,13 @@
                             <span class="hint" id="wallIdleHint-${esc(a.name)}"></span>
                         </div>
                     </div>
-                </div>`).join('');
+                </div>`;
+            }).join('');
         }
 
         function updateOverlays() {
             const now = Date.now();
-            for (const agent of liveAgents()) {
+            for (const agent of windowAgents()) {
                 const name = agent.name;
                 const phase = phaseOf(name);
                 if (phase === 'acting' || phase === 'busy') delete idleSince[name];
@@ -378,11 +689,10 @@
                     if (role) roleEl.textContent = role;
                 }
 
-                // Nudge: a bot that has sat idle a while is a good pause candidate.
                 const hintEl = document.getElementById(`wallIdleHint-${name}`);
                 if (hintEl) {
                     const idleMs = idleSince[name] ? now - idleSince[name] : 0;
-                    hintEl.textContent = (!paused[name] && idleMs > 30000)
+                    hintEl.textContent = (isLive(name) && idleMs > 30000)
                         ? `idle ${fmtElapsed(idleMs)} — pause to save GPU?` : '';
                 }
 
@@ -395,29 +705,311 @@
             }
         }
 
-        function togglePause(name) {
-            paused[name] = !paused[name];
-            wallKey = '';
-            renderWall();
-            updateOverlays();
+        function updateMeta() {
+            const total = rosterAgents().length;
+            const scope = sessionFilter ? 'session' : 'agents';
+            if (!total) {
+                document.getElementById('meta').textContent = sessionFilter
+                    ? `0 in session`
+                    : '0 agents';
+                return;
+            }
+            const start = pageIndex * PAGE_SIZE + 1;
+            const end = Math.min(total, (pageIndex + 1) * PAGE_SIZE);
+            const liveCount = [...liveSet].filter(n => liveAgents().some(a => a.name === n)).length;
+            const snapshotOnPage = windowAgents().filter(a => !isLive(a.name)).length;
+            const pages = pageCount();
+            document.getElementById('meta').textContent =
+                `${start}–${end} of ${total} ${scope} · page ${pageIndex + 1}/${pages} · ${liveCount}/${MAX_LIVE} live · ${snapshotOnPage} snapshot`;
         }
 
-        function setAllPaused(value) {
-            for (const a of liveAgents()) paused[a.name] = value;
-            wallKey = '';
-            renderWall();
-            updateOverlays();
+        function updateChrome() {
+            const pages = pageCount();
+            document.getElementById('prevPageBtn').disabled = pageIndex <= 0;
+            document.getElementById('nextPageBtn').disabled = pageIndex >= pages - 1;
+            document.getElementById('clearFocusBtn').hidden = viewMode !== 'around';
+            const center = resolveFocusCenter();
+            const label = document.getElementById('focusLabel');
+            if (viewMode === 'around' && center) {
+                label.textContent = `around ${center.label}`;
+            } else {
+                label.textContent = sessionFilter ? 'session agents (paged)' : 'all agents (paged)';
+            }
+            document.getElementById('livePageBtn').textContent = `Live page (${MAX_LIVE})`;
         }
 
-        // Keep paused posters roughly current and recording timers ticking.
+        function onTileClick(event, name) {
+            if (event.target.closest('button')) return;
+            selectedName = name;
+            wallKey = '';
+            refreshUi();
+        }
+
+        function toggleLive(name) {
+            if (isLive(name)) demoteLive(name);
+            else promoteLive(name);
+            wallKey = '';
+            refreshUi();
+        }
+
+        function setAllLive(value) {
+            liveSet.clear();
+            if (value) {
+                for (const a of windowAgents()) {
+                    if (liveSet.size >= MAX_LIVE) break;
+                    if (a.viewerPort) liveSet.add(a.name);
+                }
+            }
+            wallKey = '';
+            refreshUi();
+        }
+
+        function pausePage() {
+            for (const a of windowAgents()) demoteLive(a.name);
+            wallKey = '';
+            refreshUi();
+        }
+
+        function liveThisPage() {
+            const page = windowAgents().slice();
+            // Priority: selected, acting/busy/recording, then order.
+            page.sort((a, b) => {
+                const score = (agent) => {
+                    let s = 0;
+                    if (agent.name === selectedName) s += 100;
+                    const phase = phaseOf(agent.name);
+                    if (phase === 'acting' || phase === 'busy') s += 50;
+                    if (agent.recording?.recording) s += 30;
+                    return s;
+                };
+                const d = score(b) - score(a);
+                return d !== 0 ? d : a.name.localeCompare(b.name);
+            });
+            // Evict live agents not on this page when filling.
+            for (const name of [...liveSet]) {
+                if (!page.some(a => a.name === name)) liveSet.delete(name);
+            }
+            for (const a of page) {
+                if (liveSet.size >= MAX_LIVE) break;
+                if (a.viewerPort) liveSet.add(a.name);
+            }
+            wallKey = '';
+            refreshUi();
+        }
+
+        function prevPage() {
+            if (pageIndex <= 0) return;
+            pageIndex -= 1;
+            wallKey = '';
+            refreshUi();
+        }
+
+        function nextPage() {
+            if (pageIndex >= pageCount() - 1) return;
+            pageIndex += 1;
+            wallKey = '';
+            refreshUi();
+        }
+
+        function aroundSelected() {
+            const name = selectedName || windowAgents()[0]?.name;
+            if (!name) return;
+            focusName = name;
+            focusXZ = null;
+            selectedName = name;
+            viewMode = 'around';
+            pageIndex = 0;
+            wallKey = '';
+            refreshUi();
+        }
+
+        function aroundAgent(name) {
+            selectedName = name;
+            focusName = name;
+            focusXZ = null;
+            viewMode = 'around';
+            pageIndex = 0;
+            wallKey = '';
+            refreshUi();
+        }
+
+        function aroundPin(x, z) {
+            focusName = null;
+            focusXZ = { x, z };
+            viewMode = 'around';
+            pageIndex = 0;
+            wallKey = '';
+            refreshUi();
+        }
+
+        function clearFocus() {
+            viewMode = 'page';
+            focusName = null;
+            focusXZ = null;
+            pageIndex = 0;
+            wallKey = '';
+            refreshUi();
+        }
+
+        function drawMiniMap() {
+            const svg = document.getElementById('colonyMapSvg');
+            const empty = document.getElementById('mapEmpty');
+            const points = [];
+            for (const agent of liveAgents()) {
+                const pos = positionOf(agent.name);
+                if (!pos) continue;
+                points.push({
+                    name: agent.name,
+                    x: pos.x,
+                    z: pos.z,
+                    yaw: states[agent.name]?.gameplay?.yaw ?? 0,
+                    role: roleOf(agent.name),
+                    idle: states[agent.name]?.action?.isIdle !== false
+                });
+            }
+
+            if (!points.length) {
+                svg.innerHTML = '';
+                empty.classList.remove('hidden');
+                return;
+            }
+            empty.classList.add('hidden');
+
+            const center = resolveFocusCenter();
+            let minX, maxX, minZ, maxZ;
+            if (viewMode === 'around' && center) {
+                const radius = 128;
+                minX = center.x - radius;
+                maxX = center.x + radius;
+                minZ = center.z - radius;
+                maxZ = center.z + radius;
+            } else {
+                minX = Infinity; maxX = -Infinity; minZ = Infinity; maxZ = -Infinity;
+                for (const p of points) {
+                    minX = Math.min(minX, p.x);
+                    maxX = Math.max(maxX, p.x);
+                    minZ = Math.min(minZ, p.z);
+                    maxZ = Math.max(maxZ, p.z);
+                }
+            }
+            const pad = 12;
+            const spanX = Math.max(maxX - minX, 16);
+            const spanZ = Math.max(maxZ - minZ, 16);
+            const margin = Math.max(spanX, spanZ) * 0.18;
+
+            const toSvg = (x, z) => {
+                const nx = (x - minX + margin) / (spanX + margin * 2);
+                const nz = (z - minZ + margin) / (spanZ + margin * 2);
+                return {
+                    sx: pad + nx * (100 - pad * 2),
+                    sy: pad + nz * (100 - pad * 2)
+                };
+            };
+
+            const parts = [];
+            if (focusXZ) {
+                const pin = toSvg(focusXZ.x, focusXZ.z);
+                parts.push(`<circle cx="${pin.sx}" cy="${pin.sy}" r="2" fill="none" stroke="${ROLE_COLORS.explorer}" stroke-width="0.6" stroke-dasharray="1.5 1"/>`);
+            }
+
+            for (const p of points) {
+                const { sx, sy } = toSvg(p.x, p.z);
+                const color = ROLE_COLORS[p.role] || '#9fe870';
+                const focused = focusName === p.name || selectedName === p.name;
+                parts.push(`
+                    <g class="map-pin" data-name="${esc(p.name)}" style="cursor:pointer">
+                        <circle cx="${sx}" cy="${sy}" r="${focused ? 3.2 : 2.4}" fill="${color}" stroke="#0e1210" stroke-width="0.6"
+                            opacity="${p.idle ? 1 : 0.95}"/>
+                        <line x1="${sx}" y1="${sy}"
+                            x2="${sx + Math.sin(-p.yaw) * 5}" y2="${sy + Math.cos(-p.yaw) * 5}"
+                            stroke="${color}" stroke-width="0.7" stroke-linecap="round"/>
+                        <text x="${sx}" y="${sy - 4}" text-anchor="middle" fill="#e8efe9" font-size="3.2"
+                            font-family="ui-sans-serif, system-ui, sans-serif" font-weight="600">${esc(p.name)}</text>
+                    </g>
+                `);
+            }
+            svg.innerHTML = parts.join('');
+            svg.querySelectorAll('.map-pin').forEach(g => {
+                g.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    aroundAgent(g.dataset.name);
+                });
+            });
+        }
+
+        // Click empty map area → around that world XZ (focus-centered or auto-bounds inverse).
+        document.getElementById('colonyMapSvg').addEventListener('click', (e) => {
+            if (e.target.closest('.map-pin')) return;
+            const svg = e.currentTarget;
+            const rect = svg.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            const sx = ((e.clientX - rect.left) / rect.width) * 100;
+            const sy = ((e.clientY - rect.top) / rect.height) * 100;
+
+            const points = liveAgents().map(a => {
+                const pos = positionOf(a.name);
+                return pos ? { x: pos.x, z: pos.z } : null;
+            }).filter(Boolean);
+            if (!points.length) return;
+
+            const center = resolveFocusCenter();
+            let minX, maxX, minZ, maxZ;
+            if (viewMode === 'around' && center) {
+                const radius = 128;
+                minX = center.x - radius; maxX = center.x + radius;
+                minZ = center.z - radius; maxZ = center.z + radius;
+            } else {
+                minX = Math.min(...points.map(p => p.x));
+                maxX = Math.max(...points.map(p => p.x));
+                minZ = Math.min(...points.map(p => p.z));
+                maxZ = Math.max(...points.map(p => p.z));
+            }
+            const pad = 12;
+            const spanX = Math.max(maxX - minX, 16);
+            const spanZ = Math.max(maxZ - minZ, 16);
+            const margin = Math.max(spanX, spanZ) * 0.18;
+            const nx = (sx - pad) / (100 - pad * 2);
+            const nz = (sy - pad) / (100 - pad * 2);
+            const x = minX - margin + nx * (spanX + margin * 2);
+            const z = minZ - margin + nz * (spanZ + margin * 2);
+            aroundPin(x, z);
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.target.matches('input, textarea, select')) return;
+            if (e.key === 'ArrowLeft') { e.preventDefault(); prevPage(); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); nextPage(); }
+            else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); aroundSelected(); }
+            else if (e.key === 'p' || e.key === 'P') { e.preventDefault(); pausePage(); }
+            else if (e.key === 'l' || e.key === 'L') { e.preventDefault(); liveThisPage(); }
+            else if (e.key === 'Escape') { clearFocus(); selectedName = null; wallKey = ''; refreshUi(); }
+        });
+
+        // Keep snapshot posters fresh; auto-demote idle live tiles after 30s.
         setInterval(() => {
-            for (const a of liveAgents()) {
-                if (!paused[a.name]) continue;
+            for (const a of windowAgents()) {
+                if (isLive(a.name)) continue;
                 const img = document.getElementById(`feed-${a.name}`);
                 if (img && img.tagName === 'IMG') img.src = snapshotUrl(a.name);
             }
+            const now = Date.now();
+            let changed = false;
+            for (const name of [...liveSet]) {
+                const idleMs = idleSince[name] ? now - idleSince[name] : 0;
+                if (idleMs > 30000 && name !== selectedName) {
+                    liveSet.delete(name);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                wallKey = '';
+                refreshUi();
+            }
         }, 10000);
-        setInterval(updateOverlays, 1000);
+        setInterval(() => {
+            updateOverlays();
+            updateMeta();
+        }, 1000);
     </script>
 </body>
 </html>

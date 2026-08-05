@@ -14,6 +14,19 @@ import {
 } from '../agent/tts_voices.js';
 import { TTSConfig as elevenLabsTTSConfig } from '../models/elevenlabs.js';
 import { ColonyCoordinator } from './colony/colony_coordinator.js';
+import {
+    ContestArenaManager,
+    ContestCoordinator,
+    ContestLoop,
+    ContestRecordingManager,
+    GameSessionManager,
+    buildGameSystemPrompt,
+    filterRecordingManifest,
+    getArenaJoinInfo,
+    getContestGamePreset,
+    listContestGamePresets,
+    serializeRecordingManifest,
+} from './contest/index.js';
 import { getGpt56Profiles } from './model_profiles.js';
 import { ensureSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
@@ -32,6 +45,14 @@ let colonyCoordinator = null;
 let colonyReady = null;
 let colonySupervisorInterval = null;
 let colonySettings = null;
+let contestCoordinator = null;
+let contestReady = null;
+let contestLoop = null;
+let gameSessionManager = null;
+const contestArenaManager = new ContestArenaManager();
+const contestRecordingManager = new ContestRecordingManager({
+    requestAgent: requestContestRecordingCommand,
+});
 
 // Circuit breaker for non-retryable model provider failures (exhausted credits, revoked
 // keys). While it is open the colony stays paused and a single agent probes the provider on
@@ -154,6 +175,198 @@ function getAvailableProfiles() {
 
 function getColonyRoot(options) {
     return path.resolve(projectRoot, options.state_dir || './colony');
+}
+
+function getContestRoot(options) {
+    return path.resolve(projectRoot, options.state_dir || './contests');
+}
+
+function defaultContestOptions() {
+    for (const connection of Object.values(agent_connections)) {
+        if (connection.settings?.contest) {
+            return { enabled: true, ...connection.settings.contest };
+        }
+    }
+    return {
+        enabled: true,
+        state_dir: './contests',
+        tick_interval_ms: 1000,
+    };
+}
+
+function emitContestUpdate(socket = io) {
+    if (contestCoordinator && socket) {
+        socket.emit('contest-update', {
+            ...contestCoordinator.view(),
+            gameSession: gameSessionManager?.view() ?? null,
+        });
+    }
+}
+
+async function ensureContest(options) {
+    const resolved = options ?? defaultContestOptions();
+    if (!resolved?.enabled) return null;
+    if (!contestReady) {
+        const root = getContestRoot(resolved);
+        const coordinatorOptions = { root };
+        contestReady = (existsSync(path.join(root, 'state.json'))
+            ? ContestCoordinator.load(coordinatorOptions)
+            : ContestCoordinator.create(coordinatorOptions)
+        ).then(coordinator => {
+            contestCoordinator = coordinator;
+            gameSessionManager = new GameSessionManager({
+                coordinator,
+                getPreset: getContestGamePreset,
+                getProfiles: getAvailableProfiles,
+                getExistingAgentNames: () => Object.keys(agent_connections),
+                buildAgentSettings: buildGameAgentSettings,
+                createAgent: settings => mindcraft.createAgent(settings),
+                destroyAgent: destroyGameAgent,
+                isAgentReady: name => Boolean(
+                    agent_connections[name]?.socket && agent_connections[name]?.in_game
+                ),
+                prepareArena: (preset, participants) =>
+                    contestArenaManager.prepare(preset, participants),
+                startRecording: options => contestRecordingManager.start(options),
+                stopRecording: contestId => contestRecordingManager.stop(contestId),
+                sendDirective: sendGameDirective,
+                onUpdate: () => emitContestUpdate(),
+            });
+            contestLoop = new ContestLoop({
+                coordinator,
+                intervalMs: resolved.tick_interval_ms ?? 1000,
+                onUpdate: async view => {
+                    emitContestUpdate();
+                    if (gameSessionManager) {
+                        await gameSessionManager.syncWithContestView(view);
+                    } else if (!view.activeContest) {
+                        await contestRecordingManager.stop();
+                    }
+                },
+            });
+            contestLoop.start();
+            return coordinator;
+        });
+    }
+    return contestReady;
+}
+
+function getMinecraftJoinInfo() {
+    for (const connection of Object.values(agent_connections)) {
+        const host = connection.settings?.host;
+        const port = connection.settings?.port;
+        if (host && Number.isFinite(port) && port > 0) {
+            return {
+                host,
+                port,
+                address: `${host}:${port}`,
+                mindserverPort: io?.httpServer?.address?.()?.port
+                    ?? connection.settings?.mindserver_port
+                    ?? 8080,
+                ...getArenaJoinInfo(),
+            };
+        }
+    }
+    return {
+        host: '127.0.0.1',
+        port: 55916,
+        address: '127.0.0.1:55916',
+        mindserverPort: 8080,
+        ...getArenaJoinInfo(),
+    };
+}
+
+function defaultSettingsForProfile(profile) {
+    const settings = { profile };
+    for (const [key, configuration] of Object.entries(settings_spec)) {
+        if (key !== 'profile' && Object.hasOwn(configuration, 'default')) {
+            settings[key] = JSON.parse(JSON.stringify(configuration.default));
+        }
+    }
+    return settings;
+}
+
+function buildGameAgentSettings(profile, gameSession) {
+    const settings = defaultSettingsForProfile(profile);
+    settings.load_memory = false;
+    settings.init_message = null;
+    settings.speak = true;
+    settings.speak_proximity = false;
+    settings.render_bot_view = true;
+    settings.record_bot_view = false;
+    settings.record_actions = false;
+    settings.chat_ingame = true;
+    settings.chat_bot_messages = true;
+    settings.colony = { ...(settings.colony || {}), enabled: false };
+    settings.game_session = {
+        ...gameSession,
+        speakAll: true,
+        systemPrompt: buildGameSystemPrompt(gameSession.systemPrompt),
+    };
+    return settings;
+}
+
+async function destroyGameAgent(agentName) {
+    mindcraft.destroyAgent(agentName);
+    await unregisterAgent(agentName, 'removed');
+}
+
+function sendGameDirective(agentName, prompt) {
+    const connection = agent_connections[agentName];
+    if (!connection?.socket || !connection.in_game) {
+        return Promise.reject(new Error(`Agent '${agentName}' is not ready for a game directive`));
+    }
+    return new Promise((resolve, reject) => {
+        connection.socket.timeout(20000).emit('game-directive', { prompt }, (error, result) => {
+            if (error) {
+                reject(new Error(`Game directive timed out for ${agentName}`));
+                return;
+            }
+            if (!result?.success) {
+                reject(new Error(result?.error || `Game directive failed for ${agentName}`));
+                return;
+            }
+            resolve(result);
+        });
+    });
+}
+
+function requestContestRecordingCommand(agentName, event, options) {
+    const connection = agent_connections[agentName];
+    if (!connection?.socket || !connection.in_game) {
+        return Promise.reject(new Error(`Agent '${agentName}' is not in game`));
+    }
+    return new Promise((resolve, reject) => {
+        const args = options === undefined ? [] : [options];
+        connection.socket.timeout(60000).emit(event, ...args, (error, result) => {
+            if (error) {
+                reject(new Error(`${event} timed out for ${agentName}`));
+                return;
+            }
+            resolve(result);
+        });
+    });
+}
+
+async function startContestGame(gameId, options = {}) {
+    await ensureContest();
+    if (!gameSessionManager) {
+        throw new Error('Game session manager is not enabled');
+    }
+    const result = await gameSessionManager.start({
+        gameId,
+        participants: options.participants,
+        systemPrompt: options.systemPrompt,
+        durationMs: options.durationMs,
+    });
+    return {
+        ...result,
+        game: listContestGamePresets().find(game => game.id === gameId),
+        join: {
+            ...getMinecraftJoinInfo(),
+            arena: result.arenaReset,
+        },
+    };
 }
 
 async function ensureColony(options) {
@@ -330,6 +543,20 @@ function requestFullState(connection) {
     });
 }
 
+function requestWallState(connection) {
+    return new Promise((resolve) => {
+        if (!connection?.socket) {
+            resolve(null);
+            return;
+        }
+        const timeout = setTimeout(() => resolve(null), 5000);
+        connection.socket.emit('get-wall-state', state => {
+            clearTimeout(timeout);
+            resolve(state);
+        });
+    });
+}
+
 function sendColonyDirective(agentName, connection) {
     if (!connection.socket) return;
     const directive = colonyCoordinator.directiveFor(agentName);
@@ -470,23 +697,36 @@ async function runColonySupervisor() {
             console.log(`Rejected pending colony spawn request ${request.id} (${request.role}): manual roster`);
         }
 
-        for (const [agentName, connection] of Object.entries(agent_connections)) {
+        const heartbeatEntries = Object.entries(agent_connections);
+        const wallStates = await Promise.all(heartbeatEntries.map(async ([agentName, connection]) => {
+            const colonyAgent = colonyCoordinator.snapshot().agents[agentName];
+            if (!colonyAgent || !connection.in_game || !connection.socket) {
+                return [agentName, connection, null];
+            }
+            try {
+                const state = await requestWallState(connection);
+                return [agentName, connection, state];
+            } catch (e) {
+                return [agentName, connection, null];
+            }
+        }));
+
+        for (const [agentName, connection, wallState] of wallStates) {
             const colonyAgent = colonyCoordinator.snapshot().agents[agentName];
             if (!colonyAgent) continue;
             if (connection.in_game && connection.socket) {
-                const fullState = await requestFullState(connection);
-                const phase = fullState?.action?.phase
-                    || (fullState?.action?.isIdle ? 'idle' : 'busy');
+                const phase = wallState?.action?.phase
+                    || (wallState?.action?.isIdle ? 'idle' : 'busy');
                 const status = phase === 'idle' ? 'idle' : 'busy';
                 await colonyCoordinator.heartbeat(agentName, status);
                 const latestState = colonyCoordinator.snapshot();
                 // Only nudge when the bot is truly available. Physically idle bots that are
                 // already thinking or self-prompting look "Idle" in old UI but are busy.
-                const available = fullState?.action?.available === true
-                    || (fullState?.action?.available == null
-                        && fullState?.action?.isIdle
-                        && !fullState?.selfPrompt?.active
-                        && !fullState?.action?.thinking);
+                const available = wallState?.action?.available === true
+                    || (wallState?.action?.available == null
+                        && wallState?.action?.isIdle
+                        && !wallState?.selfPrompt?.active
+                        && !wallState?.action?.thinking);
                 if (!latestState.paused && latestState.agents[agentName]?.desired &&
                     available &&
                     now - connection.last_directive_at >=
@@ -550,7 +790,10 @@ export async function registerAgent(settings, viewer_port) {
         console.error(`Failed to generate skin for ${settings.profile.name}:`, error);
     }
     let agentConnection = new AgentConnection(settings, viewer_port);
-    const coordinator = await ensureColony(settings.colony);
+    await ensureContest(settings.contest);
+    const coordinator = settings.game_session
+        ? null
+        : await ensureColony(settings.colony);
     let registeredColonyAgent = null;
     if (coordinator) {
         registeredColonyAgent = await coordinator.registerAgent(
@@ -562,6 +805,7 @@ export async function registerAgent(settings, viewer_port) {
     }
     agent_connections[settings.profile.name] = agentConnection;
     emitColonyUpdate();
+    emitContestUpdate();
     return registeredColonyAgent;
 }
 
@@ -667,7 +911,9 @@ function voicesOverview() {
 
 // —— Recording export (zip download / folder copy) ——
 
-function parseExportWindow(query) {
+function parseExportSelection(query) {
+    const session = String(query.session || '').trim();
+    if (session) return { session };
     const since = Number(query.since);
     if (!Number.isFinite(since)) return null;
     const until = query.until ? Number(query.until) : Infinity;
@@ -679,10 +925,36 @@ function parseExportWindow(query) {
  * when ffmpeg closed the file). Clips still being recorded are excluded —
  * they are not playable until stopped.
  */
-function collectRecordingsForExport(since, until) {
+function readManifestEntries(selection) {
+    const manifestPath = path.join(projectRoot, 'bots', 'recordings-manifest.jsonl');
+    if (!existsSync(manifestPath)) return [];
+    return filterRecordingManifest(readFileSync(manifestPath, 'utf8'), selection);
+}
+
+function collectRecordingsForExport(selection) {
     const liveFiles = new Set(Object.values(agent_connections)
         .filter(conn => conn.recording?.recording && conn.recording?.file)
         .map(conn => conn.recording.file));
+    if (selection.session) {
+        const botsRoot = path.join(projectRoot, 'bots') + path.sep;
+        const files = readManifestEntries(selection).flatMap(entry => {
+            const fullPath = path.resolve(String(entry.file || ''));
+            if (!fullPath.startsWith(botsRoot) || !existsSync(fullPath) || liveFiles.has(fullPath)) {
+                return [];
+            }
+            const stats = statSync(fullPath);
+            return [{
+                bot: entry.bot,
+                name: path.basename(fullPath),
+                path: fullPath,
+                size: stats.size,
+                mtime: stats.mtimeMs,
+            }];
+        });
+        files.sort((a, b) => a.mtime - b.mtime);
+        return { files };
+    }
+
     const listing = listRecordings();
     if (!listing.success) return { error: listing.error, files: [] };
     const files = [];
@@ -690,7 +962,7 @@ function collectRecordingsForExport(since, until) {
         for (const f of group.files) {
             const fullPath = path.join(group.folder, f.file);
             if (liveFiles.has(fullPath)) continue;
-            if (f.mtime >= since && f.mtime <= until) {
+            if (f.mtime >= selection.since && f.mtime <= selection.until) {
                 files.push({ bot: group.agent, name: f.file, path: fullPath, size: f.size, mtime: f.mtime });
             }
         }
@@ -701,24 +973,18 @@ function collectRecordingsForExport(since, until) {
 
 // The matching slice of the shared manifest goes into every export so the
 // exact start/end timestamps and action labels travel with the clips.
-function manifestSliceForExport(since, until) {
-    const manifestPath = path.join(projectRoot, 'bots', 'recordings-manifest.jsonl');
-    if (!existsSync(manifestPath)) return '';
-    const lines = readFileSync(manifestPath, 'utf8').split('\n').filter(line => {
-        if (!line.trim()) return false;
-        try {
-            const entry = JSON.parse(line);
-            return entry.endedAt >= since && entry.startedAt <= until;
-        } catch (_) {
-            return false;
-        }
-    });
-    return lines.length ? lines.join('\n') + '\n' : '';
+function manifestSliceForExport(selection) {
+    return serializeRecordingManifest(readManifestEntries(selection));
 }
 
-function exportStamp(since, until) {
+function exportStamp(selection) {
+    if (selection.session) {
+        return `session_${selection.session.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    }
     const fmt = (ms) => new Date(ms).toISOString().replace(/[:]/g, '-').slice(0, 16);
-    return until === Infinity ? `${fmt(since)}_onward` : `${fmt(since)}_to_${fmt(until)}`;
+    return selection.until === Infinity
+        ? `${fmt(selection.since)}_onward`
+        : `${fmt(selection.since)}_to_${fmt(selection.until)}`;
 }
 
 // Initialize the server
@@ -737,9 +1003,9 @@ export function createMindServer(host_public = false, port = 8080) {
 
     // What an export window would contain, so the UI can preview before downloading.
     app.get('/api/recordings/export-info', (req, res) => {
-        const window = parseExportWindow(req.query);
-        if (!window) return res.status(400).json({ success: false, error: 'since (epoch ms) is required' });
-        const { files, error } = collectRecordingsForExport(window.since, window.until);
+        const selection = parseExportSelection(req.query);
+        if (!selection) return res.status(400).json({ success: false, error: 'session or since (epoch ms) is required' });
+        const { files, error } = collectRecordingsForExport(selection);
         if (error) return res.status(500).json({ success: false, error });
         res.json({
             success: true,
@@ -751,18 +1017,18 @@ export function createMindServer(host_public = false, port = 8080) {
 
     // Stream every finished clip in the window as one flat zip (+ manifest slice).
     app.get('/api/recordings/export.zip', (req, res) => {
-        const window = parseExportWindow(req.query);
-        if (!window) return res.status(400).json({ success: false, error: 'since (epoch ms) is required' });
-        const { files, error } = collectRecordingsForExport(window.since, window.until);
+        const selection = parseExportSelection(req.query);
+        if (!selection) return res.status(400).json({ success: false, error: 'session or since (epoch ms) is required' });
+        const { files, error } = collectRecordingsForExport(selection);
         if (error) return res.status(500).json({ success: false, error });
         if (!files.length) return res.status(404).json({ success: false, error: 'No finished clips in that time range' });
 
         // zip needs the manifest slice as a real file to include it in the archive
         const tmpDir = mkdtempSync(path.join(tmpdir(), 'rec-export-'));
         const manifestTmp = path.join(tmpDir, 'manifest.jsonl');
-        writeFileSync(manifestTmp, manifestSliceForExport(window.since, window.until));
+        writeFileSync(manifestTmp, manifestSliceForExport(selection));
 
-        const stamp = exportStamp(window.since, window.until);
+        const stamp = exportStamp(selection);
         res.setHeader('Content-Type', 'application/zip');
         res.setHeader('Content-Disposition', `attachment; filename="recordings_${stamp}.zip"`);
 
@@ -785,18 +1051,18 @@ export function createMindServer(host_public = false, port = 8080) {
 
     // Copy every finished clip in the window (+ manifest slice) into a folder on disk.
     app.get('/api/recordings/export-folder', (req, res) => {
-        const window = parseExportWindow(req.query);
-        if (!window) return res.status(400).json({ success: false, error: 'since (epoch ms) is required' });
-        const { files, error } = collectRecordingsForExport(window.since, window.until);
+        const selection = parseExportSelection(req.query);
+        if (!selection) return res.status(400).json({ success: false, error: 'session or since (epoch ms) is required' });
+        const { files, error } = collectRecordingsForExport(selection);
         if (error) return res.status(500).json({ success: false, error });
         if (!files.length) return res.status(404).json({ success: false, error: 'No finished clips in that time range' });
         try {
-            const folder = path.join(projectRoot, 'bots', 'exports', `recordings_${exportStamp(window.since, window.until)}`);
+            const folder = path.join(projectRoot, 'bots', 'exports', `recordings_${exportStamp(selection)}`);
             mkdirSync(folder, { recursive: true });
             for (const f of files) {
                 copyFileSync(f.path, path.join(folder, f.name));
             }
-            writeFileSync(path.join(folder, 'manifest.jsonl'), manifestSliceForExport(window.since, window.until));
+            writeFileSync(path.join(folder, 'manifest.jsonl'), manifestSliceForExport(selection));
             res.json({
                 success: true,
                 folder,
@@ -827,6 +1093,145 @@ export function createMindServer(host_public = false, port = 8080) {
                     data: colonyCoordinator?.view() ?? null,
                     error: colonyCoordinator ? null : 'Colony coordinator is not enabled',
                 });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-status', async (callback) => {
+            try {
+                await ensureContest();
+                callback({
+                    success: Boolean(contestCoordinator),
+                    data: contestCoordinator ? {
+                        ...contestCoordinator.view(),
+                        gameSession: gameSessionManager?.view() ?? null,
+                    } : null,
+                    games: listContestGamePresets(),
+                    join: getMinecraftJoinInfo(),
+                    error: contestCoordinator
+                        ? null
+                        : 'Contest coordinator is not enabled',
+                });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-games', (callback) => {
+            try {
+                callback({ success: true, games: listContestGamePresets() });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-start-game', async (request, callback) => {
+            try {
+                const data = await startContestGame(request?.gameId, {
+                    durationMs: request?.durationMs,
+                    participants: request?.participants,
+                    systemPrompt: request?.systemPrompt,
+                });
+                callback({ success: true, data });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-create', async (specification, callback) => {
+            try {
+                await ensureContest();
+                if (!contestCoordinator) {
+                    throw new Error('Contest coordinator is not enabled');
+                }
+                const data = await contestCoordinator.createContest(specification);
+                emitContestUpdate();
+                callback({ success: true, data });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-register', async (request, callback) => {
+            try {
+                await ensureContest();
+                if (!contestCoordinator) {
+                    throw new Error('Contest coordinator is not enabled');
+                }
+                const data = await contestCoordinator.registerParticipant(
+                    request?.contestId,
+                    request?.participantId
+                );
+                emitContestUpdate();
+                callback({ success: true, data });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-control', async (request, callback) => {
+            try {
+                await ensureContest();
+                if (!contestCoordinator) {
+                    throw new Error('Contest coordinator is not enabled');
+                }
+                let data;
+                switch (request?.action) {
+                    case 'start':
+                        data = await contestCoordinator.startContest(request.contestId);
+                        break;
+                    case 'cancel':
+                        if (gameSessionManager?.view()?.contestId === request.contestId) {
+                            data = await gameSessionManager.cancel(
+                                request.contestId,
+                                request.reason || 'Cancelled from the Mindcraft UI'
+                            );
+                        } else {
+                            data = await contestCoordinator.cancelContest(
+                                request.contestId,
+                                request.reason || 'Cancelled from the Mindcraft UI'
+                            );
+                            await contestRecordingManager.stop(request.contestId);
+                        }
+                        break;
+                    case 'warp-spectators': {
+                        const active = contestCoordinator.view().activeContest;
+                        if (!active) {
+                            throw new Error('No active contest to warp into');
+                        }
+                        data = await contestArenaManager.warpSpectators(active.participantIds || []);
+                        break;
+                    }
+                    default:
+                        throw new Error(`Unknown contest control: ${request?.action}`);
+                }
+                emitContestUpdate();
+                callback({ success: true, data });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-submit', async (request, callback) => {
+            try {
+                if (!curAgentName) {
+                    throw new Error('Only a registered agent can submit to a contest');
+                }
+                await ensureContest();
+                if (!contestCoordinator) {
+                    throw new Error('Contest coordinator is not enabled');
+                }
+                const data = await contestCoordinator.submit(
+                    request?.contestId,
+                    curAgentName,
+                    request?.payload
+                );
+                if (!contestCoordinator.snapshot().activeContestId) {
+                    await contestRecordingManager.stop(request?.contestId);
+                }
+                emitContestUpdate();
+                callback({ success: true, data });
             } catch (error) {
                 callback({ success: false, error: error.message });
             }
@@ -989,7 +1394,7 @@ export function createMindServer(host_public = false, port = 8080) {
                         ));
                 }
             }
-            if (agent_listeners.includes(socket)) {
+            if (agent_listeners.some(l => l.socket === socket)) {
                 removeListener(socket);
             }
         });
@@ -1173,7 +1578,11 @@ export function createMindServer(host_public = false, port = 8080) {
         });
 
         socket.on('listen-to-agents', () => {
-            addListener(socket);
+            addListener(socket, 'full');
+        });
+
+        socket.on('listen-to-wall', () => {
+            addListener(socket, 'wall');
         });
     });
 
@@ -1201,6 +1610,7 @@ function agentsStatusUpdate(socket) {
             viewerPort: conn.viewer_port,
             socket_connected: !!conn.socket,
             recording: conn.recording,
+            gameSession: conn.settings?.game_session ?? null,
             // Where PovRecorder will write MP4s, so the UI can show the
             // destination before the first recording ever starts.
             recordingsFolder: path.join(projectRoot, 'bots', agentName, 'recordings')
@@ -1211,34 +1621,56 @@ function agentsStatusUpdate(socket) {
 
 
 let listenerInterval = null;
-function addListener(listener_socket) {
-    agent_listeners.push(listener_socket);
+let listenerTickRunning = false;
+
+function addListener(listener_socket, mode = 'full') {
+    const existing = agent_listeners.find(l => l.socket === listener_socket);
+    if (existing) {
+        // Upgrade wall → full if the same socket re-subscribes for dashboard.
+        if (mode === 'full') existing.mode = 'full';
+        return;
+    }
+    agent_listeners.push({ socket: listener_socket, mode });
     if (agent_listeners.length === 1) {
         listenerInterval = setInterval(async () => {
-            const states = {};
-            for (let agentName in agent_connections) {
-                let agent = agent_connections[agentName];
-                if (agent.in_game) {
-                    try {
-                        const state = await requestFullState(agent);
-                        states[agentName] = state ?? { error: 'Agent state request timed out' };
-                    } catch (e) {
-                        states[agentName] = { error: String(e) };
-                    }
+            if (listenerTickRunning) return;
+            listenerTickRunning = true;
+            try {
+                const needsFull = agent_listeners.some(l => l.mode === 'full');
+                const fetchState = needsFull ? requestFullState : requestWallState;
+                const entries = await Promise.all(
+                    Object.entries(agent_connections).map(async ([agentName, agent]) => {
+                        if (!agent.in_game) return [agentName, null];
+                        try {
+                            const state = await fetchState(agent);
+                            return [agentName, state ?? { error: 'Agent state request timed out' }];
+                        } catch (e) {
+                            return [agentName, { error: String(e) }];
+                        }
+                    })
+                );
+                const states = {};
+                for (const [agentName, state] of entries) {
+                    if (state) states[agentName] = state;
                 }
-            }
-            for (let listener of agent_listeners) {
-                listener.emit('state-update', states);
+                for (const listener of agent_listeners) {
+                    listener.socket.emit('state-update', states);
+                }
+            } finally {
+                listenerTickRunning = false;
             }
         }, 1000);
     }
 }
 
 function removeListener(listener_socket) {
-    agent_listeners.splice(agent_listeners.indexOf(listener_socket), 1);
+    const idx = agent_listeners.findIndex(l => l.socket === listener_socket);
+    if (idx === -1) return;
+    agent_listeners.splice(idx, 1);
     if (agent_listeners.length === 0) {
         clearInterval(listenerInterval);
         listenerInterval = null;
+        listenerTickRunning = false;
     }
 }
 

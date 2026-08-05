@@ -135,3 +135,51 @@ export function getFullState(agent) {
 
     return state;
 }
+
+/** Slim state for Live Wall overlays + spatial ranking (no world/inventory scans). */
+export function getWallState(agent) {
+    const bot = agent.bot;
+    const pos = getPosition(bot);
+    const position = {
+        x: Number(pos.x.toFixed(2)),
+        y: Number(pos.y.toFixed(2)),
+        z: Number(pos.z.toFixed(2))
+    };
+    const yaw = typeof bot.entity?.yaw === 'number'
+        ? Number(bot.entity.yaw.toFixed(3))
+        : 0;
+
+    const selfPromptActive = agent.self_prompter?.isActive?.() === true;
+    const selfPromptPaused = agent.self_prompter?.isPaused?.() === true;
+    const selfPromptLoop = agent.self_prompter?.isLoopActive?.() === true;
+    const selfPromptText = agent.self_prompter?.prompt || '';
+    const attention = typeof agent.getAttention === 'function'
+        ? agent.getAttention()
+        : {
+            phase: agent.isIdle() ? 'idle' : 'acting',
+            label: agent.isIdle() ? 'Idle' : agent.actions.currentActionLabel,
+            available: agent.isIdle(),
+        };
+
+    return {
+        name: agent.name,
+        gameplay: {
+            position,
+            dimension: bot.game.dimension,
+            yaw,
+        },
+        action: {
+            current: attention.label,
+            isIdle: attention.phase === 'idle',
+            phase: attention.phase,
+            thinking: attention.phase === 'thinking',
+            available: attention.available === true,
+        },
+        selfPrompt: {
+            active: selfPromptActive,
+            paused: selfPromptPaused,
+            loopActive: selfPromptLoop,
+            prompt: selfPromptText,
+        },
+    };
+}

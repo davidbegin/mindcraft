@@ -10,16 +10,17 @@ import { WorldView } from 'prismarine-viewer/viewer/lib/worldView.js';
 import { getBufferFromStream } from 'prismarine-viewer/viewer/lib/simpleUtils.js';
 import { createCanvas } from 'node-canvas-webgl/lib/index.js';
 
-// prismarine-viewer's world mesher runs in worker threads and expects a global Worker
+// prismarine-viewer's world mesher runs in worker threads and expects a global
+// Worker, and its entity models (including the bot's own) read a global THREE.
 globalThis.Worker = worker_threads.Worker;
+globalThis.THREE = THREE;
 
 const RECORD_DEFAULTS = {
     fps: 20,
     width: 854,
     height: 480,
     viewDistance: 6,
-    // 'follow' renders the bot as a player model with a name tag and keeps a
-    // third-person camera behind it; 'first-person' is the raw bot POV.
+    // Recordings always render the bot from a third-person follow camera.
     camera: 'follow',
     followDistance: 4.5,
 };
@@ -120,7 +121,7 @@ export function applyFollowCamera(viewer, bot, username, followDistance, smooth)
  * Default camera is a third-person follow cam: the bot is rendered as a
  * player model with a floating name tag, and the camera trails behind its
  * facing direction, pulling in closer when blocks would block the view
- * (tunnels, interiors). Pass `camera: 'first-person'` for the raw POV.
+ * (tunnels, interiors).
  *
  * If the agent process dies mid-recording, ffmpeg sees EOF on its input pipe
  * and still finalizes a playable MP4.
@@ -138,6 +139,9 @@ export class PovRecorder {
         this.frames = 0;
         this.error = null;
         this.cameraMode = RECORD_DEFAULTS.camera;
+        this.sessionId = null;
+        this.recordingRole = null;
+        this.syncEpochMs = null;
 
         this._interval = null;
         this._ffmpeg = null;
@@ -147,6 +151,7 @@ export class PovRecorder {
         this._canvas = null;
         this._busy = false;
         this._stopping = null;
+        this._lastFrame = null;
         this._audio = []; // TTS chat lines spoken during the clip: {data (base64 mp3), offsetMs}
         this._voiceLines = 0;
         this._onBotEnd = () => { this.stop().catch(() => {}); };
@@ -161,6 +166,9 @@ export class PovRecorder {
             frames: this.frames,
             error: this.error,
             camera: this.cameraMode,
+            sessionId: this.sessionId,
+            recordingRole: this.recordingRole,
+            syncEpochMs: this.syncEpochMs,
             labels: [...(this.labels || [])],
         };
     }
@@ -192,11 +200,39 @@ export class PovRecorder {
     async start(options = {}) {
         if (this.recording) return this.getStatus();
         const opts = { ...RECORD_DEFAULTS, ...options };
-        this.cameraMode = opts.camera === 'first-person' ? 'first-person' : 'follow';
+        this.cameraMode = opts.camera;
+        this.sessionId = opts.sessionId || null;
+        this.contestId = opts.contestId || null;
+        this.recordingRole = opts.recordingRole || null;
+        this.sourceBot = opts.sourceBot || this.name;
+        this.syncEpochMs = Number.isFinite(opts.syncEpochMs) ? opts.syncEpochMs : null;
+        this._fixedCamera = opts.camera === 'fixed'
+            ? {
+                position: new THREE.Vector3(
+                    opts.cameraPosition?.x,
+                    opts.cameraPosition?.y,
+                    opts.cameraPosition?.z
+                ),
+                target: new THREE.Vector3(
+                    opts.cameraTarget?.x,
+                    opts.cameraTarget?.y,
+                    opts.cameraTarget?.z
+                ),
+            }
+            : null;
+        if (this._fixedCamera && (
+            !this._fixedCamera.position.toArray().every(Number.isFinite)
+            || !this._fixedCamera.target.toArray().every(Number.isFinite)
+        )) {
+            throw new Error('Fixed recording cameras require numeric position and target coordinates');
+        }
         this._followDistance = Math.max(2, Number(opts.followDistance) || RECORD_DEFAULTS.followDistance);
         this._cameraPlaced = false;
         this.error = null;
+        this.file = null;
+        this.startedAt = null;
         this.frames = 0;
+        this._lastFrame = null;
         this.labels = new Set(opts.label ? [String(opts.label)] : []);
         this._audio = [];
         this._voiceLines = 0;
@@ -204,7 +240,8 @@ export class PovRecorder {
 
         fs.mkdirSync(this.folder, { recursive: true });
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const filename = `${this.name}_${timestamp}.mp4`;
+        const sessionTag = this.sessionId ? `__${sanitizeLabel(this.sessionId)}` : '';
+        const filename = `${this.name}_${timestamp}${sessionTag}.mp4`;
         const outputPath = path.join(this.folder, filename);
 
         try {
@@ -222,7 +259,13 @@ export class PovRecorder {
             return this.getStatus();
         }
 
-        const center = this.bot.entity.position;
+        const center = this._fixedCamera
+            ? new Vec3(
+                this._fixedCamera.target.x,
+                this._fixedCamera.target.y,
+                this._fixedCamera.target.z
+            )
+            : this.bot.entity.position;
         this._worldView = new WorldView(this.bot.world, opts.viewDistance, center);
         this._viewer.listen(this._worldView);
         this._worldView.listenToBot(this.bot);
@@ -268,17 +311,31 @@ export class PovRecorder {
     }
 
     async _renderFrame() {
-        if (!this.recording || this._busy) return;
+        if (!this.recording) return;
+        if (this._busy) {
+            this._writeFramesThroughNow(this._lastFrame);
+            return;
+        }
         this._busy = true;
         try {
             const pos = this.bot.entity.position;
-            if (this.cameraMode === 'first-person') {
-                this._viewer.setFirstPersonCamera(pos, this.bot.entity.yaw, this.bot.entity.pitch);
+            if (this._fixedCamera) {
+                this._viewer.updateEntity({
+                    id: POV_SELF_ID,
+                    name: 'player',
+                    username: this.sourceBot,
+                    width: 0.6,
+                    height: 1.8,
+                    pos,
+                    yaw: this.bot.entity.yaw,
+                });
+                this._viewer.camera.position.copy(this._fixedCamera.position);
+                this._viewer.camera.lookAt(this._fixedCamera.target);
             } else {
                 applyFollowCamera(this._viewer, this.bot, this.name, this._followDistance, this._cameraPlaced);
                 this._cameraPlaced = true;
+                this._worldView.updatePosition(pos).catch(() => {});
             }
-            this._worldView.updatePosition(pos).catch(() => {});
             this._viewer.update();
             this._renderer.render(this._viewer.scene, this._viewer.camera);
 
@@ -288,13 +345,25 @@ export class PovRecorder {
                 progressive: false,
             }));
             if (this.recording && this._ffmpeg?.stdin.writable) {
-                this._ffmpeg.stdin.write(buf);
-                this.frames++;
+                this._lastFrame = buf;
+                this._writeFramesThroughNow(buf);
             }
         } catch (err) {
             console.error(`[${this.name}] POV recording frame error:`, err.message);
         } finally {
             this._busy = false;
+        }
+    }
+
+    _writeFramesThroughNow(frame) {
+        if (!frame || !this.startedAt || !this._ffmpeg?.stdin.writable) return;
+        const targetFrames = Math.max(
+            1,
+            Math.floor(((Date.now() - this.startedAt) / 1000) * this._fps)
+        );
+        while (this.frames < targetFrames) {
+            this._ffmpeg.stdin.write(frame);
+            this.frames++;
         }
     }
 
@@ -310,6 +379,7 @@ export class PovRecorder {
     }
 
     async _stop() {
+        this._writeFramesThroughNow(this._lastFrame);
         this.recording = false;
         clearInterval(this._interval);
         this._interval = null;
@@ -335,6 +405,7 @@ export class PovRecorder {
         }
 
         this._teardownRenderer();
+        this._lastFrame = null;
         await this._muxAudio();
         this._finalizeClip();
         console.log(`[${this.name}] POV recording stopped: ${this.file} (${this.frames} frames)`);
@@ -421,8 +492,17 @@ export class PovRecorder {
         try {
             fs.appendFileSync(MANIFEST_PATH, JSON.stringify({
                 bot: this.name,
+                sourceBot: this.sourceBot,
                 file: this.file,
                 labels,
+                sessionId: this.sessionId,
+                contestId: this.contestId,
+                recordingRole: this.recordingRole,
+                camera: this.cameraMode,
+                syncEpochMs: this.syncEpochMs,
+                syncOffsetMs: this.syncEpochMs === null
+                    ? null
+                    : this.startedAt - this.syncEpochMs,
                 startedAt: this.startedAt,
                 endedAt,
                 startedAtIso: new Date(this.startedAt).toISOString(),

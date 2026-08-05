@@ -290,63 +290,128 @@ export function renderSkin(name, model) {
         }
     };
 
-    // --- Head (all six faces), hair on top + upper rim ---
+    // A box with soft edge shading: lit top edge, shadowed bottom and sides.
+    // Gives every body part a rounded, cloth-like read instead of flat fills.
+    const panel = (x, y, w, h, color, variation = 0.08) => {
+        box(x, y, w, h, color, variation);
+        const base = rgbOf(color);
+        for (let i = 0; i < w; i++) {
+            px(x + i, y, shade(base, 1.10));
+            px(x + i, y + h - 1, shade(base, 0.78));
+        }
+        for (let j = 1; j < h - 1; j++) {
+            px(x, y + j, shade(base, 0.90));
+            px(x + w - 1, y + j, shade(base, 0.90));
+        }
+    };
+
+    const hairShadow = shade(hair, 0.72);
+    const hairLight = shade(hair, 1.3);
+    const familyDark = shade(rgbOf(info.color), 0.72);
+
+    // --- Head (all six faces) ---
     const headFaces = [[8, 8], [0, 8], [16, 8], [24, 8]]; // front, right, left, back
     box(8, 0, 8, 8, hair, 0.15);            // top = hair
     box(16, 0, 8, 8, skinTone, 0.06);       // bottom
+    // Highlight streaks across the hair top.
+    for (let i = 0; i < 4; i++) px(9 + ((seed >>> i) % 6), 2 + ((seed >>> (i + 4)) % 4), hairLight);
     for (const [hx, hy] of headFaces) {
-        box(hx, hy, 8, 8, skinTone, 0.06);
+        panel(hx, hy, 8, 8, skinTone, 0.06);
         box(hx, hy, 8, 2, hair, 0.15);      // hairline
     }
-    // Face details (front face at 8,8): eyes with family-color pupils.
+    box(24, 10, 8, 2, hair, 0.15);          // longer hair on the back of the head
+    box(24, 12, 8, 1, hairShadow);
+    // Fringe style varies per bot: straight, side-swept, or spiky.
+    const fringe = (seed >>> 6) % 3;
+    if (fringe === 0) {
+        box(8, 10, 1, 1, hair); box(15, 10, 1, 1, hair);
+    } else if (fringe === 1) {
+        box(8, 10, 4, 1, hair); px(8, 11, hairShadow);
+    } else {
+        for (let i = 8; i < 16; i += 2) px(i, 10, hair);
+    }
+    // Sideburns where the side faces meet the face.
+    box(7, 10, 1, 2, hairShadow); box(16, 10, 1, 2, hairShadow);
+    // Face: brows, eyes with family-color pupils, nose, mouth.
+    px(9, 11, hairShadow); px(10, 11, hairShadow);
+    px(13, 11, hairShadow); px(14, 11, hairShadow);
     px(9, 12, '#ffffff'); px(10, 12, info.color);
     px(13, 12, info.color); px(14, 12, '#ffffff');
-    box(11, 14, 2, 1, shade(skinTone, 0.7)); // mouth
+    px(11, 13, shade(skinTone, 0.85)); px(12, 13, shade(skinTone, 0.85)); // nose
+    const smile = (seed >>> 9) % 2;
+    box(11, 14, 2, 1, shade(skinTone, 0.65));
+    if (smile) { px(10, 14, shade(skinTone, 0.8)); px(13, 14, shade(skinTone, 0.8)); }
 
-    // Hat layer headband: bot-unique accent, wraps all four sides above the eyes.
+    // Hat layer: bot-unique headband with a family gem, and the provider logo
+    // printed on top of the head in the family color.
     for (const hx of [40, 32, 48, 56]) {
         box(hx, 10, 8, 2, accent);
+        for (let i = 0; i < 8; i++) px(hx + i, 11, shade(rgbOf(accent), 0.8));
     }
-    px(43, 10, info.color); px(44, 10, info.color); // family dot front-center
-    px(43, 11, info.color); px(44, 11, info.color);
+    px(43, 10, info.color); px(44, 10, info.color);
+    px(43, 11, familyDark); px(44, 11, familyDark);
+    drawBitmap(logoBitmap(info.provider), 40, 0, info.color); // hat top
 
     // --- Torso ---
-    box(20, 20, 8, 12, shirt, 0.08);  // front
-    box(32, 20, 8, 12, shirt, 0.08);  // back
-    box(16, 20, 4, 12, shirt, 0.08);  // right side
-    box(28, 20, 4, 12, shirt, 0.08);  // left side
+    panel(20, 20, 8, 12, shirt);  // front
+    panel(32, 20, 8, 12, shirt);  // back
+    panel(16, 20, 4, 12, shirt);  // right side
+    panel(28, 20, 4, 12, shirt);  // left side
     box(20, 16, 8, 4, shirt, 0.08);   // top
     box(28, 16, 8, 4, shirt, 0.08);   // bottom
 
     // Model band (rows 20-26) around front + sides; front carries the word
-    // (letters occupy rows 21-25, leaving a 1px color margin above and below).
-    box(20, 20, 8, 7, info.color);
-    box(16, 20, 4, 7, info.color);
-    box(28, 20, 4, 7, info.color);
+    // (letters occupy rows 21-25 with a lit top edge and shadowed bottom edge).
+    const bandFaces = [[20, 8], [16, 4], [28, 4]];
+    for (const [bx, bw] of bandFaces) {
+        box(bx, 20, bw, 7, info.color);
+        for (let i = 0; i < bw; i++) {
+            px(bx + i, 20, shade(rgbOf(info.color), 1.15));
+            px(bx + i, 26, shade(rgbOf(info.color), 0.8));
+        }
+    }
+    box(20, 27, 8, 1, shade(shirt, 0.7)); // shadow under the band
     // Word split: first letter on right arm, middle on torso, last on left arm.
     const word = info.word;
     const middle = word.length <= 2 ? word : word.slice(1, -1);
     drawWordRow(middle, 20, 8, 21, bandText);
-    // Belt with family-color buckle.
+    // Chest pockets.
+    for (const pxx of [21, 25]) {
+        box(pxx, 28, 2, 2, shade(shirt, 0.8));
+        px(pxx, 28, shade(shirt, 1.25)); px(pxx + 1, 28, shade(shirt, 1.25));
+    }
+    // Belt: family buckle with a metallic glint.
     box(20, 30, 8, 1, boots);
-    px(23, 30, info.color); px(24, 30, info.color);
+    px(23, 30, info.color); px(24, 30, '#e8d9a0');
+    box(20, 31, 8, 1, shade(rgbOf(pants), 0.85));
 
-    // Back: official model-provider logo on the shirt.
-    drawBitmap(logoBitmap(info.provider), 32, 22, '#ffffff');
+    // Back: the official provider logo printed dark on a light badge patch,
+    // like a jersey emblem — readable from far away.
+    const badge = '#e9e9ee';
+    box(32, 21, 8, 10, badge, 0.03);
+    for (const [cx, cy] of [[32, 21], [39, 21], [32, 30], [39, 30]]) px(cx, cy, shirt); // rounded corners
+    for (let i = 0; i < 8; i++) px(32 + i, 30, shade(badge, 0.8));
+    drawBitmap(logoBitmap(info.provider), 32, 22, shade(rgbOf(info.color), 0.5));
     box(32, 31, 8, 1, info.color);
 
     // --- Arms (right base at 40..55,16..31; left at 32..47,48..63) ---
     const arm = (bx, by, letter) => {
-        box(bx + 4, by + 4, 4, 12, shirt, 0.08);   // front
-        box(bx + 12, by + 4, 4, 12, shirt, 0.08);  // back
-        box(bx, by + 4, 4, 12, shirt, 0.08);       // outer side
-        box(bx + 8, by + 4, 4, 12, shirt, 0.08);   // inner side
-        box(bx + 4, by, 4, 4, shirt, 0.08);        // top
+        panel(bx + 4, by + 4, 4, 12, shirt);   // front
+        panel(bx + 12, by + 4, 4, 12, shirt);  // back
+        panel(bx, by + 4, 4, 12, shirt);       // outer side
+        panel(bx + 8, by + 4, 4, 12, shirt);   // inner side
+        box(bx + 4, by, 4, 4, familyDark, 0.08);   // top = shoulder epaulette
         box(bx + 8, by, 4, 4, skinTone, 0.06);     // bottom (hand)
-        // band wraps the whole arm
-        for (const fx of [bx, bx + 4, bx + 8, bx + 12]) box(fx, by + 4, 4, 7, info.color);
-        // hands
-        for (const fx of [bx, bx + 4, bx + 8, bx + 12]) box(fx, by + 13, 4, 3, skinTone, 0.06);
+        // Band wraps the whole arm, shaded like the torso band.
+        for (const fx of [bx, bx + 4, bx + 8, bx + 12]) {
+            box(fx, by + 4, 4, 7, info.color);
+            for (let i = 0; i < 4; i++) {
+                px(fx + i, by + 4, shade(rgbOf(info.color), 1.15));
+                px(fx + i, by + 10, shade(rgbOf(info.color), 0.8));
+            }
+            box(fx, by + 12, 4, 1, accent);            // wrist cuff
+            box(fx, by + 13, 4, 3, skinTone, 0.06);    // hand
+        }
         if (letter && FONT[letter]) drawWordRow(letter, bx + 4, 4, by + 5, bandText);
     };
     arm(40, 16, word.length >= 3 ? word[0] : null);            // right arm
@@ -355,12 +420,17 @@ export function renderSkin(name, model) {
     // --- Legs (right base at 0..15,16..31; left at 16..31,48..63) ---
     const leg = (bx, by) => {
         for (const fx of [bx, bx + 4, bx + 8, bx + 12]) {
-            box(fx, by + 4, 4, 12, pants, 0.08);
+            panel(fx, by + 4, 4, 12, pants);
+            px(fx, by + 4, accent);               // side seam start
+            box(fx, by + 8, 4, 1, shade(rgbOf(pants), 0.85)); // knee crease
             box(fx, by + 12, 4, 1, info.color);   // family stripe
             box(fx, by + 13, 4, 3, boots, 0.08);  // boots
+            box(fx, by + 13, 4, 1, shade(boots, 1.7)); // boot rim highlight
         }
-        box(bx + 4, by, 4, 4, pants, 0.08);
-        box(bx + 8, by, 4, 4, boots, 0.08);
+        // Side seam down the outer faces.
+        for (let j = by + 4; j < by + 12; j++) px(bx, j, shade(rgbOf(accent), 0.8));
+        box(bx + 4, by, 4, 4, pants, 0.08);           // top
+        box(bx + 8, by, 4, 4, shade(boots, 0.7), 0.05); // bottom = sole
     };
     leg(0, 16);
     leg(16, 48);

@@ -29,6 +29,8 @@ export class Agent {
         this.colony_paused = false;
         this.count_id = count_id;
         this._disconnectHandled = false;
+        this.contest_recorders = [];
+        this.contest_recording_session = null;
 
         // Initialize components
         this.actions = new ActionManager(this);
@@ -142,7 +144,9 @@ export class Agent {
               
                 await this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
-                serverProxy.colonyReady();
+                if (!settings.game_session) {
+                    serverProxy.colonyReady();
+                }
               
                 if (!load_mem) {
                     if (settings.task) {
@@ -283,7 +287,7 @@ export class Agent {
         else if (init_message && !settings.colony?.enabled) {
             await this.handleMessage('system', init_message, 2);
         }
-        else if (!settings.colony?.enabled) {
+        else if (!settings.colony?.enabled && !settings.game_session) {
             this.openChat("Hello world! I am "+this.name);
         }
     }
@@ -543,10 +547,11 @@ export class Agent {
     _speakChat(text, addressed = false) {
         if (!text || !text.trim()) return;
         const model = this.prompter.profile.speak_model;
-        const volume = (settings.speak && addressed) ? this._getSpeechVolume() : null;
+        const shouldSpeak = addressed || settings.game_session?.speakAll;
+        const volume = (settings.speak && shouldSpeak) ? this._getSpeechVolume() : null;
         const audible = volume !== null;
         const recording = !!this.pov_recorder?.recording;
-        const silentReason = !addressed ? 'not addressed to a player or bot' : 'no human player in range';
+        const silentReason = !shouldSpeak ? 'not addressed to a player or bot' : 'no human player in range';
         console.log(`[${this.name}] voice: ${audible ? `speaking at volume ${volume}` : `silent (${silentReason})`}${recording ? ', recording' : ''}: "${text.trim().slice(0, 60)}"`);
         if (!audible && !recording) return;
 
@@ -814,6 +819,97 @@ export class Agent {
         return { ...this.pov_recorder.getStatus(), autoRecord: this.isAutoRecording() };
     }
 
+    async startContestRecording(options) {
+        if (!this.pov_recorder) {
+            throw new Error('Agent has not spawned yet');
+        }
+        if (this.contest_recording_session === options.sessionId) {
+            return {
+                sessionId: options.sessionId,
+                recordings: [
+                    this.pov_recorder.getStatus(),
+                    ...this.contest_recorders.map(recorder => recorder.getStatus()),
+                ],
+            };
+        }
+        if (this.contest_recording_session) {
+            await this.stopContestRecording();
+        }
+
+        this._contestRecordingRestore = {
+            autoRecord: this.isAutoRecording(),
+            continuous: Boolean(settings.record_bot_view),
+        };
+        if (this.action_recorder?.armed) {
+            await this.action_recorder.disarm();
+        }
+        if (this.pov_recorder.recording) {
+            await this.pov_recorder.stop();
+        }
+
+        const common = {
+            sessionId: options.sessionId,
+            contestId: options.contestId,
+            syncEpochMs: options.syncEpochMs,
+            sourceBot: this.name,
+            label: `contest-${options.contestId}`,
+        };
+        this.contest_recording_session = options.sessionId;
+        this.contest_recorders = (options.externalCameras || []).map(camera =>
+            new PovRecorder(this.bot, camera.id)
+        );
+
+        const statuses = await Promise.all([
+            this.pov_recorder.start({
+                ...common,
+                camera: 'follow',
+                recordingRole: 'participant-pov',
+            }),
+            ...this.contest_recorders.map((recorder, index) => {
+                const camera = options.externalCameras[index];
+                return recorder.start({
+                    ...common,
+                    camera: 'fixed',
+                    recordingRole: 'arena-overview',
+                    fps: camera.fps || 15,
+                    width: camera.width || 960,
+                    height: camera.height || 540,
+                    viewDistance: camera.viewDistance || 8,
+                    cameraPosition: camera.position,
+                    cameraTarget: camera.target,
+                });
+            }),
+        ]);
+        const failed = statuses.find(status => status.error);
+        if (failed) {
+            await this.stopContestRecording();
+            throw new Error(failed.error);
+        }
+        serverProxy.sendRecordingUpdate(this.recordingStatus());
+        return { sessionId: options.sessionId, recordings: statuses };
+    }
+
+    async stopContestRecording() {
+        if (!this.contest_recording_session) {
+            return { sessionId: null, recordings: [] };
+        }
+        const sessionId = this.contest_recording_session;
+        const recorders = [this.pov_recorder, ...this.contest_recorders];
+        const statuses = await Promise.all(recorders.map(recorder => recorder.stop()));
+        this.contest_recorders = [];
+        this.contest_recording_session = null;
+
+        const restore = this._contestRecordingRestore;
+        this._contestRecordingRestore = null;
+        if (restore?.continuous) {
+            await this.pov_recorder.start();
+        } else if (restore?.autoRecord) {
+            await this.setAutoRecording(true);
+        }
+        serverProxy.sendRecordingUpdate(this.recordingStatus());
+        return { sessionId, recordings: statuses };
+    }
+
     isAutoRecording() {
         return !!this.action_recorder?.armed;
     }
@@ -841,6 +937,9 @@ export class Agent {
         try { this.action_recorder?.stop(); } catch (_) { /* recorder may not exist yet */ }
         try { this.pov_snapshotter?.stop(); } catch (_) { /* recorder may not exist yet */ }
         try { this.pov_recorder?.stop(); } catch (_) { /* recorder may not exist yet */ }
+        for (const recorder of this.contest_recorders || []) {
+            try { recorder.stop(); } catch (_) { /* recorder may not exist yet */ }
+        }
         this.history.add('system', msg);
         // code === 1 restarts the agent process; other codes leave for good.
         // Say something reassuring so players don't worry when bots vanish for updates.
