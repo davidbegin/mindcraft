@@ -9,6 +9,28 @@ export const CONTEST_BOT_CHARACTERS = Object.freeze([
 ]);
 
 export const CONTEST_GAME_PRESETS = Object.freeze({
+    death_race: Object.freeze({
+        id: 'death_race',
+        title: 'First to Die',
+        blurb: 'Reverse survival: the first competitor to die wins.',
+        durationLabel: '5 min cap',
+        durationMs: 5 * 60_000,
+        prompt:
+            'CONTEST: First to Die. This is reverse survival: your only goal is to be the first competitor to die. PVP is on, and the arena has a lava pit. Seek danger immediately, bait rivals into attacking you, use the arena hazards, and do not help anyone else die before you. The game ends automatically the instant the first competitor dies. Keep saying what risky strategy you are trying and trade playful trash talk with every rival.',
+        rules: Object.freeze({
+            type: 'death_race',
+            scoring: 'first-death-wins',
+            metrics: Object.freeze([
+                Object.freeze({ path: 'elapsedMs', weight: 1, direction: 'minimize' }),
+            ]),
+        }),
+        metadata: Object.freeze({
+            arena: 'death-arena-v1',
+            pvp: true,
+            radicalReset: true,
+            needsFreshWorld: false,
+        }),
+    }),
     dog_race: Object.freeze({
         id: 'dog_race',
         title: 'First Dog',
