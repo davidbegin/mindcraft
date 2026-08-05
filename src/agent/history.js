@@ -3,6 +3,15 @@ import { NPCData } from './npc/data.js';
 import settings from './settings.js';
 import { isModelFailureMessage } from '../models/quota_guard.js';
 
+const MAX_MEMORY_CHARS = 500;
+const MEMORY_TRUNCATION_SUFFIX =
+    '...(Memory truncated. Prefer transferable rules and task-critical facts next time)';
+
+export function truncateMemory(memory) {
+    if (memory.length <= MAX_MEMORY_CHARS) return memory;
+    return memory.slice(0, MAX_MEMORY_CHARS - MEMORY_TRUNCATION_SUFFIX.length) +
+        MEMORY_TRUNCATION_SUFFIX;
+}
 
 export class History {
     constructor(agent) {
@@ -42,11 +51,7 @@ export class History {
             return;
         }
 
-        this.memory = summary;
-        if (this.memory.length > 500) {
-            this.memory = this.memory.slice(0, 500);
-            this.memory += '...(Memory truncated to 500 chars. Prefer transferable rules over excess coordinates next time)';
-        }
+        this.memory = truncateMemory(summary);
 
         console.log("Memory updated to: ", this.memory);
     }

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { truncateMemory } from '../src/agent/history.js';
+
 function loadJson(path) {
     return JSON.parse(readFileSync(path, 'utf8'));
 }
@@ -30,6 +32,8 @@ test('default prompts prefer Bennett weakness over MDL compression', () => {
     assert.match(profile.saving_memory, /Bennett's Razor/);
     assert.match(profile.saving_memory, /WEAK rules/);
     assert.match(profile.saving_memory, /transferable rules/);
+    assert.match(profile.saving_memory, /all unmet acceptance requirements/);
+    assert.match(profile.saving_memory, /every distinct anchor explicitly required/);
     assert.match(profile.saving_memory, /500 characters/);
 
     assert.match(profile.coding, /Prefer WEAK/);
@@ -63,7 +67,10 @@ test('task profiles that override saving_memory also drop MDL compression langua
 });
 
 test('history truncation hint prefers transferable rules over compression', () => {
-    const source = readFileSync('./src/agent/history.js', 'utf8');
-    assert.match(source, /Prefer transferable rules over excess coordinates next time/);
-    assert.equal(source.includes('Compress it more next time'), false);
+    const exact = 'x'.repeat(500);
+    assert.equal(truncateMemory(exact), exact);
+
+    const truncated = truncateMemory('x'.repeat(600));
+    assert.equal(truncated.length, 500);
+    assert.match(truncated, /Prefer transferable rules and task-critical facts next time/);
 });
