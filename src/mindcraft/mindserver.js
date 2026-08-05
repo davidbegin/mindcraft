@@ -1698,6 +1698,12 @@ export function createMindServer(host_public = false, port = 8080) {
                     voiceId,
                     elevenLabsTTSConfig.baseUrl
                 );
+                broadcastContestRecordingAudio(connection, {
+                    sessionId: connection.settings.game_session.sessionId,
+                    speaker: curAgentName,
+                    audio,
+                    atMs: Date.now(),
+                });
                 dispatchBotVoice({ agentName: curAgentName, text, audio });
                 callback?.({ success: true, audio });
             } catch (error) {
@@ -1898,6 +1904,17 @@ function releaseVoiceOutput(socket) {
 function rememberUtterance(id, utterance) {
     recent_utterances.set(id, utterance);
     setTimeout(() => recent_utterances.delete(id), RECENT_UTTERANCE_TTL_MS);
+}
+
+function broadcastContestRecordingAudio(sourceConnection, payload) {
+    const sessionId = sourceConnection?.settings?.game_session?.sessionId;
+    if (!sessionId || payload?.sessionId !== sessionId || !payload.audio) return;
+
+    for (const connection of Object.values(agent_connections)) {
+        if (connection.settings?.game_session?.sessionId !== sessionId) continue;
+        if (!connection.socket?.connected) continue;
+        connection.socket.emit('contest-recording-audio', payload);
+    }
 }
 
 /**
