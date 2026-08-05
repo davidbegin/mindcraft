@@ -1022,24 +1022,6 @@
             color: var(--text-mute);
         }
 
-        .agent-viewer-wrap {
-            display: none;
-            border-radius: 10px;
-            overflow: hidden;
-            border: 1px solid var(--border);
-            aspect-ratio: 4/3;
-            background: #000;
-        }
-
-        .agent-viewer-wrap.show { display: block; }
-
-        .agent-viewer {
-            width: 100%;
-            height: 100%;
-            border: none;
-            display: block;
-        }
-
         .card-controls {
             display: grid;
             grid-template-columns: 1fr auto auto auto;
@@ -2539,20 +2521,6 @@
             originalAgentSettings = null;
         }
 
-        function updateAgentViewer(name) {
-            const wrap = document.getElementById(`viewerWrap-${name}`);
-            if (!wrap) return;
-            const settings = agentSettings[name];
-            const agentState = currentAgents.find(a => a.name === name);
-            const shouldShow = agentState?.in_game && settings?.render_bot_view === true;
-            wrap.classList.toggle('show', !!shouldShow);
-            if (shouldShow) {
-                const iframe = wrap.querySelector('iframe');
-                const src = `http://localhost:${agentState.viewerPort}`;
-                if (iframe && iframe.src !== src) iframe.src = src;
-            }
-        }
-
         discardBtn.addEventListener('click', () => {
             if (!currentAgentName || !originalAgentSettings) return;
             buildAgentSettingsForm(originalAgentSettings);
@@ -2563,7 +2531,6 @@
             const edited = getEditedAgentSettings();
             socket.emit('set-agent-settings', currentAgentName, edited);
             agentSettings[currentAgentName] = { ...edited, fetched: true };
-            updateAgentViewer(currentAgentName);
             closeAgentSettings();
         });
 
@@ -2589,9 +2556,6 @@
         window.toggleMenu = toggleMenu;
 
         function renderAgentCard(agent) {
-            const cfg = agentSettings[agent.name] || {};
-            const showViewer = agent.in_game && cfg.render_bot_view === true;
-            const viewerPort = agent.viewerPort;
             const lastMessage = agentLastMessage[agent.name] || '';
             const invOpen = inventoryOpen[agent.name] === true;
             const role = colonyRoleFor(agent.name);
@@ -2731,10 +2695,6 @@
                         <div class="model-error" id="modelError-${agent.name}" hidden></div>
                     </div>
 
-                    <div class="agent-viewer-wrap ${showViewer ? 'show' : ''}" id="viewerWrap-${agent.name}">
-                        ${showViewer ? `<iframe class="agent-viewer" id="viewer-${agent.name}" src="http://localhost:${viewerPort}"></iframe>` : '<iframe class="agent-viewer" id="viewer-' + agent.name + '"></iframe>'}
-                    </div>
-
                     <div class="card-controls">
                         <input class="msg-input" type="text" id="messageInput-${agent.name}" placeholder="Message…"
                             onkeydown="if(event.key==='Enter'){sendMessage('${esc(agent.name)}', this.value)}"
@@ -2774,9 +2734,8 @@
                 agentsDiv.innerHTML = agents.map(agent => renderAgentCard(agent)).join('');
                 setTimeout(() => {
                     agents.forEach(a => {
-                        if (a.in_game) {
-                            updateAgentViewer(a.name);
-                            if (lastStates[a.name]) patchAgentCard(a.name, lastStates[a.name]);
+                        if (a.in_game && lastStates[a.name]) {
+                            patchAgentCard(a.name, lastStates[a.name]);
                         }
                     });
                 }, 0);
@@ -2795,15 +2754,13 @@
                 const el = document.getElementById(`agent-${agent.name}`);
                 if (el) {
                     el.outerHTML = renderAgentCard(agent);
-                    if (agent.in_game) {
-                        updateAgentViewer(agent.name);
-                        if (lastStates[agent.name]) patchAgentCard(agent.name, lastStates[agent.name]);
+                    if (agent.in_game && lastStates[agent.name]) {
+                        patchAgentCard(agent.name, lastStates[agent.name]);
                     }
                 } else {
                     agentsDiv.insertAdjacentHTML('beforeend', renderAgentCard(agent));
-                    if (agent.in_game) {
-                        updateAgentViewer(agent.name);
-                        if (lastStates[agent.name]) patchAgentCard(agent.name, lastStates[agent.name]);
+                    if (agent.in_game && lastStates[agent.name]) {
+                        patchAgentCard(agent.name, lastStates[agent.name]);
                     }
                 }
             });
@@ -2847,9 +2804,8 @@
                 agentsDiv.innerHTML = agents.map(agent => renderAgentCard(agent)).join('');
                 setTimeout(() => {
                     agents.forEach(a => {
-                        if (a.in_game) {
-                            updateAgentViewer(a.name);
-                            if (lastStates[a.name]) patchAgentCard(a.name, lastStates[a.name]);
+                        if (a.in_game && lastStates[a.name]) {
+                            patchAgentCard(a.name, lastStates[a.name]);
                         }
                     });
                 }, 0);
@@ -2861,15 +2817,13 @@
                 const el = document.getElementById(`agent-${agent.name}`);
                 if (el) {
                     el.outerHTML = renderAgentCard(agent);
-                    if (agent.in_game) {
-                        updateAgentViewer(agent.name);
-                        if (lastStates[agent.name]) patchAgentCard(agent.name, lastStates[agent.name]);
+                    if (agent.in_game && lastStates[agent.name]) {
+                        patchAgentCard(agent.name, lastStates[agent.name]);
                     }
                 } else {
                     agentsDiv.insertAdjacentHTML('beforeend', renderAgentCard(agent));
-                    if (agent.in_game) {
-                        updateAgentViewer(agent.name);
-                        if (lastStates[agent.name]) patchAgentCard(agent.name, lastStates[agent.name]);
+                    if (agent.in_game && lastStates[agent.name]) {
+                        patchAgentCard(agent.name, lastStates[agent.name]);
                     }
                 }
             });
@@ -2948,9 +2902,8 @@
             const el = document.getElementById(`agent-${name}`);
             if (!agent || !el) return;
             el.outerHTML = renderAgentCard(agent);
-            if (agent.in_game) {
-                updateAgentViewer(name);
-                if (lastStates[name]) patchAgentCard(name, lastStates[name]);
+            if (agent.in_game && lastStates[name]) {
+                patchAgentCard(name, lastStates[name]);
             }
         }
 

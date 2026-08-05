@@ -62,15 +62,20 @@
             align-content: start;
         }
         .tile {
-            position: relative;
+            display: flex;
+            flex-direction: column;
             border: 1px solid var(--border);
             border-radius: 10px;
             overflow: hidden;
             background: var(--bg-inset);
+        }
+        .tile .feed {
+            position: relative;
             aspect-ratio: 16 / 9;
             min-height: 220px;
+            background: #000;
         }
-        .tile iframe, .tile img.poster {
+        .tile .feed iframe, .tile .feed img.poster {
             position: absolute;
             inset: 0;
             width: 100%;
@@ -81,6 +86,7 @@
         }
         .tile .bar {
             position: absolute;
+            top: 0;
             left: 0;
             right: 0;
             display: flex;
@@ -91,15 +97,49 @@
             font-size: 0.82rem;
             z-index: 2;
         }
-        .tile .bar.bottom {
-            bottom: 0;
-            top: auto;
-            background: linear-gradient(rgba(6, 8, 10, 0), rgba(6, 8, 10, 0.85));
-            color: var(--text-dim);
-            font-size: 0.76rem;
-        }
         .tile .bar .name { font-weight: 700; }
         .tile .bar .spacer { flex: 1; }
+        .tile .caption {
+            padding: 8px 12px 9px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            min-height: 52px;
+        }
+        .tile .caption .goal {
+            font-size: 0.82rem;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .tile .caption .goal .tag {
+            color: var(--cyan);
+            font-weight: 700;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-right: 6px;
+        }
+        .tile .caption .goal.none { color: var(--text-dim); }
+        .tile .caption .doing {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            font-size: 0.76rem;
+            color: var(--text-dim);
+        }
+        .tile .caption .doing .now {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .tile .caption .doing .hint {
+            margin-left: auto;
+            white-space: nowrap;
+            color: var(--amber);
+        }
         .chip {
             font-size: 0.68rem;
             padding: 1px 8px;
@@ -159,11 +199,20 @@
         const socket = io();
         let agents = [];
         let states = {};
+        let colonyState = null;
         const paused = {};      // name -> user chose to pause this tile
         const idleSince = {};   // name -> ms timestamp when the bot last went idle
         let wallKey = '';       // membership fingerprint; only rebuild DOM when it changes
 
-        socket.on('connect', () => socket.emit('listen-to-agents'));
+        socket.on('connect', () => {
+            socket.emit('listen-to-agents');
+            socket.emit('colony-status', (result) => {
+                if (result?.success) { colonyState = result.data; updateOverlays(); }
+            });
+        });
+        socket.on('colony-update', (state) => {
+            if (state) { colonyState = state; updateOverlays(); }
+        });
         socket.on('agents-status', (list) => {
             agents = list || [];
             const live = liveAgents();
@@ -192,6 +241,36 @@
         function doingOf(name) {
             const st = states[name];
             return st?.action?.current || '';
+        }
+
+        function roleOf(name) {
+            const list = colonyState?.agents;
+            if (!Array.isArray(list)) return null;
+            return list.find(a => a.id === name || a.name === name)?.role || null;
+        }
+
+        function taskOf(name) {
+            const taskList = Array.isArray(colonyState?.tasks)
+                ? colonyState.tasks
+                : Object.values(colonyState?.tasks || {});
+            return taskList.find(t =>
+                (t.claimedBy === name || t.assignee === name) &&
+                ['claimed', 'in_progress', 'available'].includes(t.status)
+            ) || null;
+        }
+
+        // What the bot is trying to accomplish: colony task first, then its self-prompt goal.
+        function goalOf(name) {
+            const task = taskOf(name);
+            if (task) {
+                const title = task.title || task.id || '';
+                return { tag: 'task', text: task.description ? `${title} — ${task.description}` : title };
+            }
+            const sp = states[name]?.selfPrompt;
+            if (sp?.prompt && (sp.active || sp.loopActive || sp.paused)) {
+                return { tag: sp.paused ? 'goal (paused)' : 'goal', text: sp.prompt };
+            }
+            return null;
         }
 
         function esc(s) {
@@ -237,19 +316,24 @@
             }
             wall.innerHTML = live.map(a => `
                 <div class="tile" id="tile-${esc(a.name)}">
-                    ${feedHtml(a)}
-                    <div class="bar" style="top:0">
-                        <span class="name">${esc(a.name)}</span>
-                        <span class="chip rec" id="wallRec-${esc(a.name)}" hidden>● rec</span>
-                        <span class="chip pausedTag" id="wallPaused-${esc(a.name)}" ${paused[a.name] ? '' : 'hidden'}>⏸ paused — snapshot every 10s</span>
-                        <span class="spacer"></span>
-                        <span class="chip" id="wallPhase-${esc(a.name)}">…</span>
-                        <button class="pauseBtn" onclick="togglePause('${esc(a.name)}')">${paused[a.name] ? '▶ Live' : '⏸ Pause'}</button>
+                    <div class="feed">
+                        ${feedHtml(a)}
+                        <div class="bar">
+                            <span class="name">${esc(a.name)}</span>
+                            <span class="chip" id="wallRole-${esc(a.name)}" hidden></span>
+                            <span class="chip rec" id="wallRec-${esc(a.name)}" hidden>● rec</span>
+                            <span class="chip pausedTag" id="wallPaused-${esc(a.name)}" ${paused[a.name] ? '' : 'hidden'}>⏸ paused — snapshot every 10s</span>
+                            <span class="spacer"></span>
+                            <span class="chip" id="wallPhase-${esc(a.name)}">…</span>
+                            <button class="pauseBtn" onclick="togglePause('${esc(a.name)}')">${paused[a.name] ? '▶ Live' : '⏸ Pause'}</button>
+                        </div>
                     </div>
-                    <div class="bar bottom">
-                        <span id="wallDoing-${esc(a.name)}"></span>
-                        <span class="spacer"></span>
-                        <span id="wallIdleHint-${esc(a.name)}"></span>
+                    <div class="caption">
+                        <div class="goal none" id="wallGoal-${esc(a.name)}">no current objective</div>
+                        <div class="doing">
+                            <span class="now" id="wallDoing-${esc(a.name)}"></span>
+                            <span class="hint" id="wallIdleHint-${esc(a.name)}"></span>
+                        </div>
                     </div>
                 </div>`).join('');
         }
@@ -268,7 +352,31 @@
                     phaseEl.className = `chip ${phase === 'acting' || phase === 'busy' ? 'acting' : 'idle'}`;
                 }
                 const doingEl = document.getElementById(`wallDoing-${name}`);
-                if (doingEl) doingEl.textContent = doingOf(name);
+                if (doingEl) {
+                    const doing = doingOf(name);
+                    doingEl.textContent = doing ? `now: ${doing}` : '';
+                }
+
+                const goalEl = document.getElementById(`wallGoal-${name}`);
+                if (goalEl) {
+                    const goal = goalOf(name);
+                    if (goal) {
+                        goalEl.classList.remove('none');
+                        goalEl.innerHTML = `<span class="tag">${esc(goal.tag)}</span>${esc(goal.text)}`;
+                        goalEl.title = goal.text;
+                    } else {
+                        goalEl.classList.add('none');
+                        goalEl.textContent = 'no current objective';
+                        goalEl.title = '';
+                    }
+                }
+
+                const roleEl = document.getElementById(`wallRole-${name}`);
+                if (roleEl) {
+                    const role = roleOf(name);
+                    roleEl.hidden = !role;
+                    if (role) roleEl.textContent = role;
+                }
 
                 // Nudge: a bot that has sat idle a while is a good pause candidate.
                 const hintEl = document.getElementById(`wallIdleHint-${name}`);
