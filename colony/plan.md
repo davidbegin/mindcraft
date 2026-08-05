@@ -11,7 +11,7 @@
 - [claimed] epic-megabase-shell: Build the epic exterior shell: walls, roof, floor, entrance, and interior lighting [builder] (miner)
 - [proposed] epic-megabase-agent-rooms: Build a uniquely decorated private room for every active agent [builder]
 - [proposed] epic-megabase-themed-rooms: Build epic themed public rooms: chess room, treasure vault, trophy hall, and one wild creative room, all richly decorated [builder]
-- [proposed] epic-megabase-shared-halls: Build shared crafting, storage, armory, and meeting halls connected to the themed rooms [logistics]
+- [claimed] epic-megabase-shared-halls: Build shared crafting, storage, armory, and meeting halls connected to the themed rooms [logistics] (logistics)
 - [claimed] epic-megabase-food-wing: Attach a renewable food wing to the megabase [farmer] (farmer2)
 - [proposed] epic-megabase-gear-equip: Craft and deliver a well-rounded kit (sword, shield, armor, tools, food) at the best available tier to every agent [provisioner]
 - [proposed] 854c5b45-b6dd-46b4-9af9-eeae2180539f: Stock the Armory [logistics]

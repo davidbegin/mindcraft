@@ -36,29 +36,29 @@ test('defaults when no config file exists', () => {
 test('saveVoicesConfig writes and resolveVoice honors priority', () => {
     saveVoicesConfig({
         elevenlabs_model: 'eleven_turbo_v2_5',
-        default_voice: 'Freya',
-        bots: { andy: 'adam', custom_bot: 'RawVoiceId123', empty: '  ' },
+        default_voice: 'Giggles',
+        bots: { andy: 'grimblewood', custom_bot: 'RawVoiceId123', empty: '  ' },
     });
 
     const written = JSON.parse(readFileSync(configPath, 'utf8'));
     assert.ok(written._readme);
     assert.equal(written.elevenlabs_model, 'eleven_turbo_v2_5');
-    assert.equal(written.default_voice, 'Freya');
-    assert.deepEqual(written.bots, { andy: 'adam', custom_bot: 'RawVoiceId123' });
+    assert.equal(written.default_voice, 'Giggles');
+    assert.deepEqual(written.bots, { andy: 'grimblewood', custom_bot: 'RawVoiceId123' });
 
     assert.equal(getElevenLabsModel(), 'eleven_turbo_v2_5');
     // Pinned beats default; pool names are case-insensitive.
-    assert.equal(resolveVoice('andy'), VOICE_POOL.Adam);
+    assert.equal(resolveVoice('andy'), VOICE_POOL.Grimblewood);
     // Non-pool values pass through as raw ElevenLabs voice IDs.
     assert.equal(resolveVoice('custom_bot'), 'RawVoiceId123');
     // Unpinned bots use the default voice when one is set.
-    assert.equal(resolveVoice('someone_else'), VOICE_POOL.Freya);
+    assert.equal(resolveVoice('someone_else'), VOICE_POOL.Giggles);
     // An explicit speak_model voice beats everything.
-    assert.equal(resolveVoice('andy', 'Brian'), VOICE_POOL.Brian);
+    assert.equal(resolveVoice('andy', 'Inferno'), VOICE_POOL.Inferno);
 });
 
 test('clearing default_voice restores auto assignment', () => {
-    saveVoicesConfig({ bots: { andy: 'Adam' } });
+    saveVoicesConfig({ bots: { andy: 'Grimblewood' } });
     const written = JSON.parse(readFileSync(configPath, 'utf8'));
     assert.equal('default_voice' in written, false);
     assert.equal(written.elevenlabs_model, DEFAULT_ELEVENLABS_MODEL);

@@ -3061,7 +3061,9 @@
         function sendMessage(n, m) {
             if (!m || !m.trim()) return;
             closeAllMenus();
-            socket.emit('send-message', n, { from: 'ADMIN', message: m });
+            // Messages from the UI come from beginbot (the human admin), so bots
+            // address them by name and treat them the same as in-game chat.
+            socket.emit('send-message', n, { from: 'beginbot', message: m });
             const input = document.getElementById(`messageInput-${n}`);
             if (input) input.value = '';
         }
@@ -3079,7 +3081,7 @@
             }
 
             for (const agent of targets) {
-                socket.emit('send-message', agent.name, { from: 'ADMIN', message });
+                socket.emit('send-message', agent.name, { from: 'beginbot', message });
             }
             input.value = '';
             status.textContent = `Sent to ${targets.length}`;

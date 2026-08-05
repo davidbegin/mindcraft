@@ -1,40 +1,30 @@
 import fs from 'fs';
 import path from 'path';
 
-// ElevenLabs premade voices, chosen for variety (male/female, accents, ages,
-// energies) so a colony of bots doesn't all sound the same. Voice IDs are the
-// public ElevenLabs stock voice IDs.
+// Goofy character voices from this account's ElevenLabs library, chosen so
+// the colony sounds like a cartoon ensemble rather than a newsroom. Every ID
+// was verified to generate with the account's API key.
 const VOICES = [
-    ['Adam', 'pNInz6obpgDQGcFmaJgB', 'deep American male'],
-    ['Rachel', '21m00Tcm4TlvDq8ikWAM', 'calm American female'],
-    ['Clyde', '2EiwWnXFnvU5JabPnv8n', 'gruff war-veteran male'],
-    ['Domi', 'AZnzlk1XvdvUeBnXmlld', 'strong, confident female'],
-    ['Fin', 'D38z5RcWu1voky8WS1ja', 'old Irish sailor'],
-    ['Sarah', 'EXAVITQu4vr4xnSDxMaL', 'soft American female'],
-    ['Antoni', 'ErXwobaYiN019PkySvjV', 'well-rounded male'],
-    ['Charlie', 'IKne3meq5aSn9XLyUdCD', 'casual Australian male'],
-    ['George', 'JBFqnCBsd6RMkjVDRZzb', 'warm British male'],
-    ['Callum', 'N2lVS1w4EtoT3dr4eOWO', 'intense, gravelly male'],
-    ['Harry', 'SOYHLrjzK2X1ezoPC6cr', 'anxious young male'],
-    ['Liam', 'TX3LPaxmHKxFdv7VOQHJ', 'articulate young male'],
-    ['Dorothy', 'ThT5KcBeYPX3keUQqHPh', 'pleasant British female'],
-    ['Josh', 'TxGEqnHWrfWFTfGW9XjX', 'deep young male'],
-    ['Arnold', 'VR6AewLTigWG4xSOukaG', 'crisp, commanding male'],
-    ['Charlotte', 'XB0fDUnXU5powFXDhCwa', 'seductive Swedish female'],
-    ['Alice', 'Xb7hH8MSUJpSbSDYk0k2', 'confident British female'],
-    ['Matilda', 'XrExE9yKIg1WjnnlVkGX', 'friendly American female'],
-    ['Jeremy', 'bVMeCyTHy58xNoL34h3p', 'excitable Irish male'],
-    ['Michael', 'flq6f7yk4E4fJM5XTYuZ', 'old American male'],
-    ['Ethan', 'g5CIjZEefAph4nQFvHAz', 'whispery young male'],
-    ['Gigi', 'jBpfuIE2acCO8z3wKNLl', 'childish, animated female'],
-    ['Freya', 'jsCqWAovK2LkecY7zXl4', 'expressive American female'],
-    ['Brian', 'nPczCjzI2devNBz1zQrb', 'deep narrator male'],
-    ['Daniel', 'onwK4e9ZLuTAKqWW03F9', 'authoritative British male'],
-    ['Lily', 'pFZP5JQG7iQjIQuC4Bku', 'velvety British female'],
-    ['Bill', 'pqHfZKP75CvOlQylNhV4', 'trustworthy old male'],
-    ['Jessie', 't0jbNlBVZ17f02VDIeMI', 'raspy old male'],
-    ['Sam', 'yoZ06aMxZJJ28mfd3POQ', 'fast-talking American male'],
-    ['Glinda', 'z9fAnlkpzviPz146aGWa', 'witchy female'],
+    ['Giggles', 'VE5rsMNTeE1frCCSXNIC', 'wacky cartoon goofball'],
+    ['Sasquatch', 'a8p00hpqmTpR1cLnk76X', 'sassy Australian sasquatch'],
+    ['Grimblewood', 'ouL9IsyrSnUkCmfnD02u', 'grumpy old gnome'],
+    ['ToonMarshal', 'lE5ZJB6jGeeuvSNxOvs2', 'excitable toon character'],
+    ['Timmy', 'mrQhZWGbb2k9qWJb5qeA', 'anxious nerd'],
+    ['Clifford', 'H2CgnIux8C0XLWQ97uPA', 'drawling western cowboy'],
+    ['RadioClyde', 'QMJTqaMXmGnG8TCm8WQG', 'vintage radio announcer'],
+    ['Inferno', 'zYcjlYFOd3taleS0gkk3', 'arrogant cartoon villain'],
+    ['Myrddin', 'oR4uRy4fHDUGGISL0Rev', 'theatrical old wizard'],
+    ['Nawlins', 'ERbFfgajma1nPOBNQw6U', 'smooth New Orleans gentleman'],
+    ['Aerisita', '03vEurziQfq3V8WZhQvn', 'sassy upbeat diva'],
+    ['Bridget', '17BwYbWZaIZnGAgXe6XS', 'insufferable rich snob'],
+    ['Cyrien', 'AFkIMdmeB0MMrr1tgGds', 'charming flirty rogue'],
+    ['BostonBob', 'Gf1KYedBUv2F4rCJhVFJ', 'wicked-pissah Boston guy'],
+    ['Laura', 'FGY2WhTYpPnrIDTdsKH5', 'quirky sassy enthusiast'],
+    ['Jessica', 'cgSgspJ2msm6clMCkdW9', 'playful bubbly optimist'],
+    ['DudeDavis', 'Umdp1GYPcONfcWXrMinP', 'chill surfer dude'],
+    ['BlouB', 'ySaYS84ykPC7FKlpD4ag', 'modulated Canadian weirdo'],
+    ['Trickster', 'N2lVS1w4EtoT3dr4eOWO', 'husky trickster'],
+    ['Gigi', 'jBpfuIE2acCO8z3wKNLl', 'childish animated squeaker'],
 ];
 
 export const VOICE_POOL = Object.fromEntries(VOICES.map(([name, id]) => [name, id]));
