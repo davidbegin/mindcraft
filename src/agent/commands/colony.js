@@ -90,7 +90,7 @@ export const colonyActionList = [
     },
     {
         name: '!requestColonyAgent',
-        description: 'Request another specialist when existing agents cannot cover an important role.',
+        description: 'Ask whether another specialist is needed. The live roster is managed from the Mindcraft UI, so this will not spawn a replacement after an agent is removed.',
         params: {
             role: { type: 'string', description: 'Needed specialty such as miner, builder, explorer, or combat.' },
             reason: { type: 'string', description: 'Why spawning this specialist advances the shared plan.' },

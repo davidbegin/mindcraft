@@ -117,6 +117,11 @@
         "description": "Whether to render bot view for user observation. Does not give bot vision.",
         "default": false
     },
+    "record_bot_view": {
+        "type": "boolean",
+        "description": "Whether to auto-record the bot's first-person POV to MP4 files in bots/<name>/recordings on spawn. Recording can also be toggled per-agent from the UI. Requires ffmpeg.",
+        "default": false
+    },
     "allow_insecure_coding": {
         "type": "boolean",
         "description": "Whether to allow newAction command that let's LLM write/run code on host computer. Despite sandboxxing, it is potentially insecure.",
@@ -144,7 +149,6 @@
             "enabled": true,
             "world_id": "mindcraft-colony-epic-megabase-v1",
             "state_dir": "./colony",
-            "max_agents": 8,
             "min_agents": 3,
             "heartbeat_interval_ms": 10000,
             "idle_directive_ms": 15000,

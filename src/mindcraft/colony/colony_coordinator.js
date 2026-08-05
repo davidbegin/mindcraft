@@ -183,14 +183,13 @@ function clone(value) {
     return structuredClone(value);
 }
 
-function defaultState(maxAgents, now) {
+function defaultState(now) {
     return {
         version: 1,
         paused: false,
         pauseReason: null,
         phase: COLONY_PHASES[0],
         epoch: 1,
-        maxAgents,
         agents: {},
         tasks: {},
         spawn: {
@@ -212,9 +211,6 @@ function assertNonEmptyString(value, name) {
 function assertState(state) {
     if (!state || state.version !== 1 || !COLONY_PHASES.includes(state.phase)) {
         throw new Error('Unsupported or invalid colony state');
-    }
-    if (!Number.isInteger(state.maxAgents) || state.maxAgents < 1) {
-        throw new Error('Invalid maxAgents in colony state');
     }
 }
 
@@ -303,7 +299,6 @@ export class ColonyCoordinator {
     constructor(options = {}) {
         const {
             root,
-            maxAgents = 8,
             leaseMs = 5 * 60 * 1000,
             spawnCooldownMs = 60 * 1000,
             clock = () => Date.now(),
@@ -312,9 +307,6 @@ export class ColonyCoordinator {
         } = options;
 
         assertNonEmptyString(root, 'root');
-        if (!Number.isInteger(maxAgents) || maxAgents < 1) {
-            throw new RangeError('maxAgents must be a positive integer');
-        }
         if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
             throw new RangeError('leaseMs must be positive');
         }
@@ -330,7 +322,8 @@ export class ColonyCoordinator {
         this.spawnCooldownMs = spawnCooldownMs;
         this.clock = clock;
         this.idFactory = idFactory;
-        this.state = state ? clone(state) : defaultState(maxAgents, this.clock());
+        this.state = state ? clone(state) : defaultState(this.clock());
+        delete this.state.maxAgents;
         assertState(this.state);
         this._operation = Promise.resolve();
     }
@@ -352,12 +345,7 @@ export class ColonyCoordinator {
             agent.desired ??= true;
             agent.profile ??= null;
         }
-        if (options.maxAgents !== undefined) {
-            if (!Number.isInteger(options.maxAgents) || options.maxAgents < 1) {
-                throw new RangeError('maxAgents must be a positive integer');
-            }
-            state.maxAgents = options.maxAgents;
-        }
+        delete state.maxAgents;
         assertState(state);
         const coordinator = new ColonyCoordinator({
             ...options,
@@ -404,19 +392,9 @@ export class ColonyCoordinator {
         assertNonEmptyString(status, 'status');
         return this._mutate('agent.registered', { agentId, role, status }, now => {
             const existing = this.state.agents[agentId];
-            const becomingManaged = !existing && metadata.desired !== false;
-            if (becomingManaged && this._desiredAgentCount() >= this.state.maxAgents) {
-                throw new Error('Agent cap reached');
-            }
             const effectiveStatus = existing?.desired === false
                 ? existing.status
                 : status;
-            const becomingActive = !ACTIVE_AGENT_STATUSES.has(existing?.status) &&
-                ACTIVE_AGENT_STATUSES.has(effectiveStatus);
-            if (becomingActive &&
-                this._activeAgentCount() >= this.state.maxAgents) {
-                throw new Error('Agent cap reached');
-            }
             this.state.agents[agentId] = {
                 id: agentId,
                 role,
@@ -441,11 +419,6 @@ export class ColonyCoordinator {
             }
             if (updates.status !== undefined) {
                 assertNonEmptyString(updates.status, 'status');
-                const becomingActive = !ACTIVE_AGENT_STATUSES.has(agent.status) &&
-                    ACTIVE_AGENT_STATUSES.has(updates.status);
-                if (becomingActive && this._activeAgentCount() >= this.state.maxAgents) {
-                    throw new Error('Agent cap reached');
-                }
                 agent.status = updates.status;
             }
             if (updates.desired !== undefined) {
@@ -465,11 +438,6 @@ export class ColonyCoordinator {
             const agent = this._requireAgent(agentId);
             if (status !== undefined) {
                 assertNonEmptyString(status, 'status');
-                const becomingActive = !ACTIVE_AGENT_STATUSES.has(agent.status) &&
-                    ACTIVE_AGENT_STATUSES.has(status);
-                if (becomingActive && this._activeAgentCount() >= this.state.maxAgents) {
-                    throw new Error('Agent cap reached');
-                }
                 agent.status = status;
             }
             agent.heartbeatAt = now;
@@ -746,12 +714,6 @@ export class ColonyCoordinator {
         return this._mutate('spawn.requested', { role, requestedBy }, now => {
             if (this.state.paused) {
                 return { accepted: false, reason: 'paused' };
-            }
-            const pending = this.state.spawn.requests.filter(request =>
-                request.status === 'pending'
-            ).length;
-            if (this._desiredAgentCount() + pending >= this.state.maxAgents) {
-                return { accepted: false, reason: 'max-agents' };
             }
             const last = this.state.spawn.lastRequestedAt;
             if (last !== null && now - last < this.spawnCooldownMs) {
@@ -1055,11 +1017,6 @@ export class ColonyCoordinator {
             .filter(agent => ACTIVE_AGENT_STATUSES.has(agent.status)).length;
     }
 
-    _desiredAgentCount() {
-        return Object.values(this.state.agents)
-            .filter(agent => agent.desired !== false).length;
-    }
-
     _expireTask(task, now) {
         if (task.status === 'claimed' && task.leaseExpiresAt <= now) {
             task.status = 'proposed';
@@ -1123,7 +1080,7 @@ export class ColonyCoordinator {
             `- Status: ${this.state.paused
                 ? `paused${this.state.pauseReason ? ` (${this.state.pauseReason})` : ''}`
                 : 'running'}`,
-            `- Agents: ${this._activeAgentCount()}/${this.state.maxAgents}`,
+            `- Agents: ${this._activeAgentCount()}`,
             '',
             '## Open Tasks',
             '',

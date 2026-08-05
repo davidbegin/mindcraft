@@ -20,7 +20,9 @@ export class AgentProcess {
             args.push('-m', init_message);
         args.push('-p', this.port);
 
-        const agentProcess = spawn('node', args, {
+        // Use the same Node binary as MindServer so native addons (e.g. gl)
+        // match the parent ABI instead of whichever `node` is first on PATH.
+        const agentProcess = spawn(process.execPath, args, {
             stdio: 'inherit',
             stderr: 'inherit',
         });

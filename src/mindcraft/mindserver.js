@@ -4,7 +4,7 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import * as mindcraft from './mindcraft.js';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { hasKey } from '../utils/keys.js';
 import { ColonyCoordinator } from './colony/colony_coordinator.js';
 import { getGpt56Profiles } from './model_profiles.js';
@@ -19,16 +19,6 @@ let io;
 let server;
 const agent_connections = {};
 const agent_listeners = [];
-const COLONY_ROLES = [
-    'explorer',
-    'miner',
-    'builder',
-    'farmer',
-    'logistics',
-    'combat',
-    'enchanter',
-    'redstone',
-];
 let colonyCoordinator = null;
 let colonyReady = null;
 let colonySupervisorInterval = null;
@@ -164,7 +154,6 @@ async function ensureColony(options) {
         const root = getColonyRoot(options);
         const coordinatorOptions = {
             root,
-            maxAgents: options.max_agents ?? 8,
             leaseMs: options.task_lease_ms ?? 300000,
             spawnCooldownMs: options.spawn_cooldown_ms ?? 120000,
         };
@@ -262,7 +251,13 @@ async function handleColonyCommand(agentName, command) {
             };
             break;
         case 'request-agent':
-            data = await colonyCoordinator.requestSpawn(payload.role, agentName);
+            // Roster changes are manual from the Mindcraft UI. Agents may not
+            // auto-replace stopped/removed bots by requesting new specialists.
+            data = {
+                accepted: false,
+                reason: 'manual-roster',
+                message: 'Agent roster is managed from the Mindcraft UI. Removing an agent does not spawn a replacement.',
+            };
             break;
         case 'model-outage':
             data = await openModelOutage(agentName, payload);
@@ -282,21 +277,6 @@ function firstAgentSettings() {
     return Object.values(agent_connections)[0]?.settings ?? null;
 }
 
-function nextColonyAgentName(role) {
-    const base = String(role).toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 12) || 'worker';
-    const occupied = new Set([
-        ...Object.keys(agent_connections),
-        ...Object.keys(colonyCoordinator.snapshot().agents),
-    ]);
-    if (!occupied.has(base)) return base;
-    for (let suffix = 2; suffix < 1000; suffix += 1) {
-        const suffixText = String(suffix);
-        const candidate = `${base.slice(0, 16 - suffixText.length)}${suffixText}`;
-        if (!occupied.has(candidate)) return candidate;
-    }
-    throw new Error(`Could not allocate a Minecraft name for role ${role}`);
-}
-
 async function createColonyAgent(name, role, storedProfile = null) {
     const template = firstAgentSettings();
     if (!template) throw new Error('No agent settings are available as a spawn template');
@@ -309,17 +289,6 @@ async function createColonyAgent(name, role, storedProfile = null) {
     const result = await mindcraft.createAgent(settings);
     if (!result.success) throw new Error(result.error || `Failed to create ${name}`);
     return name;
-}
-
-async function fulfillSpawnRequest(request) {
-    try {
-        const name = nextColonyAgentName(request.role);
-        await createColonyAgent(name, request.role);
-        await colonyCoordinator.resolveSpawnRequest(request.id, 'spawned', name);
-    } catch (error) {
-        await colonyCoordinator.resolveSpawnRequest(request.id, 'failed');
-        console.error(`Failed to fulfill colony spawn request ${request.id}:`, error);
-    }
 }
 
 async function restoreDesiredAgents() {
@@ -485,8 +454,11 @@ async function runColonySupervisor() {
         await restoreDesiredAgents();
         state = colonyCoordinator.snapshot();
 
+        // Reject leftover auto-spawn requests instead of creating replacements.
+        // New agents are added only via the Mindcraft UI create-agent flow.
         for (const request of state.spawn.requests.filter(item => item.status === 'pending')) {
-            await fulfillSpawnRequest(request);
+            await colonyCoordinator.resolveSpawnRequest(request.id, 'rejected');
+            console.log(`Rejected pending colony spawn request ${request.id} (${request.role}): manual roster`);
         }
 
         for (const [agentName, connection] of Object.entries(agent_connections)) {
@@ -525,36 +497,8 @@ async function runColonySupervisor() {
             }
         }
 
-        state = colonyCoordinator.snapshot();
-        const desiredAgents = Object.values(state.agents)
-            .filter(agent => agent.desired).length;
-        const pendingSpawns = state.spawn.requests
-            .filter(request => request.status === 'pending').length;
-        const usedRoles = new Set(Object.values(state.agents)
-            .filter(agent => agent.desired)
-            .map(agent => agent.role));
-        const openTaskRole = Object.values(state.tasks)
-            .filter(task =>
-                task.status === 'proposed' &&
-                task.required &&
-                task.role &&
-                !usedRoles.has(task.role)
-            )
-            .sort((left, right) => right.priority - left.priority)[0]?.role;
-        let spawnRole = null;
-        if (desiredAgents + pendingSpawns < (colonySettings.min_agents ?? 3)) {
-            spawnRole = openTaskRole ||
-                COLONY_ROLES.find(candidate => !usedRoles.has(candidate)) ||
-                'generalist';
-        } else if (openTaskRole && desiredAgents + pendingSpawns < state.maxAgents) {
-            spawnRole = openTaskRole;
-        }
-        const spawnCooldown = colonySettings.spawn_cooldown_ms ?? 30000;
-        const spawnReady = state.spawn.lastRequestedAt === null ||
-            now - state.spawn.lastRequestedAt >= spawnCooldown;
-        if (!state.paused && pendingSpawns === 0 && spawnRole && spawnReady) {
-            await colonyCoordinator.requestSpawn(spawnRole, 'coordinator');
-        }
+        // Do not auto-request replacement agents. Stopping/removing a bot in the
+        // UI must leave the roster smaller until a human creates another agent.
         emitColonyUpdate();
     } catch (error) {
         console.error('Colony supervisor pass failed:', error);
@@ -579,6 +523,7 @@ class AgentConnection {
         this.viewer_port = viewer_port;
         this.last_directive_at = 0;
         this.last_restart_attempt_at = 0;
+        this.recording = null; // POV recording status reported by the agent process
     }
     setSettings(settings) {
         this.settings = settings;
@@ -616,7 +561,62 @@ export async function unregisterAgent(agentName, status = 'failed') {
 export function logoutAgent(agentName) {
     if (agent_connections[agentName]) {
         agent_connections[agentName].in_game = false;
+        agent_connections[agentName].recording = null;
         agentsStatusUpdate();
+    }
+}
+
+// Forward a recording start/stop request from the UI to the agent's process and relay the ack.
+function forwardRecordingCommand(agentName, event, options, callback) {
+    const conn = agent_connections[agentName];
+    if (!conn?.socket) {
+        callback?.({ success: false, error: `Agent '${agentName}' is not connected` });
+        return;
+    }
+    const args = options === undefined ? [] : [options];
+    conn.socket.timeout(20000).emit(event, ...args, (err, result) => {
+        if (err) {
+            callback?.({ success: false, error: `Recording command timed out for ${agentName}` });
+            return;
+        }
+        if (result && typeof result === 'object' && 'recording' in result) {
+            conn.recording = result;
+        }
+        agentsStatusUpdate();
+        callback?.(result);
+    });
+}
+
+// Scan bots/*/recordings for saved MP4s so the UI can list and link them.
+function listRecordings() {
+    const botsDir = path.join(projectRoot, 'bots');
+    try {
+        const agents = [];
+        if (existsSync(botsDir)) {
+            for (const entry of readdirSync(botsDir, { withFileTypes: true })) {
+                if (!entry.isDirectory()) continue;
+                const recDir = path.join(botsDir, entry.name, 'recordings');
+                if (!existsSync(recDir)) continue;
+                const files = readdirSync(recDir)
+                    .filter(f => f.endsWith('.mp4'))
+                    .map(f => {
+                        const stats = statSync(path.join(recDir, f));
+                        return {
+                            file: f,
+                            url: `/bots/${encodeURIComponent(entry.name)}/recordings/${encodeURIComponent(f)}`,
+                            size: stats.size,
+                            mtime: stats.mtimeMs,
+                        };
+                    })
+                    .sort((a, b) => b.mtime - a.mtime);
+                if (files.length) {
+                    agents.push({ agent: entry.name, folder: recDir, files });
+                }
+            }
+        }
+        return { success: true, botsFolder: botsDir, agents };
+    } catch (error) {
+        return { success: false, error: error.message };
     }
 }
 
@@ -629,6 +629,8 @@ export function createMindServer(host_public = false, port = 8080) {
     // Serve static files
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     app.use(express.static(path.join(__dirname, 'public')));
+    // Serve bot data (POV recordings, screenshots) so the UI can play/download them
+    app.use('/bots', express.static(path.join(projectRoot, 'bots')));
 
     // Socket.io connection handling
     io.on('connection', (socket) => {
@@ -787,6 +789,7 @@ export function createMindServer(host_public = false, port = 8080) {
                 console.log(`Agent ${curAgentName} disconnected`);
                 agent_connections[curAgentName].in_game = false;
                 agent_connections[curAgentName].socket = null;
+                agent_connections[curAgentName].recording = null;
                 agentsStatusUpdate();
                 if (colonyCoordinator) {
                     colonyCoordinator.updateAgent(curAgentName, { status: 'offline' })
@@ -917,6 +920,26 @@ export function createMindServer(host_public = false, port = 8080) {
             io.emit('bot-output', agentName, message);
         });
 
+        socket.on('start-recording', (agentName, options, callback) => {
+            forwardRecordingCommand(agentName, 'start-recording', options || {}, callback);
+        });
+
+        socket.on('stop-recording', (agentName, callback) => {
+            forwardRecordingCommand(agentName, 'stop-recording', undefined, callback);
+        });
+
+        socket.on('recording-update', (agentName, status) => {
+            const conn = agent_connections[agentName];
+            if (conn) {
+                conn.recording = status;
+                agentsStatusUpdate();
+            }
+        });
+
+        socket.on('list-recordings', (callback) => {
+            callback(listRecordings());
+        });
+
         socket.on('listen-to-agents', () => {
             addListener(socket);
         });
@@ -944,7 +967,8 @@ function agentsStatusUpdate(socket) {
             name: agentName, 
             in_game: conn.in_game,
             viewerPort: conn.viewer_port,
-            socket_connected: !!conn.socket
+            socket_connected: !!conn.socket,
+            recording: conn.recording
         });
     };
     socket.emit('agents-status', agents);

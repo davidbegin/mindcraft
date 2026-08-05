@@ -40,6 +40,7 @@ const settings = {
     "chat_ingame": true, // bot responses are shown in minecraft chat
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages
     "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
+    "record_bot_view": false, // auto-record bot's first-person POV to mp4 in bots/<name>/recordings on spawn. Recording can also be toggled per-agent in the web UI. Requires ffmpeg.
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk
     "allow_vision": false, // allows vision model to interpret screenshots as inputs
@@ -47,9 +48,9 @@ const settings = {
     "code_timeout_mins": 10, // minutes code is allowed to run. -1 for no timeout
     "relevant_docs_count": 5, // number of relevant code function docs to select for prompting. -1 for all
 
-    "max_messages": 15, // max number of messages to keep in context
+    "max_messages": 30, // max number of messages to keep in context
     "num_examples": 2, // number of examples to give to the model
-    "max_commands": -1, // max number of commands that can be used in consecutive responses. -1 for no limit
+    "max_commands": 3, // max number of commands that can be used in consecutive responses. -1 for no limit
     "show_command_syntax": "full", // "full", "shortened", or "none"
     "narrate_behavior": true, // chat simple automatic actions ('Picking up item!')
     "chat_bot_messages": true, // publicly chat messages to other bots
@@ -63,10 +64,9 @@ const settings = {
         "enabled": true,
         "world_id": "mindcraft-colony-epic-megabase-v1",
         "state_dir": "./colony",
-        "max_agents": 8,
         "min_agents": 3,
         "heartbeat_interval_ms": 10000,
-        "idle_directive_ms": 15000,
+        "idle_directive_ms": 60000,
         "conversation_timeout_ms": 90000,
         "task_lease_ms": 300000,
         "spawn_cooldown_ms": 30000,

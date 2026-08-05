@@ -328,20 +328,13 @@ test('advances through every survival phase without skipping', async () => {
     });
 });
 
-test('enforces spawn cooldown and maxAgents cap', async () => {
+test('enforces spawn cooldown', async () => {
     let now = 10_000;
     await withColony(async ({ coordinator }) => {
         const first = await coordinator.requestSpawn('builder', 'overseer');
         assert.equal(first.accepted, true);
 
         now += 5_000;
-        const cappedByPendingRequest = await coordinator.requestSpawn('miner', 'overseer');
-        assert.deepEqual(cappedByPendingRequest, {
-            accepted: false,
-            reason: 'max-agents',
-        });
-
-        await coordinator.resolveSpawnRequest(first.request.id, 'failed');
         const coolingDown = await coordinator.requestSpawn('miner', 'overseer');
         assert.equal(coolingDown.accepted, false);
         assert.equal(coolingDown.reason, 'cooldown');
@@ -351,26 +344,29 @@ test('enforces spawn cooldown and maxAgents cap', async () => {
         assert.equal(second.accepted, true);
     }, {
         clock: () => now,
-        maxAgents: 1,
         spawnCooldownMs: 10_000,
     });
 });
 
-test('rejects registering more than maxAgents desired workers', async () => {
+test('allows registering any number of desired workers', async () => {
     await withColony(async ({ coordinator }) => {
         await coordinator.registerAgent('alice', 'builder');
-        await assert.rejects(
-            coordinator.registerAgent('bob', 'miner'),
-            /Agent cap reached/
-        );
-    }, { maxAgents: 1 });
+        await coordinator.registerAgent('bob', 'miner');
+        assert.equal(Object.keys(coordinator.snapshot().agents).length, 2);
+    });
 });
 
-test('applies an updated maxAgents setting when loading state', async () => {
-    await withColony(async ({ root }) => {
-        const reloaded = await ColonyCoordinator.load({ root, maxAgents: 3 });
-        assert.equal(reloaded.snapshot().maxAgents, 3);
-    }, { maxAgents: 8 });
+test('strips legacy maxAgents when loading state', async () => {
+    await withColony(async ({ root, coordinator }) => {
+        const state = coordinator.snapshot();
+        state.maxAgents = 1;
+        await writeFile(
+            path.join(root, 'state.json'),
+            `${JSON.stringify(state, null, 2)}\n`
+        );
+        const reloaded = await ColonyCoordinator.load({ root });
+        assert.equal(reloaded.snapshot().maxAgents, undefined);
+    });
 });
 
 test('re-registration preserves an explicit stopped state', async () => {
