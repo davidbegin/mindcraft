@@ -31,11 +31,16 @@ const settings = {
     "init_message": "Epic megabase mission: build a lavishly decorated base with private rooms for every agent plus themed public rooms (chess room, treasure vault, trophy hall, creative room), and the best armor/weapons/gear. Stay personally well-rounded: always keep and upgrade a sword, shield, armor, food, and tools—even as a miner/farmer/builder. Collaborate briefly with other agents, then dig, craft, place, light, and decorate. !colonyStatus, claim open megabase tasks, keep progressing.", // sends to all on spawn
     "only_chat_with": [], // users that the bots listen to and send general messages to. if empty it will chat publicly
 
-    "speak": false,
-    // allows all bots to speak through text-to-speech. 
+    "speak": true,
+    // allows all bots to speak through text-to-speech.
     // specify speech model inside each profile with format: {provider}/{model}/{voice}.
-    // if set to "system" it will use basic system text-to-speech. 
+    // default is "elevenlabs": each bot gets its own consistent ElevenLabs voice,
+    // configurable per-bot in voices.json (requires ELEVENLABS_API_KEY in .env).
+    // if set to "system" it will use basic system text-to-speech.
     // Works on windows and mac, but linux requires you to install the espeak package through your package manager eg: `apt install espeak` `pacman -S espeak`.
+
+    "speak_proximity": false, // proximity chat: only play a bot's voice aloud when a human player is near it in-game, with volume fading over distance. Set false to always hear every bot at full volume.
+    "speak_proximity_range": 32, // max distance in blocks at which a bot's voice is audible when speak_proximity is on
 
     "chat_ingame": true, // bot responses are shown in minecraft chat
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages

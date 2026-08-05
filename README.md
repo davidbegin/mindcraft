@@ -243,7 +243,13 @@ If you try to use an unsupported model, then it will default to a simple word-ov
 
 ## Voice Synthesis Models
 
-Voice synthesis models are used to narrate bot responses and specified with `speak_model`. This field is parsed differently than other models and only supports strings formatted as `"{api}/{model}/{voice}"`, like `"openai/tts-1/echo"`. We only support `openai` and `google` for voice synthesis.
+Voice synthesis models are used to narrate bot responses and specified with `speak_model`. This field is parsed differently than other models and only supports strings formatted as `"{api}/{model}/{voice}"`, like `"openai/tts-1/echo"`. We support `elevenlabs`, `openai`, and `google` for voice synthesis.
+
+### ElevenLabs voices
+
+The default `speak_model` is `"elevenlabs"`, which gives every bot its own consistent voice (requires `ELEVENLABS_API_KEY` in `.env` or `keys.json`). Voices are assigned automatically from a varied pool, and can be pinned per bot in `voices.json` at the repo root using either a pool name from `src/agent/tts_voices.js` (e.g. `"Adam"`) or a raw ElevenLabs voice ID. A profile can also fully specify `"elevenlabs/{model_id}/{voice}"` to override both model and voice.
+
+With `speak: true` and `speak_proximity: true` in `settings.js`, voices behave like proximity chat: a bot is only heard aloud when a human player is standing near it in-game, and volume fades with distance (`speak_proximity_range` blocks). Voice lines are also mixed into the auto-recorded MP4 clips in `bots/<name>/recordings`, timed to when the bot spoke.
 
 ## Specifying Profiles via Command Line
 

@@ -51,6 +51,16 @@
         "description": "Whether to enable text-to-speech reading on the host machine",
         "default": false
     },
+    "speak_proximity": {
+        "type": "boolean",
+        "description": "Proximity chat: only play a bot's voice when a human player is near it in-game, with volume fading over distance",
+        "default": true
+    },
+    "speak_proximity_range": {
+        "type": "number",
+        "description": "Max distance in blocks at which a bot's voice is audible when proximity chat is on",
+        "default": 32
+    },
     "language": {
         "type": "string",
         "description": "The language to automatically translate to and from using google translate",

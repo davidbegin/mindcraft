@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 import THREE from 'three';
@@ -146,6 +147,8 @@ export class PovRecorder {
         this._canvas = null;
         this._busy = false;
         this._stopping = null;
+        this._audio = []; // TTS chat lines spoken during the clip: {data (base64 mp3), offsetMs}
+        this._voiceLines = 0;
         this._onBotEnd = () => { this.stop().catch(() => {}); };
     }
 
@@ -172,6 +175,16 @@ export class PovRecorder {
         this.labels.add(String(label));
     }
 
+    /**
+     * Attach a TTS voice line (base64 mp3) to the current clip. The offset is
+     * taken from wall-clock time so the line lands where the bot said it;
+     * segments are muxed into the MP4's audio track when the recording stops.
+     */
+    addAudio(audioBase64, atMs = Date.now()) {
+        if (!this.recording || !this.startedAt || !audioBase64) return;
+        this._audio.push({ data: audioBase64, offsetMs: Math.max(0, atMs - this.startedAt) });
+    }
+
     _notify() {
         try { this.onUpdate?.(this.getStatus()); } catch (_) { /* status updates are best-effort */ }
     }
@@ -185,6 +198,9 @@ export class PovRecorder {
         this.error = null;
         this.frames = 0;
         this.labels = new Set(opts.label ? [String(opts.label)] : []);
+        this._audio = [];
+        this._voiceLines = 0;
+        this._fps = opts.fps;
 
         fs.mkdirSync(this.folder, { recursive: true });
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -319,10 +335,69 @@ export class PovRecorder {
         }
 
         this._teardownRenderer();
+        await this._muxAudio();
         this._finalizeClip();
         console.log(`[${this.name}] POV recording stopped: ${this.file} (${this.frames} frames)`);
         this._notify();
         return this.getStatus();
+    }
+
+    /**
+     * Mix the TTS voice lines collected during the clip into the MP4's audio
+     * track. The video is encoded at a fixed fps from frames captured in real
+     * time, so if rendering fell behind, video time runs faster than wall
+     * clock; offsets are rescaled so each line still lands on the moment it
+     * was spoken. Muxing failures leave the silent video untouched.
+     */
+    async _muxAudio() {
+        const segments = this._audio;
+        this._audio = [];
+        this._voiceLines = segments.length;
+        if (!segments.length || !this.file || !fs.existsSync(this.file)) return;
+
+        const wallMs = Math.max(1, Date.now() - this.startedAt);
+        const videoMs = (this.frames / (this._fps || RECORD_DEFAULTS.fps)) * 1000;
+        const timeScale = Math.min(1, videoMs / wallMs);
+
+        let tmpDir = null;
+        const muxedPath = this.file.replace(/\.mp4$/, '.audio.mp4');
+        try {
+            tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pov-audio-'));
+            const args = ['-y', '-i', this.file];
+            segments.forEach((seg, i) => {
+                const segPath = path.join(tmpDir, `seg${i}.mp3`);
+                fs.writeFileSync(segPath, Buffer.from(seg.data, 'base64'));
+                args.push('-i', segPath);
+            });
+            const delayed = segments.map((seg, i) =>
+                `[${i + 1}:a]adelay=${Math.round(seg.offsetMs * timeScale)}:all=1[a${i}]`);
+            const mixed = segments.length > 1
+                ? `${segments.map((_, i) => `[a${i}]`).join('')}amix=inputs=${segments.length}:normalize=0,apad[aout]`
+                : `[a0]apad[aout]`;
+            args.push(
+                '-filter_complex', [...delayed, mixed].join(';'),
+                '-map', '0:v', '-map', '[aout]',
+                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+                '-shortest', '-movflags', '+faststart',
+                muxedPath,
+            );
+            await new Promise((resolve, reject) => {
+                const proc = spawn('ffmpeg', args);
+                let stderr = '';
+                proc.stderr.on('data', d => { stderr += d; });
+                proc.on('error', reject);
+                proc.on('close', code => {
+                    if (code === 0) resolve();
+                    else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-400)}`));
+                });
+            });
+            fs.renameSync(muxedPath, this.file);
+        } catch (err) {
+            console.warn(`[${this.name}] Could not mux voice audio into recording:`, err.message);
+            try { if (fs.existsSync(muxedPath)) fs.unlinkSync(muxedPath); } catch (_) { /* best-effort */ }
+        } finally {
+            try { if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* best-effort */ }
+        }
     }
 
     /**
@@ -354,6 +429,7 @@ export class PovRecorder {
                 endedAtIso: new Date(endedAt).toISOString(),
                 durationMs: endedAt - this.startedAt,
                 frames: this.frames,
+                voiceLines: this._voiceLines,
             }) + '\n');
         } catch (err) {
             console.warn(`[${this.name}] Could not append to recordings manifest:`, err.message);

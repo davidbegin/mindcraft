@@ -161,7 +161,7 @@ class ConversationManager {
         const convo = this._getConvo(send_to);
         
         if (settings.chat_bot_messages && open_chat)
-            agent.openChat(`(To ${send_to}) ${message}`);
+            agent.openChat(`(To ${send_to}) ${message}`, { addressed: true });
         
         if (convo.ignore_until_start)
             return;

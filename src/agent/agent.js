@@ -20,7 +20,7 @@ import { serverProxy, sendOutputToServer, requestColonyCommand } from './mindser
 import { setOutageHandler } from '../models/quota_guard.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
-import { speak } from './speak.js';
+import { generateSpeech, playSpeech, isSystemSpeakModel } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 
 export class Agent {
@@ -106,12 +106,8 @@ export class Agent {
         this.bot.on('login', () => {
             console.log(this.name, 'logged in!');
             serverProxy.login();
-            
-            // Set skin for profile, requires Fabric Tailor. (https://modrinth.com/mod/fabrictailor)
-            if (this.prompter.profile.skin)
-                this.bot.chat(`/skin set URL ${this.prompter.profile.skin.model} ${this.prompter.profile.skin.path}`);
-            else
-                this.bot.chat(`/skin clear`);
+            this._skin_attempts = 0;
+            this._applyProfileSkin();
         });
 		const spawnTimeoutDuration = settings.spawn_timeout;
         const spawnTimeout = setTimeout(() => {
@@ -170,6 +166,52 @@ export class Agent {
         });
     }
 
+    /**
+     * Applies the profile skin via Fabric Tailor (https://modrinth.com/mod/fabrictailor).
+     * `skin.file` is a path on the MC server (set with `/skin set upload`), while
+     * `skin.path` is a public URL (set with `/skin set URL`). Application is staggered
+     * per bot and retried, because Fabric Tailor signs skins through the rate-limited
+     * MineSkin API and many bots log in at once.
+     */
+    _applyProfileSkin() {
+        const skin = this.prompter.profile.skin;
+        if (!skin || (!skin.file && !skin.path)) {
+            this.bot.chat('/skin clear');
+            return;
+        }
+        const variant = skin.model === 'slim' ? 'slim' : 'classic';
+        const cmd = skin.file
+            ? `/skin set upload ${variant} ${skin.file}`
+            : `/skin set URL ${variant} ${skin.path}`;
+        let hash = 0;
+        for (const c of this.name) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+        const delay = this._skin_attempts === 0 ? 3000 + (hash % 10) * 7000 : 75000;
+        this._skin_attempts++;
+        const attempt = this._skin_attempts;
+        setTimeout(() => {
+            if (!this.bot?.entity) return; // disconnected in the meantime
+            const onMessage = (message) => {
+                const text = String(message);
+                if (/skin was set successfully/i.test(text)) {
+                    this.bot.removeListener('messagestr', onMessage);
+                    log(this.name, `Skin applied (attempt ${attempt}).`);
+                } else if (/problem (with fetching|occurred when trying to upload) the skin/i.test(text)
+                        || /must wait \d+ seconds to change it again/i.test(text)) {
+                    this.bot.removeListener('messagestr', onMessage);
+                    if (attempt < 4) {
+                        log(this.name, `Skin application failed (attempt ${attempt}); retrying.`);
+                        this._applyProfileSkin();
+                    } else {
+                        log(this.name, `Skin application failed after ${attempt} attempts; giving up.`);
+                    }
+                }
+            };
+            this.bot.on('messagestr', onMessage);
+            setTimeout(() => this.bot?.removeListener('messagestr', onMessage), 70000);
+            this.bot.chat(cmd);
+        }, delay);
+    }
+
     async _setupEventHandlers(save_data, init_message) {
         const ignore_messages = [
             "Set own game mode to",
@@ -208,8 +250,10 @@ export class Agent {
         this.bot.on('whisper', respondFunc);
         
         this.bot.on('chat', (username, message) => {
-            if (serverProxy.getNumOtherAgents() > 0) return;
-            // only respond to open chat messages when there are no other agents
+            // Bots ignore each other's public chat (they coordinate through the
+            // mindserver instead, and echoing would loop). Humans get answered
+            // by every bot, even when many agents are online.
+            if (convoManager.isOtherAgent(username)) return;
             respondFunc(username, message);
         });
 
@@ -336,11 +380,24 @@ export class Agent {
         }
 
         // Handle other user messages
+        if (!self_prompt && !from_other_bot) {
+            // Busy colony bots otherwise treat human chat as an interruption and
+            // answer with a bare command (or !stfu), which produces no spoken
+            // voice line. Humans should always get a conversational reply.
+            await this.history.add('system', `${source} is a human player talking to you in chat. Always include a short friendly conversational reply addressed to them in your response, in addition to any command. Never respond with only a command, an empty message, or !stfu.`);
+        }
         await this.history.add(source, message);
         this.history.save();
 
         if (!self_prompt && this.self_prompter.isActive()) // message is from user during self-prompting
             max_responses = 1; // force only respond to this message, then let self-prompting take over
+
+        // Human messages take priority: hold the self-prompt loop while we
+        // respond, otherwise its concurrent promptConvo calls race ours and
+        // the reply to the player gets discarded mid-generation.
+        const from_human = !self_prompt && !from_other_bot;
+        if (from_human) this._human_responses_pending = (this._human_responses_pending || 0) + 1;
+        try {
         for (let i=0; i<max_responses; i++) {
             if (checkInterrupt()) break;
             let history = this.history.getHistory();
@@ -410,6 +467,9 @@ export class Agent {
             
             this.history.save();
         }
+        } finally {
+            if (from_human) this._human_responses_pending--;
+        }
 
         return used_command;
     }
@@ -422,6 +482,9 @@ export class Agent {
             // so it can respond to events like death but be routed back to the last sender
             to_player = this.last_sender;
         }
+        // Only messages directed at a real recipient (a human player or another
+        // bot) are read aloud; self-prompt work narration stays text-only.
+        const addressed = !!to_player && to_player !== 'system' && to_player !== this.name;
         const commandName = containsCommand(message);
         if (commandName) {
             if (convoManager.isOtherAgent(to_player) && convoManager.inConversation(to_player)) {
@@ -430,7 +493,7 @@ export class Agent {
                     : `I'm acting on our conversation now with ${commandName} and will keep progressing.`;
                 convoManager.sendToBot(to_player, conversationMessage, false, false);
             }
-            this.openChat(message);
+            this.openChat(message, { addressed });
             return;
         }
 
@@ -440,12 +503,12 @@ export class Agent {
         }
         else {
             // otherwise, use open chat
-            this.openChat(message);
+            this.openChat(message, { addressed });
             // note that to_player could be another bot, but if we get here the conversation has ended
         }
     }
 
-    async openChat(message) {
+    async openChat(message, { addressed = false } = {}) {
         let to_translate = message;
         let remaining = '';
         let command_name = containsCommand(message);
@@ -464,12 +527,74 @@ export class Agent {
             }
         }
         else {
-            if (settings.speak) {
-                speak(to_translate, this.prompter.profile.speak_model);
-            }
+            this._speakChat(to_translate, addressed);
             if (settings.chat_ingame) {this.bot.chat(message);}
             sendOutputToServer(this.name, message);
         }
+    }
+
+    /**
+     * Voice the chat line with this bot's TTS voice. Only messages addressed
+     * to a real recipient (a human player or another bot) are played aloud on
+     * the host (scaled by proximity when enabled); unaddressed narration is
+     * still mixed into the POV recording if a clip is currently rolling. TTS
+     * is only generated when at least one of those will actually use it.
+     */
+    _speakChat(text, addressed = false) {
+        if (!text || !text.trim()) return;
+        const model = this.prompter.profile.speak_model;
+        const volume = (settings.speak && addressed) ? this._getSpeechVolume() : null;
+        const audible = volume !== null;
+        const recording = !!this.pov_recorder?.recording;
+        const silentReason = !addressed ? 'not addressed to a player or bot' : 'no human player in range';
+        console.log(`[${this.name}] voice: ${audible ? `speaking at volume ${volume}` : `silent (${silentReason})`}${recording ? ', recording' : ''}: "${text.trim().slice(0, 60)}"`);
+        if (!audible && !recording) return;
+
+        if (isSystemSpeakModel(model)) {
+            // System TTS has no audio data to record; playback only.
+            if (audible) playSpeech({ text, model, botName: this.name, volume });
+            return;
+        }
+
+        const audioPromise = generateSpeech(text, model, this.name);
+        if (recording) {
+            audioPromise.then(audio => {
+                if (audio && this.pov_recorder?.recording) {
+                    this.pov_recorder.addAudio(audio);
+                }
+            }).catch(() => {});
+        }
+        if (audible) {
+            playSpeech({ text, model, botName: this.name, volume, audioPromise });
+        } else {
+            audioPromise.catch(err => console.error(`[${this.name}] TTS generation failed:`, err.message));
+        }
+    }
+
+    /**
+     * Proximity chat: playback volume (0-100) based on the distance from this
+     * bot to the nearest human player, or null when no human is close enough
+     * to hear. Player entities only resolve within render distance, so bots
+     * far from every human are silent. Disable with speak_proximity=false to
+     * always hear every bot at full volume.
+     */
+    _getSpeechVolume() {
+        if (settings.speak_proximity === false) return 100;
+        const range = Math.max(4, Number(settings.speak_proximity_range) || 32);
+        const myPos = this.bot.entity?.position;
+        if (!myPos) return null;
+        let nearest = Infinity;
+        for (const [username, player] of Object.entries(this.bot.players)) {
+            if (username === this.name || convoManager.isOtherAgent(username)) continue;
+            const pos = player?.entity?.position;
+            if (!pos) continue;
+            const dist = pos.distanceTo(myPos);
+            if (dist < nearest) nearest = dist;
+        }
+        if (nearest > range) return null;
+        // Full volume within the closest quarter of the range, fading to 15 at the edge.
+        const fade = Math.min(1, Math.max(0, (nearest - range * 0.25) / (range * 0.75)));
+        return Math.round(100 - fade * 85);
     }
 
     startEvents() {
