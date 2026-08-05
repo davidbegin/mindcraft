@@ -16,7 +16,11 @@ test('lists the starter contest games for the UI', () => {
     assert.equal(tower.durationLabel, '2 min 30 sec');
     assert.equal(tower.durationMs, 150_000);
     assert.deepEqual(tower.defaultCharacters, [
-        { name: 'billy', voice: 'Giggles' },
+        {
+            name: 'billy',
+            voice: 'Giggles',
+            profileId: 'gpt-5-6-luna-instant',
+        },
     ]);
 });
 
