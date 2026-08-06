@@ -115,9 +115,62 @@ export class SurvivorSessionManager {
         this.onCompleted = options.onCompleted || (() => {});
         this.readyTimeoutMs = options.readyTimeoutMs ?? 90_000;
         this.phaseDurationsMs = options.phaseDurationsMs || {};
+        this.getAgentLaunchStatus = options.getAgentLaunchStatus || null;
+        this.telemetry = options.telemetry || null;
         this.active = null;
+        this.lastFailure = null;
         this.sessionPath = path.join(this.coordinator.root, 'session.json');
         this._persistOperation = Promise.resolve();
+    }
+
+    _log(level, message, detail = null) {
+        const line = `[survivor] ${message}`;
+        const args = detail == null ? [line] : [line, JSON.stringify(detail)];
+        if (level === 'error') console.error(...args);
+        else if (level === 'warn') console.warn(...args);
+        else console.log(...args);
+        this.telemetry?.record?.({
+            level,
+            stage: 'survivor',
+            message,
+            detail: detail ?? undefined,
+        });
+    }
+
+    _recordFailure(error, stage) {
+        this.lastFailure = {
+            at: new Date().toISOString(),
+            stage,
+            error: error?.message || String(error),
+            agents: this._describeAllAgents(),
+            session: this.active ? clone(this.active) : null,
+        };
+        this.telemetry?.recordError?.(error, { stage: `survivor_${stage}` });
+        return this.lastFailure;
+    }
+
+    _describeAgentStatus(name) {
+        if (typeof this.getAgentLaunchStatus === 'function') {
+            const status = this.getAgentLaunchStatus(name) || {};
+            if (!status.registered) return `${name} (never registered — process did not start)`;
+            if (!status.socketConnected) return `${name} (registered, process not connected)`;
+            if (!status.inGame) return `${name} (connected, never joined Minecraft)`;
+            return `${name} (in-game)`;
+        }
+        return this.isAgentReady(name) ? `${name} (ready)` : `${name} (not ready)`;
+    }
+
+    _describeAllAgents() {
+        return (this.active?.participantIds || []).map(name => {
+            const status = this.getAgentLaunchStatus?.(name) || {};
+            return {
+                name,
+                registered: Boolean(status.registered),
+                socketConnected: Boolean(status.socketConnected),
+                inGame: Boolean(status.inGame),
+                ready: this.isAgentReady(name),
+            };
+        });
     }
 
     view() {
@@ -151,68 +204,98 @@ export class SurvivorSessionManager {
             throw error;
         }
         const game = this.coordinator.view();
-        if (!saved || game?.status !== 'running' || saved.id !== game.id) return null;
+        if (!saved || game?.status !== 'running' || saved.id !== game.id) {
+            this._log('info', `no season to recover (saved status ${saved?.status ?? 'none'}, game status ${game?.status ?? 'none'})`);
+            return null;
+        }
         this.active = saved;
         this.active.status = 'running';
         this.rooms.closeAll('server-restarted');
+        this._log('info', `recovering season ${game.id} in phase '${game.phase}' with ${this.active.participantIds.length} bots`);
         const missing = this.active.participantIds.filter(id =>
-            (game.players[id].active || game.players[id].jury) && !this.isAgentReady(id)
+            (game.players[id]?.active || game.players[id]?.jury) && !this.isAgentReady(id)
         );
-        if (missing.length > 0) {
-            await this.reclaimNames(missing);
-            const profiles = new Map(this.getProfiles().map(profile => [profile.id, profile]));
-            for (const participant of this.active.participants.filter(
-                item => missing.includes(item.name)
-            )) {
-                const catalogProfile = profiles.get(participant.profileId);
-                if (!catalogProfile) {
-                    throw new Error(`Cannot recover ${participant.name}: missing profile ${participant.profileId}`);
+        try {
+            if (missing.length > 0) {
+                this._log('info', `respawning ${missing.length} bot(s): ${missing.join(', ')}`);
+                await this.reclaimNames(missing);
+                const profiles = new Map(this.getProfiles().map(profile => [profile.id, profile]));
+                const failures = [];
+                for (const participant of this.active.participants.filter(
+                    item => missing.includes(item.name)
+                )) {
+                    try {
+                        const catalogProfile = profiles.get(participant.profileId);
+                        if (!catalogProfile) {
+                            throw new Error(`missing profile '${participant.profileId}'`);
+                        }
+                        const profile = clone(catalogProfile.profile);
+                        profile.name = participant.name;
+                        profile.speak_model = participant.voice
+                            ? { api: 'elevenlabs', voice: participant.voice }
+                            : 'elevenlabs';
+                        const settings = this.buildAgentSettings(profile, {
+                            survivorSeasonId: game.id,
+                            sessionId: `survivor-${game.id}`,
+                            participantIds: this.active.participantIds,
+                            rivalIds: this.active.participantIds.filter(id => id !== participant.name),
+                            profileId: participant.profileId,
+                            voice: participant.voice,
+                            model: participant.model,
+                            provider: participant.provider,
+                            systemPrompt: this.active.systemPrompt || '',
+                            personalityPrompt: participant.systemPrompt,
+                            contestType: 'survivor',
+                        });
+                        const result = await this.createAgent(settings);
+                        if (!result?.success) {
+                            throw new Error(result?.error || 'createAgent returned no agent');
+                        }
+                        this.active.createdAgents = this.active.createdAgents.filter(
+                            item => item.name !== participant.name
+                        );
+                        this.active.createdAgents.push({
+                            name: participant.name,
+                            id: result.agentId ?? participant.name,
+                        });
+                        this._log('info', `respawned ${participant.name}`);
+                    } catch (error) {
+                        // One dead bot must not abandon the rest of the cast.
+                        failures.push(`${participant.name}: ${error.message}`);
+                        this._log('warn', `could not respawn ${participant.name}: ${error.message}`);
+                    }
                 }
-                const profile = clone(catalogProfile.profile);
-                profile.name = participant.name;
-                profile.speak_model = participant.voice
-                    ? { api: 'elevenlabs', voice: participant.voice }
-                    : 'elevenlabs';
-                const settings = this.buildAgentSettings(profile, {
-                    survivorSeasonId: game.id,
-                    sessionId: `survivor-${game.id}`,
-                    participantIds: this.active.participantIds,
-                    rivalIds: this.active.participantIds.filter(id => id !== participant.name),
-                    profileId: participant.profileId,
-                    voice: participant.voice,
-                    model: participant.model,
-                    provider: participant.provider,
-                    systemPrompt: this.active.systemPrompt || '',
-                    personalityPrompt: participant.systemPrompt,
-                    contestType: 'survivor',
-                });
-                const result = await this.createAgent(settings);
-                if (!result?.success) {
-                    throw new Error(result?.error || `Could not recover ${participant.name}`);
+                if (failures.length > 0) {
+                    this._log('warn', `${failures.length} bot(s) failed to respawn`, { failures });
                 }
-                this.active.createdAgents = this.active.createdAgents.filter(
-                    item => item.name !== participant.name
-                );
-                this.active.createdAgents.push({
-                    name: participant.name,
-                    id: result.agentId ?? participant.name,
-                });
+                await this._waitUntilReady(missing, 'recovery');
             }
-            await this._waitUntilReady(missing);
+            if (game.challenge) {
+                const preset = this.getContestPreset(game.challenge.id);
+                const configs = await Promise.allSettled(this.active.participantIds.map(id =>
+                    this.sendChallengeConfig(id, {
+                        challengeId: preset.id,
+                        contestType: preset.rules?.type ?? null,
+                        winItem: preset.rules?.winItem ?? null,
+                    })
+                ));
+                const rejected = configs.filter(entry => entry.status === 'rejected').length;
+                if (rejected > 0) {
+                    this._log('warn', `challenge config failed for ${rejected} bot(s)`);
+                }
+            }
+            await this._broadcastPhase();
+            this._emit();
+            this._log('info', `season ${game.id} recovered in phase '${game.phase}'`);
+            return this.view();
+        } catch (error) {
+            this._recordFailure(error, 'recovery');
+            this._log('error', `recovery failed: ${error.message}`, {
+                agents: this._describeAllAgents(),
+            });
+            this._emit();
+            throw error;
         }
-        if (game.challenge) {
-            const preset = this.getContestPreset(game.challenge.id);
-            await Promise.all(this.active.participantIds.map(id =>
-                this.sendChallengeConfig(id, {
-                    challengeId: preset.id,
-                    contestType: preset.rules?.type ?? null,
-                    winItem: preset.rules?.winItem ?? null,
-                })
-            ));
-        }
-        await this._broadcastPhase();
-        this._emit();
-        return this.view();
     }
 
     async start(request = {}) {
@@ -308,12 +391,17 @@ export class SurvivorSessionManager {
                 });
                 this._emit();
             }
-            await this._waitUntilReady(participantIds);
+            await this._waitUntilReady(participantIds, 'startup');
             this.active.status = 'running';
             await this._broadcastPhase();
             await this.startNextChallenge();
+            this._log('info', `season ${season.id} is running with ${participantIds.length} bots`);
             return this.view();
         } catch (error) {
+            this._recordFailure(error, 'startup');
+            this._log('error', `season startup failed: ${error.message}`, {
+                agents: this._describeAllAgents(),
+            });
             await this.cancel(`Startup failed: ${error.message}`).catch(() => {});
             throw error;
         }
@@ -649,14 +737,27 @@ export class SurvivorSessionManager {
         return this._duration(phase, defaults[phase] ?? 60_000);
     }
 
-    async _waitUntilReady(participantIds) {
+    async _waitUntilReady(participantIds, stage = 'startup') {
         const deadline = this.clock() + this.readyTimeoutMs;
+        let lastReady = -1;
         while (this.clock() < deadline) {
-            if (participantIds.every(id => this.isAgentReady(id))) return;
+            const ready = participantIds.filter(id => this.isAgentReady(id));
+            if (ready.length === participantIds.length) {
+                this._log('info', `all ${ready.length} bot(s) are in-game`);
+                return;
+            }
+            if (ready.length !== lastReady) {
+                lastReady = ready.length;
+                this._log('info', `waiting for bots (${ready.length}/${participantIds.length} in-game)`);
+            }
             await this.sleep(500);
         }
         const missing = participantIds.filter(id => !this.isAgentReady(id));
-        throw new Error(`Survivor bots did not become ready: ${missing.join(', ')}`);
+        const detail = missing.map(id => this._describeAgentStatus(id)).join(', ');
+        throw new Error(
+            `Survivor bots did not join within ${Math.round(this.readyTimeoutMs / 1000)}s during ${stage}: ${detail}. `
+            + 'Check that the Minecraft server is reachable and that no stale bots hold these names.'
+        );
     }
 
     _requireActive() {

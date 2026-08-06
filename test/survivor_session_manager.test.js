@@ -226,3 +226,68 @@ test('recovers a running season from persisted coordinator and session state', a
     assert.equal(view.game.phase, 'challenge');
     assert.equal(view.participantIds.length, 11);
 });
+
+test('recovery respawns every reachable bot even when one fails to launch', async () => {
+    const { manager, root, options } = await createManager();
+    await manager.start({
+        participants: participants(),
+        mergeAt: 10,
+        challengeGameIds: ['cake_race'],
+    });
+    await manager._persistOperation;
+
+    const attempted = [];
+    let clock = 0;
+    const recovered = new SurvivorSessionManager({
+        ...options,
+        coordinator: await SurvivorCoordinator.load({ root, random: () => 0 }),
+        rooms: new PrivateRoomRegistry({ idFactory: () => 'recovered-room' }),
+        isAgentReady: name => name !== 'Bot3',
+        clock: () => clock,
+        sleep: () => {
+            clock += 500;
+            return Promise.resolve();
+        },
+        createAgent: settings => {
+            attempted.push(settings.profile.name);
+            return settings.profile.name === 'Bot3'
+                ? { success: false, error: 'spawn refused' }
+                : { success: true, agentId: `agent-${settings.profile.name}` };
+        },
+    });
+
+    await assert.rejects(recovered.recover(), /Bot3/);
+    assert.deepEqual(attempted, ['Bot3']);
+    assert.equal(recovered.lastFailure.stage, 'recovery');
+    assert.match(recovered.lastFailure.error, /did not join/);
+    assert.ok(recovered.lastFailure.agents.some(agent => agent.name === 'Bot3'));
+});
+
+test('readiness failures name the stuck bots and their launch stage', async () => {
+    const { options, coordinator, contestCoordinator } = await createManager();
+    let clock = 0;
+    const manager = new SurvivorSessionManager({
+        ...options,
+        coordinator,
+        contestCoordinator,
+        isAgentReady: name => name !== 'Bot7',
+        clock: () => clock,
+        sleep: () => {
+            clock += 500;
+            return Promise.resolve();
+        },
+        getAgentLaunchStatus: name => (name === 'Bot7'
+            ? { name, registered: true, socketConnected: true, inGame: false }
+            : { name, registered: true, socketConnected: true, inGame: true }),
+    });
+
+    await assert.rejects(
+        manager.start({
+            participants: participants(),
+            mergeAt: 10,
+            challengeGameIds: ['cake_race'],
+        }),
+        /Bot7 \(connected, never joined Minecraft\)/
+    );
+    assert.equal(manager.lastFailure.stage, 'startup');
+});

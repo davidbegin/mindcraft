@@ -1,6 +1,7 @@
 import { Server } from 'socket.io';
 import express from 'express';
 import http from 'http';
+import process from 'node:process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import * as mindcraft from './mindcraft.js';
@@ -88,6 +89,7 @@ let contestReady = null;
 let contestLoop = null;
 let gameSessionManager = null;
 let survivorCoordinator = null;
+let survivorRecovery = null;
 let survivorSessionManager = null;
 let survivorRooms = null;
 let towerHighScores = null;
@@ -420,6 +422,27 @@ async function ensureContest(options) {
                     const connection = getConnection(agentRef);
                     return Boolean(connection?.socket && connection.in_game);
                 },
+                getAgentLaunchStatus: agentRef => {
+                    const connection = getConnection(agentRef);
+                    if (!connection) {
+                        return {
+                            name: agentRef,
+                            registered: false,
+                            socketConnected: false,
+                            inGame: false,
+                        };
+                    }
+                    return {
+                        name: connection.name || agentRef,
+                        registered: true,
+                        socketConnected: Boolean(connection.socket),
+                        inGame: Boolean(connection.in_game),
+                    };
+                },
+                telemetry: {
+                    record: event => launchTelemetry.record(event),
+                    recordError: (error, context) => launchTelemetry.recordError(error, context),
+                },
                 getContestPreset: getContestGamePreset,
                 prepareArena: (preset, participants) =>
                     contestArenaManager.prepare(preset, participants),
@@ -457,7 +480,6 @@ async function ensureContest(options) {
                 },
                 onUpdate: emitSurvivorUpdate,
             });
-            await survivorSessionManager.recover();
             contestLoop = new ContestLoop({
                 coordinator,
                 intervalMs: resolved.tick_interval_ms ?? 1000,
@@ -492,9 +514,42 @@ async function ensureContest(options) {
             });
             contestLoop.start();
             return coordinator;
+        }).catch(error => {
+            // A half-built contest stack must not be cached, or every later call
+            // replays this same rejection and the subsystem never recovers.
+            if (contestReady === pending) contestReady = null;
+            console.error('[contest] bootstrap failed:', error?.stack || error?.message || error);
+            launchTelemetry.recordError(error, { stage: 'contest_bootstrap' });
+            throw error;
         });
+        const pending = contestReady;
+        // Recovery re-creates bots, and registering a bot awaits ensureContest().
+        // Awaiting it inside the chain above would make this promise wait on itself.
+        pending.then(() => recoverSurvivorSeason(), () => {});
     }
     return contestReady;
+}
+
+function recoverSurvivorSeason() {
+    if (survivorRecovery) return survivorRecovery;
+    if (!survivorSessionManager) return Promise.resolve(null);
+    survivorRecovery = survivorSessionManager.recover()
+        .catch(error => {
+            buildSurvivorFailureReport(error, 'recovery');
+            console.error(
+                '[survivor] season recovery failed:',
+                error?.stack || error?.message || error
+            );
+            console.error(
+                '[survivor] copy the report from the Games tab (Copy diagnostics) '
+                + 'or the diagnostics-report socket event, then cancel the season to reset.'
+            );
+            return null;
+        })
+        .finally(() => {
+            survivorRecovery = null;
+        });
+    return survivorRecovery;
 }
 
 function getMinecraftJoinInfo() {
@@ -1016,6 +1071,33 @@ function buildLaunchFailureReport(error) {
     return launchTelemetry.captureFailureReport({
         error,
         gameSession: session,
+        contestView: contestCoordinator?.view?.() || null,
+        agents: collectAgentLaunchSnapshots(session),
+        env: {
+            node: process.version,
+            platform: process.platform,
+            minecraftAddress: join.address,
+            mindserverPort: join.mindserverPort,
+        },
+    });
+}
+
+function buildSurvivorFailureReport(error, stage = 'survivor') {
+    const session = survivorSessionManager?.lastFailure?.session
+        || survivorSessionManager?.view()?.active
+        || null;
+    const join = getMinecraftJoinInfo();
+    return launchTelemetry.captureFailureReport({
+        error,
+        gameSession: session
+            ? {
+                ...session,
+                gameId: 'survivor',
+                title: 'Survivor Bot Season',
+                contestId: session.challengeContestId || null,
+                progress: { stage, message: error?.message || 'Survivor season failure' },
+            }
+            : { gameId: 'survivor', title: 'Survivor Bot Season', progress: { stage } },
         contestView: contestCoordinator?.view?.() || null,
         agents: collectAgentLaunchSnapshots(session),
         env: {
@@ -1960,7 +2042,8 @@ export function createMindServer(host_public = false, port = 8080) {
                 emitSurvivorUpdate();
                 callback({ success: true, data });
             } catch (error) {
-                callback({ success: false, error: error.message });
+                const report = buildSurvivorFailureReport(error, 'startup');
+                callback({ success: false, error: error.message, report });
             }
         });
 
