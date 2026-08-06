@@ -13,6 +13,7 @@ export class VoiceOutput {
             throw new TypeError('playOnHost must be a function');
         }
         this.playOnHost = options.playOnHost;
+        this.clearHost = options.clearHost || (() => {});
         this.onError = options.onError || (error => console.warn(`Voice output failed: ${error.message}`));
         this.monitors = new Set();
     }
@@ -28,6 +29,25 @@ export class VoiceOutput {
 
     monitorCount() {
         return this.monitors.size;
+    }
+
+    clear() {
+        try {
+            this.clearHost();
+        } catch (error) {
+            this.onError(error);
+        }
+        for (const monitor of [...this.monitors]) {
+            if (!monitor.connected) {
+                this.monitors.delete(monitor);
+                continue;
+            }
+            try {
+                monitor.emit('bot-voice-clear');
+            } catch (error) {
+                this.onError(error);
+            }
+        }
     }
 
     dispatch({ agentName, text, audio }) {

@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
 import convoManager from './conversation.js';
 import { setSettings } from './settings.js';
+import { clearSpeechQueue } from './speak.js';
 import { getFullState, getWallState } from './library/full_state.js';
 
 // agent's individual connection to the mindserver
@@ -114,7 +115,20 @@ class MindServerProxy {
                     callback?.({ success: false, error: 'Agent is not ready for a game directive' });
                     return;
                 }
-                this.agent.history.add('system', `GAME DIRECTIVE\n${directive.prompt}`);
+                if (directive.react === true) {
+                    await this.agent.self_prompter.pause();
+                    this.agent.requestInterrupt();
+                    const spoken = await this.agent.reactToGameResult(directive.prompt);
+                    callback?.({ success: true, status: spoken ? 'reacted' : 'no_reaction' });
+                    return;
+                }
+                await this.agent.history.add('system', `GAME DIRECTIVE\n${directive.prompt}`);
+                if (directive.pause === true) {
+                    await this.agent.self_prompter.pause();
+                    this.agent.requestInterrupt();
+                    callback?.({ success: true, status: 'paused' });
+                    return;
+                }
                 if (convoManager.inConversation()) {
                     this.agent.self_prompter.setPromptPaused(directive.prompt);
                     callback?.({ success: true, status: 'queued_during_conversation' });
@@ -126,6 +140,10 @@ class MindServerProxy {
                 console.error('Error applying game directive:', error);
                 callback?.({ success: false, error: error.message });
             }
+        });
+
+        this.socket.on('contest-clear-speech', () => {
+            clearSpeechQueue();
         });
 
         this.socket.on('contest-recording-audio', (payload) => {
@@ -320,23 +338,27 @@ export function requestContestSpeech(text) {
     });
 }
 
-export function reportContestWinItem(itemName) {
+export function reportContestWinItem(itemName, position = null) {
     const socket = serverProxy.getSocket();
     if (!socket?.connected) {
         return Promise.reject(new Error('MindServer is not connected'));
     }
     return new Promise((resolve, reject) => {
-        socket.timeout(10000).emit('contest-win-item', { itemName }, (error, result) => {
-            if (error) {
-                reject(new Error('Contest win-item report timed out'));
-                return;
+        socket.timeout(10000).emit(
+            'contest-win-item',
+            { itemName, position },
+            (error, result) => {
+                if (error) {
+                    reject(new Error('Contest win-item report timed out'));
+                    return;
+                }
+                if (!result?.success) {
+                    reject(new Error(result?.error || 'Contest win-item report failed'));
+                    return;
+                }
+                resolve(result.data);
             }
-            if (!result?.success) {
-                reject(new Error(result?.error || 'Contest win-item report failed'));
-                return;
-            }
-            resolve(result.data);
-        });
+        );
     });
 }
 

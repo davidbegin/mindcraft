@@ -49,11 +49,53 @@ test('radically resets the arena and every diamond-race participant', async () =
     }
 });
 
+test('builds a farm scramble where racers must gather every cake ingredient', async () => {
+    const commands = [];
+    const manager = new ContestArenaManager({
+        runCommand: command => {
+            commands.push(command);
+            return Promise.resolve(
+                command === 'list' ? listReply(['alice', 'bob']) : 'ok'
+            );
+        },
+    });
+
+    await manager.prepare(
+        getContestGamePreset('cake_race'),
+        ['alice', 'bob'],
+        { spectators: [] }
+    );
+
+    assert.ok(commands.includes('gamerule doMobSpawning false'));
+    assert.ok(commands.includes('difficulty peaceful'));
+    assert.equal(commands.filter(command => command.startsWith('summon cow ')).length, 8);
+    assert.equal(commands.filter(command => command.startsWith('summon chicken ')).length, 8);
+    assert.ok(commands.some(command => command.endsWith('{EggLayTime:100}')));
+    assert.ok(commands.some(command => command.endsWith(' sugar_cane')));
+    assert.ok(commands.some(command => command.endsWith(' wheat[age=7]')));
+
+    const cakeIngredients = ['milk_bucket', 'sugar', 'egg', 'wheat', 'cake'];
+    for (const name of ['alice', 'bob']) {
+        assert.ok(commands.includes(`give ${name} bucket 3`));
+        assert.ok(commands.includes(`give ${name} crafting_table 1`));
+        for (const ingredient of cakeIngredients) {
+            assert.equal(
+                commands.some(command => command.startsWith(`give ${name} ${ingredient} `)),
+                false,
+                `${name} must gather ${ingredient} during the race`
+            );
+        }
+    }
+});
+
 test('builds ranked podiums and warps every competitor onto them', async () => {
     const commands = [];
     const manager = new ContestArenaManager({
         runCommand: async command => {
             commands.push(command);
+            if (command === 'list') {
+                return listReply(['alice', 'bob', 'charlie', 'human']);
+            }
             return 'ok';
         },
     });
@@ -78,7 +120,49 @@ test('builds ranked podiums and warps every competitor onto them', async () => {
     assert.ok(commands.includes('tp alice 100004 102 100000 0 0'));
     for (const name of ['alice', 'bob', 'charlie']) {
         assert.ok(commands.includes(`gamemode adventure ${name}`));
+        assert.ok(commands.includes(`effect give ${name} slowness infinite 255 true`));
+        assert.ok(commands.includes(`effect give ${name} jump_boost infinite 128 true`));
+        assert.ok(commands.includes(`effect give ${name} resistance infinite 255 true`));
     }
+    assert.ok(commands.includes(
+        'tp human 100000 107 100014 facing 100000 103 100000'
+    ));
+});
+
+test('reveals the winner location to competitors and spectators before the podiums', async () => {
+    const commands = [];
+    const manager = new ContestArenaManager({
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') return listReply(['alice', 'bob', 'human']);
+            return 'ok';
+        },
+    });
+
+    const result = await manager.presentWinner({
+        status: 'completed',
+        participantIds: ['alice', 'bob'],
+        winnerIds: ['alice'],
+        submissions: {
+            alice: {
+                payload: {
+                    position: { x: 100012.5, y: 74, z: 99991.5 },
+                },
+            },
+        },
+    });
+
+    assert.deepEqual(result.position, { x: 100012.5, y: 74, z: 99991.5 });
+    assert.deepEqual(result.spectators, ['human']);
+    assert.ok(commands.includes(
+        'tp alice 100012.5 74 99991.5 facing 100012.5 74 99992.5'
+    ));
+    assert.ok(commands.includes(
+        'tp bob 100012.5 74 99991.5 facing 100012.5 74 99992.5'
+    ));
+    assert.ok(commands.includes(
+        'tp human 100018.5 77 99997.5 facing 100012.5 75 99991.5'
+    ));
 });
 
 test('builds a netherite race that requires crafting a diamond pickaxe', async () => {

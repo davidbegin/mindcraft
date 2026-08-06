@@ -512,6 +512,29 @@ export class Agent {
         return used_command;
     }
 
+    async reactToGameResult(prompt) {
+        await this.history.add('system', `FINAL GAME RESULT\n${prompt}`);
+        this.history.save();
+        this._setThinking(true, 'Reacting to the winner…');
+        let response;
+        try {
+            response = await this.prompter.promptConvo(this.history.getHistory());
+        } finally {
+            this._setThinking(false);
+        }
+        response = String(response || '').trim();
+        if (!response) return false;
+        const commandName = containsCommand(response);
+        if (commandName) {
+            response = response.slice(0, response.indexOf(commandName)).trim();
+        }
+        if (!response) return false;
+        await this.history.add(this.name, response);
+        this.history.save();
+        await this.openChat(response);
+        return true;
+    }
+
     async routeResponse(to_player, message) {
         if (this.shut_up) return;
         let self_prompt = to_player === 'system' || to_player === this.name;
@@ -1012,7 +1035,12 @@ export class Agent {
             const hasWinItem = this.bot.inventory.items().some(item => item.name === winItem);
             if (!hasWinItem) return;
             this._contestWinReported = true;
-            reportContestWinItem(winItem).catch(error => {
+            const position = this.bot.entity?.position;
+            reportContestWinItem(winItem, position ? {
+                x: position.x,
+                y: position.y,
+                z: position.z,
+            } : null).catch(error => {
                 if (/not accepting|deadline|already finished/i.test(error.message)) return;
                 console.error(`[${this.name}] Could not report contest win item:`, error.message);
                 this._contestWinReported = false;

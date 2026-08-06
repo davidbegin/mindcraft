@@ -121,6 +121,23 @@ test('removeMonitor stops mirroring to that tab', () => {
     assert.deepEqual(tab.emitted, []);
 });
 
+test('clears host playback and every monitoring tab', () => {
+    let hostClears = 0;
+    const { output } = recordingOutput({
+        clearHost: () => { hostClears++; },
+    });
+    const first = fakeSocket();
+    const second = fakeSocket();
+    output.addMonitor(first);
+    output.addMonitor(second);
+
+    output.clear();
+
+    assert.equal(hostClears, 1);
+    assert.deepEqual(first.emitted, [['bot-voice-clear', undefined]]);
+    assert.deepEqual(second.emitted, [['bot-voice-clear', undefined]]);
+});
+
 test('ignores lines that have no audio', () => {
     const { output, played } = recordingOutput();
 

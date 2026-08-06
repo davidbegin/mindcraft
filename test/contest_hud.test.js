@@ -109,6 +109,47 @@ test('announces ranked winners and removes the bossbar', async () => {
     assert.ok(commands.some(command => command.includes('1. bob — 31 blocks')));
 });
 
+test('celebrates the first competitor to craft a cake', async () => {
+    const commands = [];
+    const contest = runningContest({
+        title: 'First Cake',
+        rules: { type: 'cake_race', winItem: 'cake' },
+    });
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: command => Promise.resolve(commands.push(command)),
+    });
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    commands.length = 0;
+
+    const completed = {
+        ...contest,
+        status: 'completed',
+        winnerIds: ['alice'],
+        submissions: {
+            alice: {
+                payload: {
+                    position: { x: 100012.5, y: 74, z: 99991.5 },
+                },
+            },
+        },
+        results: [
+            { participantId: 'alice', score: -18_000, rank: 1 },
+            { participantId: 'bob', score: 0, rank: null, disqualified: true },
+        ],
+    };
+    assert.equal(formatContestScore(completed, completed.results[0]), 'cake crafted');
+    await hud.sync({ activeContest: null, contests: [completed] });
+
+    assert.ok(commands.some(command =>
+        command.includes('title @a title {"text":"CAKE CRAFTED!","color":"light_purple"')
+    ));
+    assert.ok(commands.some(command =>
+        command.includes('"alice WINS! · X 100012.5 · Y 74 · Z 99991.5"')
+    ));
+    assert.ok(commands.some(command => command.includes('1. alice — cake crafted')));
+});
+
 test('celebrates an automatic diamond-race winner', async () => {
     const commands = [];
     const contest = runningContest({
@@ -126,6 +167,13 @@ test('celebrates an automatic diamond-race winner', async () => {
         ...contest,
         status: 'completed',
         winnerIds: ['alice'],
+        submissions: {
+            alice: {
+                payload: {
+                    position: { x: 100012.5, y: 74, z: 99991.5 },
+                },
+            },
+        },
         results: [
             { participantId: 'alice', score: -12_000, rank: 1 },
             { participantId: 'bob', score: 0, rank: null, disqualified: true },
@@ -136,7 +184,9 @@ test('celebrates an automatic diamond-race winner', async () => {
     assert.ok(commands.some(command =>
         command.includes('title @a title {"text":"DIAMOND FOUND!","color":"aqua"')
     ));
-    assert.ok(commands.some(command => command.includes('"alice WINS!"')));
+    assert.ok(commands.some(command =>
+        command.includes('"alice WINS! · X 100012.5 · Y 74 · Z 99991.5"')
+    ));
     assert.ok(commands.some(command =>
         command.startsWith('playsound entity.firework_rocket.large_blast')
     ));

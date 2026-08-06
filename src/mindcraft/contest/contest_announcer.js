@@ -11,8 +11,11 @@ export function buildContestStartAnnouncement(contest) {
 export function buildContestResultAnnouncement(contest) {
     const winners = Array.isArray(contest?.winnerIds) ? contest.winnerIds.filter(Boolean) : [];
     if (winners.length === 0) return 'Game over. There was no winner.';
-    if (winners.length === 1) return `${winners[0]} was the winner!`;
-    return `${winners.join(' and ')} were the winners!`;
+    if (winners.length === 1) {
+        return `And the winner is... ${winners[0]}! ${winners[0]} wins!`;
+    }
+    const names = winners.join(' and ');
+    return `And the winners are... ${names}! ${names} win!`;
 }
 
 export class ContestAnnouncer {
@@ -31,6 +34,6 @@ export class ContestAnnouncer {
     }
 
     async announceResult(contest) {
-        await this.speak(buildContestResultAnnouncement(contest));
+        await this.speak(buildContestResultAnnouncement(contest), { delivery: 'booming' });
     }
 }

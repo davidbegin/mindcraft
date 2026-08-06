@@ -1,6 +1,28 @@
 import { buildParticipantGameDirective } from './game_content.js';
 
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
+const DEFAULT_PODIUM_HOLD_MS = 5 * 60 * 1000;
+const DEFAULT_WINNER_REVEAL_MS = 6_000;
+const PODIUM_WAIT_DIRECTIVE = [
+    'The game is over and the medal ceremony has begun.',
+    'Stay on your podium, do not move or start another task,',
+    'and wait for the humans to start the next game.',
+].join(' ');
+
+export function buildWinnerReactionDirective(contest, participantId) {
+    const winners = Array.isArray(contest?.winnerIds) ? contest.winnerIds.filter(Boolean) : [];
+    const winnerNames = winners.join(' and ') || 'nobody';
+    const winnerLabel = winners.length === 1 ? 'winner is' : 'winners are';
+    const outcome = winners.includes(participantId)
+        ? `You won. The ${winnerLabel} ${winnerNames}.`
+        : `The ${winnerLabel} ${winnerNames}.`;
+    return [
+        'The game is over.',
+        outcome,
+        `React now in one excited, natural sentence and clearly say ${winnerNames} by name.`,
+        'Do not use a command or begin another task. After speaking, remain still for the medal ceremony.',
+    ].join(' ');
+}
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -85,6 +107,9 @@ export class GameSessionManager {
 
         Object.assign(this, options);
         this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+        this.clock = options.clock || (() => Date.now());
+        this.podiumHoldMs = options.podiumHoldMs ?? DEFAULT_PODIUM_HOLD_MS;
+        this.winnerRevealMs = options.winnerRevealMs ?? DEFAULT_WINNER_REVEAL_MS;
         // Frees the requested names from bots left over by earlier matches, so
         // the same roster can be started again and again.
         this.reclaimNames = options.reclaimNames || (() => Promise.resolve());
@@ -93,6 +118,9 @@ export class GameSessionManager {
         this.onUpdate = options.onUpdate || (() => {});
         this.announceStart = options.announceStart || (() => {});
         this.announceResult = options.announceResult || (() => {});
+        this.announceVisualResult = options.announceVisualResult || (() => {});
+        this.presentWinner = options.presentWinner || (() => {});
+        this.clearQueuedVoice = options.clearQueuedVoice || (() => {});
         this.onAnnouncementError = options.onAnnouncementError
             || (error => console.warn(`Contest announcement failed: ${error.message}`));
         this.onPresentationError = options.onPresentationError
@@ -140,7 +168,21 @@ export class GameSessionManager {
 
     async start(request = {}) {
         if (this.active) {
-            throw new Error(`Game session ${this.active.contestId} is already active`);
+            if (this.active.status !== 'awaiting-next-game') {
+                throw new Error(`Game session ${this.active.contestId} is already active`);
+            }
+            const remainingMs = Math.max(
+                0,
+                (this.active.podiumHoldUntil || 0) - this.clock()
+            );
+            if (remainingMs > 0) {
+                const remainingSeconds = Math.ceil(remainingMs / 1000);
+                throw new Error(
+                    `Podium ceremony is still in progress. `
+                    + `Wait ${remainingSeconds} more seconds before starting the next game.`
+                );
+            }
+            await this.finish(this.active.contestId);
         }
         if (this.coordinator.snapshot().activeContestId) {
             throw new Error('A game is already running. Cancel it first.');
@@ -372,19 +414,7 @@ export class GameSessionManager {
         this._setProgress('cleanup', 'Cleaning up temporary contest bots…');
         this._record({ stage: 'cleanup', message: `Cleaning up session ${session.contestId}` });
         this._emit();
-        await this.stopRecording(session.contestId).catch(() => {});
-        if (contest?.status === 'completed') {
-            try {
-                const queued = this.queueHighlight({ session, contest });
-                queued?.catch?.(this.onHighlightError);
-                this._record({
-                    stage: 'highlight_queued',
-                    message: `Queued highlight reel for ${session.contestId}`,
-                });
-            } catch (error) {
-                this.onHighlightError(error);
-            }
-        }
+        await this._finalizeMedia(contest);
         await Promise.allSettled(
             session.createdAgents.map(agent => this.destroyAgent(agent.id))
         );
@@ -398,18 +428,49 @@ export class GameSessionManager {
         const contest = (view?.contests || []).find(item => item.id === this.active.contestId);
         if (contest && ['completed', 'cancelled'].includes(contest.status)) {
             if ([
+                'revealing-winner',
                 'presenting-results',
                 'announcing-result',
+                'awaiting-next-game',
                 'cleaning-up',
             ].includes(this.active.status)) return null;
             if (contest.status === 'completed') {
+                this.active.status = 'revealing-winner';
+                this._setProgress('reveal_winner', 'Gathering everyone at the winning location…');
+                this._emit();
+                await this._clearQueuedVoice(contest);
+                await Promise.allSettled(this.active.participantIds.map(name =>
+                    this.sendDirective(name, PODIUM_WAIT_DIRECTIVE, { pause: true })
+                ));
+                await this._presentWinner(contest);
+                this.active.status = 'announcing-result';
+                this._emit();
+                await this._announce(this.announceVisualResult, contest);
+                await this._clearQueuedVoice(contest);
+                await this._announce(this.announceResult, contest);
+                await Promise.allSettled(this.active.participantIds.map(name =>
+                    this.sendDirective(
+                        name,
+                        buildWinnerReactionDirective(contest, name),
+                        { pause: true, react: true }
+                    )
+                ));
+                await this.sleep(this.winnerRevealMs);
                 this.active.status = 'presenting-results';
                 this._setProgress('present_results', 'Moving competitors to the podiums…');
                 this._emit();
                 await this._presentResults(contest);
-                this.active.status = 'announcing-result';
+                await this._finalizeMedia(contest);
+                const podiumHoldUntil = this.clock() + this.podiumHoldMs;
+                this.active.status = 'awaiting-next-game';
+                this.active.podiumHoldUntil = podiumHoldUntil;
+                this._setProgress(
+                    'await_next_game',
+                    'Medal ceremony in progress. Waiting for the next game.',
+                    { podiumHoldUntil }
+                );
                 this._emit();
-                await this._announce(this.announceResult, contest);
+                return this.view();
             }
             return this.finish(contest.id, contest);
         }
@@ -471,11 +532,48 @@ export class GameSessionManager {
         }
     }
 
+    async _clearQueuedVoice(contest) {
+        try {
+            await this.clearQueuedVoice(contest);
+        } catch (error) {
+            this.onAnnouncementError(error);
+        }
+    }
+
     async _presentResults(contest) {
         try {
             await this.presentResults(contest);
         } catch (error) {
             this.onPresentationError(error);
+        }
+    }
+
+    async _presentWinner(contest) {
+        try {
+            await this.presentWinner(contest);
+        } catch (error) {
+            this.onPresentationError(error);
+        }
+    }
+
+    async _finalizeMedia(contest) {
+        if (!this.active || this.active.mediaFinalized) return;
+        const session = this.view();
+        await this.stopRecording(session.contestId).catch(() => {});
+        this.active.mediaFinalized = true;
+        if (this.active.recording) {
+            this.active.recording.enabled = false;
+        }
+        if (contest?.status !== 'completed') return;
+        try {
+            const queued = this.queueHighlight({ session, contest });
+            queued?.catch?.(this.onHighlightError);
+            this._record({
+                stage: 'highlight_queued',
+                message: `Queued highlight reel for ${session.contestId}`,
+            });
+        } catch (error) {
+            this.onHighlightError(error);
         }
     }
 }

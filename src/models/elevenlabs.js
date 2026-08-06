@@ -1,6 +1,6 @@
 import { getKey } from '../utils/keys.js';
 
-const sendAudioRequest = async (text, model, voice, url) => {
+const sendAudioRequest = async (text, model, voice, url, options = {}) => {
     const baseUrl = url || TTSConfig.baseUrl;
     const res = await fetch(`${baseUrl}/text-to-speech/${voice}?output_format=mp3_44100_128`, {
         method: 'POST',
@@ -11,6 +11,7 @@ const sendAudioRequest = async (text, model, voice, url) => {
         body: JSON.stringify({
             text: text,
             model_id: model,
+            ...(options.voiceSettings ? { voice_settings: options.voiceSettings } : {}),
         }),
     });
     if (!res.ok) {

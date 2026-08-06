@@ -12,6 +12,7 @@ test('lists the starter contest games for the UI', () => {
     assert.deepEqual(
         games.map(game => game.id).sort(),
         [
+            'cake_race',
             'death_race',
             'deepest_2_5',
             'deepest_5',
@@ -32,23 +33,57 @@ test('lists the starter contest games for the UI', () => {
         tower.defaultCharacters,
         CONTEST_BOT_CHARACTERS.map(character => ({ ...character }))
     );
-    assert.equal(tower.defaultCharacters.length, 4);
+    assert.equal(tower.defaultCharacters.length, 7);
     assert.deepEqual(
         tower.defaultCharacters.map(({ name, profileId }) => ({ name, profileId })),
         [
             { name: 'Billy', profileId: 'gpt-5-6-luna-instant' },
             { name: 'Alice', profileId: 'claude' },
             { name: 'Marcus', profileId: 'gemini' },
-            { name: 'Priya', profileId: 'grok' },
+            { name: 'Dario', profileId: 'gpt-5-6-terra-thorough' },
+            { name: 'ChipChipperson', profileId: 'gpt-5-6-sol-instant' },
+            { name: 'bridget', profileId: 'gpt-5-6-terra-balanced' },
+            { name: 'Leviticus', profileId: 'gpt-5-6-terra-fast' },
         ]
     );
+    assert.equal(tower.defaultCharacters[3].voice, 'Timmy');
+    assert.equal(tower.defaultCharacters[4].voice, 'RadioClyde');
+    assert.equal(tower.defaultCharacters[5].voice, 'Bridget');
+    assert.equal(tower.defaultCharacters[6].voice, 'Inferno');
     assert.ok(tower.defaultCharacters.every(character => character.systemPrompt.length > 40));
+    assert.match(tower.defaultCharacters[3].systemPrompt, /contingency planning/i);
+    assert.match(tower.defaultCharacters[4].systemPrompt, /never rerun/i);
+    assert.match(tower.defaultCharacters[5].systemPrompt, /do not keep insulting/i);
+    assert.match(tower.defaultCharacters[6].systemPrompt, /bluffs/i);
 });
 
 test('contest presets include game-specific rules and judge metrics', () => {
+    const cake = getContestGamePreset('cake_race');
+    assert.equal(cake.rules.type, 'cake_race');
+    assert.equal(cake.rules.winItem, 'cake');
+    assert.deepEqual(cake.rules.ingredients, {
+        milk_bucket: 3,
+        sugar: 2,
+        egg: 1,
+        wheat: 3,
+    });
+    assert.equal(cake.rules.metrics[0].direction, 'minimize');
+    assert.equal(cake.metadata.pvp, false);
+    assert.match(cake.prompt, /none of the cake ingredients/i);
+    assert.match(cake.prompt, /three milk buckets, two sugar, one egg, and three wheat/i);
+    assert.match(cake.prompt, /ends automatically/i);
+
     const tower = getContestGamePreset('tower_battle');
     assert.equal(tower.rules.type, 'tower_battle');
     assert.equal(tower.rules.scoring, 'tallest-standing-tower');
+    assert.match(tower.prompt, /distinctive balance/i);
+
+    for (const game of listContestGamePresets()) {
+        assert.doesNotMatch(
+            getContestGamePreset(game.id).prompt,
+            /trade playful trash talk with every rival/i
+        );
+    }
     assert.equal(tower.metadata.pvp, true);
     assert.match(tower.prompt, /Nothing is submitted/);
     assert.match(tower.prompt, /timer expires/);

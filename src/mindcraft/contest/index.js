@@ -45,6 +45,7 @@ export {
     parseOnlinePlayers,
 } from './arena_manager.js';
 export { ContestRecordingManager } from './contest_recording.js';
+export { SpectatorDirector } from './spectator_director.js';
 export {
     GameSessionManager,
     validateGameParticipants,

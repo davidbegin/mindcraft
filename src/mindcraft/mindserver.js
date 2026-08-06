@@ -22,6 +22,7 @@ import {
     ContestHud,
     ContestLoop,
     ContestRecordingManager,
+    SpectatorDirector,
     GameSessionManager,
     HighlightReelBuilder,
     TowerHighScoreStore,
@@ -41,7 +42,7 @@ import { runMinecraftCommand } from './minecraft_server.js';
 import { getGpt56Profiles } from './model_profiles.js';
 import { ensureSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
-import { playSpeech } from '../agent/speak.js';
+import { clearSpeechQueue, playSpeech } from '../agent/speak.js';
 import { VoiceOutput } from './voice_output.js';
 import * as launchTelemetry from './diagnostics/launch_telemetry.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -69,6 +70,7 @@ const voiceOutput = new VoiceOutput({
         volume: 100,
         audioPromise: Promise.resolve(audio),
     }),
+    clearHost: clearSpeechQueue,
 });
 let colonyCoordinator = null;
 let colonyReady = null;
@@ -81,6 +83,13 @@ let gameSessionManager = null;
 let towerHighScores = null;
 let liveTowerAtlas = null;
 const contestArenaManager = new ContestArenaManager();
+const spectatorDirector = new SpectatorDirector({
+    isContestActive: contestId => {
+        const active = contestCoordinator?.view()?.activeContest;
+        return active?.id === contestId && ['running', 'judging'].includes(active.status);
+    },
+    onUpdate: () => emitContestUpdate(),
+});
 const contestHud = new ContestHud({ getLeader: getContestLeader });
 const contestRecordingManager = new ContestRecordingManager({
     requestAgent: requestContestRecordingCommand,
@@ -239,6 +248,7 @@ function emitContestUpdate(socket = io) {
         socket.emit('contest-update', {
             ...contestCoordinator.view(),
             gameSession: gameSessionManager?.view() ?? null,
+            spectatorDirector: spectatorDirector.view(),
             towerHighScores: towerHighScores?.list() ?? [],
             towerAtlas: liveTowerAtlas,
         });
@@ -302,13 +312,16 @@ async function ensureContest(options) {
                 },
                 prepareArena: (preset, participants) =>
                     contestArenaManager.prepare(preset, participants),
+                presentWinner: contest => contestArenaManager.presentWinner(contest),
                 presentResults: contest => contestArenaManager.presentResults(contest),
                 startRecording: options => contestRecordingManager.start(options),
                 stopRecording: contestId => contestRecordingManager.stop(contestId),
                 queueHighlight: ({ session, contest }) => queueContestHighlight({ session, contest }),
                 sendDirective: sendGameDirective,
+                clearQueuedVoice: clearContestVoice,
                 announceStart: contest => contestAnnouncer.announceStart(contest),
                 announceResult: contest => contestAnnouncer.announceResult(contest),
+                announceVisualResult: () => contestHud.sync(contestCoordinator.view()),
                 onUpdate: () => emitContestUpdate(),
                 telemetry: {
                     record: event => launchTelemetry.record(event),
@@ -322,8 +335,10 @@ async function ensureContest(options) {
                 onTick: async view => {
                     const completed = await detectDogRaceWinner(view);
                     if (!completed) {
+                        const gameSessionOwnsResult = !view.activeContest
+                            && Boolean(gameSessionManager?.view());
                         await Promise.all([
-                            contestHud.sync(view),
+                            gameSessionOwnsResult ? Promise.resolve() : contestHud.sync(view),
                             refreshLiveTowerAtlas(view),
                         ]);
                         io?.emit('tower-atlas-update', liveTowerAtlas);
@@ -331,6 +346,9 @@ async function ensureContest(options) {
                 },
                 onUpdate: async view => {
                     await recordTowerHighScores(view);
+                    if (!view.activeContest && spectatorDirector.view().enabled) {
+                        await spectatorDirector.stop();
+                    }
                     emitContestUpdate();
                     if (gameSessionManager) {
                         await gameSessionManager.syncWithContestView(view);
@@ -421,32 +439,59 @@ async function destroyGameAgent(agentRef) {
     await unregisterAgent(connection.id, 'removed');
 }
 
-function sendGameDirective(agentRef, prompt) {
+function sendGameDirective(agentRef, prompt, options = {}) {
     const connection = getConnection(agentRef);
     if (!connection?.socket || !connection.in_game) {
         return Promise.reject(new Error(`Agent '${agentRef}' is not ready for a game directive`));
     }
     return new Promise((resolve, reject) => {
-        connection.socket.timeout(20000).emit('game-directive', { prompt }, (error, result) => {
-            if (error) {
-                reject(new Error(`Game directive timed out for ${connection.name}`));
-                return;
+        connection.socket.timeout(20000).emit(
+            'game-directive',
+            {
+                prompt,
+                pause: options.pause === true,
+                react: options.react === true,
+            },
+            (error, result) => {
+                if (error) {
+                    reject(new Error(`Game directive timed out for ${connection.name}`));
+                    return;
+                }
+                if (!result?.success) {
+                    reject(new Error(result?.error || `Game directive failed for ${connection.name}`));
+                    return;
+                }
+                resolve(result);
             }
-            if (!result?.success) {
-                reject(new Error(result?.error || `Game directive failed for ${connection.name}`));
-                return;
-            }
-            resolve(result);
-        });
+        );
     });
 }
 
-async function speakContestAnnouncement(text) {
+function clearContestVoice(contest) {
+    voiceOutput.clear();
+    for (const participantId of contest?.participantIds || []) {
+        const connection = getConnection(participantId);
+        if (connection?.socket?.connected) {
+            connection.socket.emit('contest-clear-speech');
+        }
+    }
+}
+
+async function speakContestAnnouncement(text, options = {}) {
+    const voiceSettings = options.delivery === 'booming'
+        ? {
+            stability: 0.35,
+            similarity_boost: 0.8,
+            style: 1,
+            use_speaker_boost: true,
+        }
+        : null;
     const audio = await elevenLabsTTSConfig.sendAudioRequest(
         text,
         getVoicesConfig().elevenlabs_model,
         resolveVoice(CONTEST_NARRATOR_CHARACTER.name, CONTEST_NARRATOR_CHARACTER.voice),
-        elevenLabsTTSConfig.baseUrl
+        elevenLabsTTSConfig.baseUrl,
+        { voiceSettings }
     );
     const sessionId = gameSessionManager?.view()?.sessionId;
     if (sessionId) {
@@ -594,11 +639,11 @@ async function detectDogRaceWinner(view) {
         elapsedMs: Date.now() - current.startedAt,
     });
     const completedView = contestCoordinator.view();
-    await contestHud.sync(completedView);
     emitContestUpdate();
     if (gameSessionManager?.view()?.contestId === contest.id) {
         await gameSessionManager.syncWithContestView(completedView);
     } else {
+        await contestHud.sync(completedView);
         await contestRecordingManager.stop(contest.id);
     }
     return true;
@@ -1721,6 +1766,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     data: contestCoordinator ? {
                         ...contestCoordinator.view(),
                         gameSession: gameSessionManager?.view() ?? null,
+                        spectatorDirector: spectatorDirector.view(),
                         towerAtlas: liveTowerAtlas,
                     } : null,
                     games: listContestGamePresets(),
@@ -1813,6 +1859,7 @@ export function createMindServer(host_public = false, port = 8080) {
                         data = await contestCoordinator.startContest(request.contestId);
                         break;
                     case 'cancel':
+                        await spectatorDirector.stop();
                         if (gameSessionManager?.view()?.contestId === request.contestId) {
                             data = await gameSessionManager.cancel(
                                 request.contestId,
@@ -1834,6 +1881,17 @@ export function createMindServer(host_public = false, port = 8080) {
                         data = await contestArenaManager.warpSpectators(active.participantIds || []);
                         break;
                     }
+                    case 'start-spectator-director': {
+                        const active = contestCoordinator.view().activeContest;
+                        if (!active || !['running', 'judging'].includes(active.status)) {
+                            throw new Error('No live contest to auto-direct');
+                        }
+                        data = await spectatorDirector.start(active);
+                        break;
+                    }
+                    case 'stop-spectator-director':
+                        data = await spectatorDirector.stop();
+                        break;
                     default:
                         throw new Error(`Unknown contest control: ${request?.action}`);
                 }
@@ -1860,22 +1918,32 @@ export function createMindServer(host_public = false, port = 8080) {
                 if (!expectedItem || itemName !== expectedItem) {
                     throw new Error(`Contest requires ${expectedItem || 'no win item'}`);
                 }
+                const reportedPosition = request?.position;
+                const position = reportedPosition
+                    && [reportedPosition.x, reportedPosition.y, reportedPosition.z]
+                        .every(Number.isFinite)
+                    ? {
+                        x: reportedPosition.x,
+                        y: reportedPosition.y,
+                        z: reportedPosition.z,
+                    }
+                    : null;
                 const data = await contestCoordinator.declareWinner(
                     active.id,
                     connection.name,
                     {
                         item: itemName,
                         elapsedMs: Date.now() - active.startedAt,
+                        ...(position ? { position } : {}),
                     }
                 );
                 const view = contestCoordinator.view();
-                await contestHud.sync(view);
                 emitContestUpdate();
                 callback?.({ success: true, data });
 
                 const cleanup = gameSessionManager?.view()?.contestId === active.id
                     ? gameSessionManager.syncWithContestView(view)
-                    : contestRecordingManager.stop(active.id);
+                    : contestHud.sync(view).then(() => contestRecordingManager.stop(active.id));
                 cleanup.catch(error => {
                     console.error(`Could not clean up completed contest ${active.id}:`, error);
                 });
@@ -1906,13 +1974,12 @@ export function createMindServer(host_public = false, port = 8080) {
                     }
                 );
                 const view = contestCoordinator.view();
-                await contestHud.sync(view);
                 emitContestUpdate();
                 callback?.({ success: true, data });
 
                 const cleanup = gameSessionManager?.view()?.contestId === active.id
                     ? gameSessionManager.syncWithContestView(view)
-                    : contestRecordingManager.stop(active.id);
+                    : contestHud.sync(view).then(() => contestRecordingManager.stop(active.id));
                 cleanup.catch(error => {
                     console.error(`Could not clean up completed contest ${active.id}:`, error);
                 });
@@ -1936,12 +2003,24 @@ export function createMindServer(host_public = false, port = 8080) {
                     connection.name,
                     request?.payload
                 );
-                await contestHud.sync(contestCoordinator.view());
-                if (!contestCoordinator.snapshot().activeContestId) {
-                    await contestRecordingManager.stop(request?.contestId);
-                }
+                const view = contestCoordinator.view();
+                const completedGameSession = !view.activeContest
+                    && gameSessionManager?.view()?.contestId === request?.contestId;
+                const presentation = completedGameSession
+                    ? gameSessionManager.syncWithContestView(view)
+                    : contestHud.sync(view).then(async () => {
+                        if (!view.activeContest) {
+                            await contestRecordingManager.stop(request?.contestId);
+                        }
+                    });
                 emitContestUpdate();
                 callback({ success: true, data });
+                presentation.catch(error => {
+                    console.error(
+                        `Could not present submitted contest ${request?.contestId}:`,
+                        error
+                    );
+                });
             } catch (error) {
                 callback({ success: false, error: error.message });
             }

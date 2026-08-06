@@ -47,13 +47,14 @@ const preset = {
     metadata: {},
 };
 
-async function withManager(run, overrides = {}) {
+async function withManager(run, overrides = {}, coordinatorOverrides = {}) {
     const root = await mkdtemp(path.join(os.tmpdir(), 'mindcraft-game-session-'));
     const calls = [];
     try {
         const coordinator = await ContestCoordinator.create({
             root,
             idFactory: () => 'game-1',
+            ...coordinatorOverrides,
         });
         const manager = new GameSessionManager({
             coordinator,
@@ -72,6 +73,10 @@ async function withManager(run, overrides = {}) {
                 calls.push(['arena', participants]);
                 return { center: { x: 1, y: 2, z: 3 } };
             },
+            presentWinner: async contest => calls.push([
+                'present-winner',
+                contest.id,
+            ]),
             presentResults: async contest => calls.push([
                 'present-results',
                 contest.id,
@@ -87,7 +92,9 @@ async function withManager(run, overrides = {}) {
                 session.sessionId,
                 contest.id,
             ]),
-            sendDirective: async (name, prompt) => calls.push(['directive', name, prompt]),
+            sendDirective: async (name, prompt, options) =>
+                calls.push(['directive', name, prompt, options]),
+            clearQueuedVoice: async contest => calls.push(['clear-voice', contest.id]),
             announceStart: contest => {
                 calls.push(['announce-start', contest.id]);
                 return Promise.resolve();
@@ -96,6 +103,11 @@ async function withManager(run, overrides = {}) {
                 calls.push(['announce-result', contest.id, contest.winnerIds]);
                 return Promise.resolve();
             },
+            announceVisualResult: contest => {
+                calls.push(['announce-visual-result', contest.id, contest.winnerIds]);
+                return Promise.resolve();
+            },
+            sleep: async () => {},
             ...overrides,
         });
         await run({ manager, coordinator, calls });
@@ -104,7 +116,7 @@ async function withManager(run, overrides = {}) {
     }
 }
 
-test('provisions isolated agents, records, directs, and cleans up after completion', async () => {
+test('provisions, records, and holds competitors on podiums until cleanup', async () => {
     await withManager(async ({ manager, coordinator, calls }) => {
         const result = await manager.start({
             gameId: 'tower',
@@ -165,6 +177,14 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         await coordinator.submit('game-1', 'thinker', {});
         await manager.syncWithContestView(coordinator.view());
 
+        assert.equal(manager.view().status, 'awaiting-next-game');
+        assert.equal(manager.view().recording.enabled, false);
+        assert.deepEqual(
+            calls.filter(([type]) => type === 'destroy'),
+            [],
+            'temporary bots remain online for the podium ceremony'
+        );
+        await manager.finish('game-1');
         assert.equal(manager.view(), null);
         assert.deepEqual(
             calls.filter(([type]) => type === 'destroy').map(([, id]) => id),
@@ -174,13 +194,93 @@ test('provisions isolated agents, records, directs, and cleans up after completi
         const stopIndex = calls.findIndex(([type]) => type === 'record-stop');
         const destroyIndex = calls.findIndex(([type]) => type === 'destroy');
         const highlightIndex = calls.findIndex(([type]) => type === 'highlight');
+        const presentWinnerIndex = calls.findIndex(([type]) => type === 'present-winner');
         const presentResultsIndex = calls.findIndex(([type]) => type === 'present-results');
+        const announceVisualResultIndex = calls.findIndex(
+            ([type]) => type === 'announce-visual-result'
+        );
         const announceResultIndex = calls.findIndex(([type]) => type === 'announce-result');
-        assert.ok(presentResultsIndex < announceResultIndex, 'competitors reach podiums before the announcement');
+        const clearVoiceIndexes = calls
+            .map(([type], index) => type === 'clear-voice' ? index : -1)
+            .filter(index => index >= 0);
+        assert.ok(
+            presentWinnerIndex < announceVisualResultIndex,
+            'everyone reaches the winning location before the result appears'
+        );
+        assert.ok(
+            announceVisualResultIndex < presentResultsIndex,
+            'the winning location is shown before the podium ceremony'
+        );
+        assert.ok(announceResultIndex < presentResultsIndex, 'the narrator speaks before the podium warp');
+        const pauseDirectives = calls.filter(
+            ([type, , , options]) => type === 'directive'
+                && options?.pause === true
+                && options?.react !== true
+        );
+        assert.equal(pauseDirectives.length, 2);
+        assert.ok(pauseDirectives.every(([, , , options]) => options?.pause === true));
+        const reactions = calls.filter(
+            ([type, , , options]) => type === 'directive' && options?.react === true
+        );
+        assert.equal(reactions.length, 2);
+        assert.ok(reactions.every(([, , prompt]) => /speedy/i.test(prompt)));
+        assert.ok(reactions.every(([, , prompt]) => /one excited, natural sentence/i.test(prompt)));
+        assert.equal(clearVoiceIndexes.length, 2);
+        assert.deepEqual(
+            calls.filter(([type]) => type === 'clear-voice').map(([, contestId]) => contestId),
+            ['game-1', 'game-1']
+        );
+        assert.ok(clearVoiceIndexes[1] < announceResultIndex, 'stale speech is cleared before the winner call');
+        assert.ok(reactions.every(call => calls.indexOf(call) > announceResultIndex));
         assert.ok(announceResultIndex < stopIndex, 'winner is announced before recording stops');
         assert.ok(stopIndex < highlightIndex, 'highlight encoding starts after recordings are finalized');
         assert.ok(highlightIndex < destroyIndex, 'highlight job is queued before temporary agents are destroyed');
         assert.ok(stopIndex < destroyIndex, 'recording stops before temporary agents are destroyed');
+    });
+});
+
+test('requires five podium minutes before an explicit next-game start cleans up', async () => {
+    let now = 1_000;
+    let nextId = 0;
+    await withManager(async ({ manager, coordinator, calls }) => {
+        const request = {
+            gameId: 'tower',
+            participants: [{ profileId: 'fast', name: 'speedy' }],
+        };
+        await manager.start(request);
+        await coordinator.submit('game-1', 'speedy', {});
+        await manager.syncWithContestView(coordinator.view());
+
+        assert.equal(manager.view().status, 'awaiting-next-game');
+        assert.equal(manager.view().podiumHoldUntil, 301_000);
+        await assert.rejects(
+            manager.start(request),
+            /Wait 300 more seconds/
+        );
+        assert.equal(
+            calls.some(([type]) => type === 'destroy'),
+            false,
+            'an early next-game request leaves podium competitors in place'
+        );
+
+        now = 301_000;
+        const next = await manager.start(request);
+        assert.equal(next.contest.id, 'game-2');
+        const oldDestroyIndex = calls.findIndex(
+            ([type, id]) => type === 'destroy' && id === 'speedy#1'
+        );
+        const newCreateIndex = calls.findIndex(
+            ([type], index) => type === 'create' && index > oldDestroyIndex
+        );
+        assert.ok(oldDestroyIndex >= 0);
+        assert.ok(newCreateIndex > oldDestroyIndex);
+
+        await coordinator.cancelContest('game-2', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        clock: () => now,
+    }, {
+        idFactory: () => `game-${++nextId}`,
     });
 });
 
@@ -365,18 +465,22 @@ test('system addendum remains separate and optional', () => {
     );
 });
 
-test('game content prompt requires audible, playful competitive banter', () => {
+test('game content prompt prioritizes unique strategy talk over repetitive roasting', () => {
     const prompt = buildGameSystemPrompt('Use pirate slang.');
-    assert.match(prompt, /Keep speaking/);
-    assert.match(prompt, /current strategy/);
-    assert.match(prompt, /trash/);
+    assert.match(prompt, /signature strategy/);
+    assert.match(prompt, /Do not repeat/);
+    assert.match(prompt, /If nothing has changed, keep playing/);
+    assert.match(prompt, /Most of your speech should reveal useful thinking/);
     assert.match(prompt, /!startConversation/);
-    assert.match(prompt, /every rival/);
+    assert.match(prompt, /bluff, misdirect/);
+    assert.match(prompt, /occasional seasoning/);
+    assert.match(prompt, /Prefer clever mind games/);
+    assert.match(prompt, /Do not copy another competitor/);
     assert.match(prompt, /no slurs/);
     assert.match(prompt, /SESSION-SPECIFIC ADDENDUM\nUse pirate slang\./);
 });
 
-test('participant game directives identify every rival and require strategy talk', () => {
+test('participant directives require distinct strategies and purposeful mind games', () => {
     const directive = buildParticipantGameDirective(
         'Find a diamond.',
         ['speedy', 'thinker', 'miner'],
@@ -384,8 +488,11 @@ test('participant game directives identify every rival and require strategy talk
     );
     assert.match(directive, /COMPETITORS: speedy, thinker, miner/);
     assert.match(directive, /Your rivals are speedy, miner/);
-    assert.match(directive, /narrating your strategy/);
+    assert.match(directive, /signature strategy that fits your personality/);
+    assert.match(directive, /never recycle earlier lines/);
     assert.match(directive, /!startConversation/);
+    assert.match(directive, /brief mind game/);
+    assert.match(directive, /do not turn every conversation into a roast/);
     assert.doesNotMatch(directive, /Your rivals are .*thinker/);
 });
 

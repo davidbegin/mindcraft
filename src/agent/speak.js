@@ -9,6 +9,24 @@ import { resolveVoice, getElevenLabsModel } from './tts_voices.js';
 
 let speakingQueue = []; // each item: {text, isSystem, volume, audioData, ready}
 let isSpeaking = false;
+let speechGeneration = 0;
+let activePlayer = null;
+
+/**
+ * Drop speech that has not played yet and stop the line currently playing.
+ * A generation token also invalidates TTS requests that are still resolving,
+ * so stale audio cannot re-enter playback after an urgent announcement.
+ */
+export function clearSpeechQueue() {
+    speakingQueue = [];
+    speechGeneration++;
+    isSpeaking = false;
+    const player = activePlayer;
+    activePlayer = null;
+    try {
+        player?.kill();
+    } catch {}
+}
 
 /**
  * Normalize a profile speak_model into {provider, model, voice, url}.
@@ -69,7 +87,14 @@ export async function generateSpeech(text, speak_model, botName) {
  */
 export function playSpeech({ text, model, botName, volume = 100, audioPromise = null }) {
     const spec = parseModelSpec(model, botName);
-    const item = { text, isSystem: spec.provider === 'system', volume, audioData: null, ready: Promise.resolve() };
+    const item = {
+        text,
+        isSystem: spec.provider === 'system',
+        volume,
+        audioData: null,
+        ready: Promise.resolve(),
+        generation: speechGeneration,
+    };
     if (!item.isSystem) {
         const promise = audioPromise || generateSpeech(text, model, botName);
         item.ready = promise
@@ -105,6 +130,7 @@ async function processQueue() {
     // wait for preprocessing if needed
     try {
         await item.ready;
+        if (item.generation !== speechGeneration) return;
         if (item.error) throw item.error;
     } catch (err) {
         console.error('[TTS] preprocess error', err);
@@ -123,11 +149,14 @@ async function processQueue() {
             ? `say "${txt.replace(/"/g,'\\"')}"`
             : `espeak "${txt.replace(/"/g,'\\"')}"`;
 
-        exec(cmd, err => {
+        const player = exec(cmd, err => {
+            if (item.generation !== speechGeneration) return;
+            activePlayer = null;
             if (err) console.error('TTS error', err);
             isSpeaking = false;
             processQueue();
         });
+        activePlayer = player;
 
     }
     else {
@@ -150,7 +179,10 @@ async function processQueue() {
                 const player = spawn('ffplay', ['-nodisp', '-autoexit', '-volume', String(vol), '-loglevel', 'quiet', tmpPath], {
                     stdio: 'ignore', windowsHide: true
                 });
+                activePlayer = player;
                 player.on('error', async (err) => {
+                    if (item.generation !== speechGeneration) return;
+                    activePlayer = null;
                     console.error('[TTS] ffplay error', err);
                     try { await fs.unlink(tmpPath); } catch {}
                     isSpeaking = false;
@@ -158,6 +190,8 @@ async function processQueue() {
                 });
                 player.on('exit', async () => {
                     try { await fs.unlink(tmpPath); } catch {}
+                    if (item.generation !== speechGeneration) return;
+                    activePlayer = null;
                     isSpeaking = false;
                     processQueue();
                 });
@@ -166,7 +200,10 @@ async function processQueue() {
                 const player = spawn('ffplay', ['-nodisp','-autoexit','-volume',String(vol),'pipe:0'], {
                     stdio: ['pipe','ignore','ignore']
                 });
+                activePlayer = player;
                 player.on('error', (err) => {
+                    if (item.generation !== speechGeneration) return;
+                    activePlayer = null;
                     console.error('[TTS] ffplay error', err);
                     isSpeaking = false;
                     processQueue();
@@ -175,6 +212,8 @@ async function processQueue() {
                 player.stdin.write(Buffer.from(audioData, 'base64'));
                 player.stdin.end();
                 player.on('exit', () => {
+                    if (item.generation !== speechGeneration) return;
+                    activePlayer = null;
                     isSpeaking = false;
                     processQueue();
                 });

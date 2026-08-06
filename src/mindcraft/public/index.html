@@ -2148,6 +2148,7 @@
                         <div class="contest-live-row" style="margin-top:10px;">
                             <button id="cancelContestBtn" class="btn btn-danger" hidden>Cancel contest</button>
                             <button id="warpSpectatorsBtn" class="btn btn-ghost" hidden>Warp me to arena</button>
+                            <button id="spectatorDirectorBtn" class="btn btn-amber" hidden>Start auto camera</button>
                             <a id="watchLiveBtn" class="btn btn-primary contest-watch-link" hidden href="/live.html" target="_blank" rel="noopener">Watch Live</a>
                             <button id="exportGameSessionBtn" class="btn btn-ghost" hidden>Export session</button>
                             <button id="copyLaunchReportBtn" class="btn btn-ghost" hidden type="button">Copy last launch report</button>
@@ -3118,7 +3119,14 @@
             const profileCount = availableProfiles.length;
             const active = contestState?.activeContest;
             const gameSession = contestState?.gameSession;
-            const sessionBusy = Boolean(gameSession && gameSession.status !== 'failed');
+            const podiumRemaining = gameSession?.status === 'awaiting-next-game'
+                ? Math.max(0, (gameSession.podiumHoldUntil || 0) - Date.now())
+                : 0;
+            const sessionBusy = Boolean(
+                gameSession
+                && gameSession.status !== 'failed'
+                && (gameSession.status !== 'awaiting-next-game' || podiumRemaining > 0)
+            );
             const blocked = contestBusy
                 || Boolean(active && ['running', 'draft', 'judging'].includes(active.status))
                 || sessionBusy;
@@ -3134,7 +3142,9 @@
 
                 const canStart = !blocked && profileCount > 0;
                 let label = 'Set up game';
-                if (blocked) label = contestBusy || sessionBusy ? 'Starting…' : 'In progress';
+                if (podiumRemaining > 0) label = `Podium ${formatCountdown(gameSession.podiumHoldUntil)}`;
+                else if (blocked) label = contestBusy || sessionBusy ? 'Starting…' : 'In progress';
+                else if (gameSession?.status === 'awaiting-next-game') label = 'Set up next game';
                 else if (profileCount === 0) label = 'No profiles';
 
                 card.innerHTML = `
@@ -3508,6 +3518,8 @@
             const row = document.getElementById('contestLiveRow');
             const cancelBtn = document.getElementById('cancelContestBtn');
             const warpBtn = document.getElementById('warpSpectatorsBtn');
+            const directorBtn = document.getElementById('spectatorDirectorBtn');
+            const director = state?.spectatorDirector || null;
             const gameSession = state?.gameSession || null;
             const active = state?.activeContest
                 || (state?.contests || []).find(c => c.status === 'running' || c.status === 'judging')
@@ -3541,6 +3553,7 @@
                 renderContestParticipantChips(sessionParticipants);
                 cancelBtn.hidden = false;
                 warpBtn.hidden = true;
+                directorBtn.hidden = true;
                 updateWatchLiveButton(gameSession);
                 updateGameSessionExport(null);
                 renderContestResults(null);
@@ -3583,6 +3596,10 @@
                 cancelBtn.hidden = !['running', 'draft', 'judging'].includes(active.status)
                     && !provisioning;
                 warpBtn.hidden = !['running', 'judging'].includes(active.status);
+                directorBtn.hidden = !['running', 'judging'].includes(active.status);
+                directorBtn.textContent = director?.enabled
+                    ? `Stop auto camera${director.currentTarget ? ` · ${director.currentTarget}` : ''}`
+                    : 'Start auto camera';
                 updateWatchLiveButton(gameSession || {
                     sessionId: active.metadata?.gameSession?.sessionId,
                     contestId: active.id,
@@ -3602,12 +3619,32 @@
                     ${Number.isFinite(elapsedMs)
                         ? `<span>Winning time: <strong>${esc(fmtElapsed(elapsedMs))}</strong></span>`
                         : ''}
+                    ${gameSession?.status === 'awaiting-next-game'
+                        ? '<span id="podiumHoldStatus"></span>'
+                        : ''}
                 `;
+                if (gameSession?.status === 'awaiting-next-game') {
+                    const updatePodiumHold = () => {
+                        const status = document.getElementById('podiumHoldStatus');
+                        if (!status) return;
+                        const remaining = Math.max(
+                            0,
+                            (gameSession.podiumHoldUntil || 0) - Date.now()
+                        );
+                        status.textContent = remaining > 0
+                            ? `Podium ceremony: ${formatCountdown(gameSession.podiumHoldUntil)} remaining`
+                            : 'Podium ceremony complete — choose the next game when ready';
+                        renderGameCards();
+                    };
+                    updatePodiumHold();
+                    contestClockTimer = setInterval(updatePodiumHold, 1000);
+                }
                 renderContestParticipantChips(
                     latestDone.metadata?.gameSession?.participants || null
                 );
                 cancelBtn.hidden = true;
                 warpBtn.hidden = true;
+                directorBtn.hidden = true;
                 updateWatchLiveButton(null);
                 updateGameSessionExport(latestDone.id);
                 renderContestResults(latestDone);
@@ -3619,6 +3656,7 @@
                 renderContestParticipantChips(null);
                 cancelBtn.hidden = true;
                 warpBtn.hidden = true;
+                directorBtn.hidden = true;
                 updateWatchLiveButton(null);
                 updateGameSessionExport(null);
                 renderContestResults(null);
@@ -3897,7 +3935,7 @@
             setGameSetupError('');
             hideLaunchDebugPanels();
             document.getElementById('gameSetupFooter').textContent =
-                'Temporary bots are created for this match, then cleaned up afterward.';
+                'After the match, bots remain on their podiums for at least five minutes and wait for the next game.';
             renderGameSetupParticipants();
             document.getElementById('gameSetupModal').style.display = 'flex';
             loadGameSetupVoices();
@@ -4097,6 +4135,38 @@
                         ? `Warped spectators (${who}) to ${coords.x} ${coords.y} ${coords.z} on ${address}`
                         : `Warped spectators (${who}) on ${address}`
                 );
+            });
+        });
+
+        document.getElementById('spectatorDirectorBtn').addEventListener('click', () => {
+            if (contestBusy) return;
+            const enabled = contestState?.spectatorDirector?.enabled === true;
+            contestBusy = true;
+            setContestStatus(enabled
+                ? 'Stopping the automatic spectator camera…'
+                : 'Starting the automatic spectator camera…');
+            socket.emit('contest-control', {
+                action: enabled ? 'stop-spectator-director' : 'start-spectator-director',
+            }, (result) => {
+                contestBusy = false;
+                if (!result?.success) {
+                    setContestStatus(result?.error || 'Auto camera failed', true);
+                    return;
+                }
+                const data = result.data || {};
+                if (data.enabled) {
+                    const who = (data.spectators || []).join(', ');
+                    setContestStatus(
+                        `Auto camera is following active bots for ${who}. `
+                        + 'You can leave Minecraft unattended.'
+                    );
+                } else {
+                    setContestStatus('Auto camera stopped. Your spectator view is free again.');
+                }
+                renderContestState({
+                    ...contestState,
+                    spectatorDirector: data,
+                });
             });
         });
 

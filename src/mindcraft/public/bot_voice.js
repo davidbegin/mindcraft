@@ -17,6 +17,9 @@
         let enabled = false;
         try { enabled = localStorage.getItem(STORAGE_KEY) === 'on'; } catch (_) { /* private mode */ }
         let playback = Promise.resolve();
+        let playbackGeneration = 0;
+        let activeAudio = null;
+        let resolveActiveAudio = null;
 
         const setStatus = (status) => {
             try { onStatus?.(status); } catch (_) { /* page callback is advisory */ }
@@ -38,19 +41,42 @@
 
         socket.on('bot-voice', (payload) => {
             if (!enabled || !payload?.audio) return;
+            const generation = playbackGeneration;
             playback = playback.catch(() => {}).then(() => new Promise(resolve => {
+                if (generation !== playbackGeneration) {
+                    resolve();
+                    return;
+                }
                 const audio = new Audio(`data:audio/mpeg;base64,${payload.audio}`);
-                audio.onended = resolve;
-                audio.onerror = resolve;
+                activeAudio = audio;
+                resolveActiveAudio = resolve;
+                const finish = () => {
+                    if (activeAudio === audio) {
+                        activeAudio = null;
+                        resolveActiveAudio = null;
+                    }
+                    resolve();
+                };
+                audio.onended = finish;
+                audio.onerror = finish;
                 audio.play().catch(error => {
                     // Autoplay policy blocks sound until the user interacts with
                     // the page. The host speakers already played this line, so
                     // just surface why the mirror is quiet.
                     console.warn(`Could not mirror ${payload.agentName || 'bot'} voice:`, error.message);
                     setStatus('blocked');
-                    resolve();
+                    finish();
                 });
             }));
+        });
+
+        socket.on('bot-voice-clear', () => {
+            playbackGeneration++;
+            activeAudio?.pause();
+            activeAudio = null;
+            resolveActiveAudio?.();
+            resolveActiveAudio = null;
+            playback = Promise.resolve();
         });
 
         return {

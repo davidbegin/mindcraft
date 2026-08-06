@@ -21,6 +21,17 @@ const DOG_ARENA = Object.freeze({
     treeExtent: 2,
 });
 
+const CAKE_FARM_STATIONS = Object.freeze([
+    Object.freeze({ dx: 0, dz: -23 }),
+    Object.freeze({ dx: 16, dz: -16 }),
+    Object.freeze({ dx: 23, dz: 0 }),
+    Object.freeze({ dx: 16, dz: 16 }),
+    Object.freeze({ dx: 0, dz: 23 }),
+    Object.freeze({ dx: -16, dz: 16 }),
+    Object.freeze({ dx: -23, dz: 0 }),
+    Object.freeze({ dx: -16, dz: -16 }),
+]);
+
 const DOG_TREE_SPECIES = Object.freeze([
     Object.freeze({ log: 'oak_log', leaves: 'oak_leaves' }),
     Object.freeze({ log: 'birch_log', leaves: 'birch_leaves' }),
@@ -43,6 +54,11 @@ const DEPTH_RACE_KIT = Object.freeze([
 ]);
 
 const GAME_KITS = Object.freeze({
+    cake_race: Object.freeze([
+        'bucket 3',
+        'crafting_table 1',
+        'bread 16',
+    ]),
     death_race: Object.freeze([]),
     dog_race: Object.freeze([
         'stone_sword 1',
@@ -270,6 +286,28 @@ function addDogWilderness(commands, random) {
     }
 }
 
+function addCakeFarm(commands) {
+    for (const { dx, dz } of CAKE_FARM_STATIONS) {
+        const x = ARENA.centerX + dx;
+        const z = ARENA.centerZ + dz;
+        commands.push(
+            `setblock ${x} ${ARENA.floorY} ${z} water`,
+            `fill ${x + 1} ${ARENA.floorY + 1} ${z} `
+            + `${x + 1} ${ARENA.floorY + 2} ${z} sugar_cane`,
+            `fill ${x - 1} ${ARENA.floorY + 1} ${z} `
+            + `${x - 1} ${ARENA.floorY + 2} ${z} sugar_cane`,
+            `fill ${x} ${ARENA.floorY + 1} ${z + 1} `
+            + `${x} ${ARENA.floorY + 2} ${z + 1} sugar_cane`,
+            `fill ${x - 2} ${ARENA.floorY} ${z + 2} `
+            + `${x + 2} ${ARENA.floorY} ${z + 4} farmland`,
+            `fill ${x - 2} ${ARENA.floorY + 1} ${z + 2} `
+            + `${x + 2} ${ARENA.floorY + 1} ${z + 4} wheat[age=7]`,
+            `summon cow ${x - 1} ${ARENA.floorY + 1} ${z - 3}`,
+            `summon chicken ${x + 1} ${ARENA.floorY + 1} ${z - 3} {EggLayTime:100}`
+        );
+    }
+}
+
 function buildWorldResetCommands(gameId, options = {}) {
     const minX = ARENA.centerX - ARENA.halfSize;
     const maxX = ARENA.centerX + ARENA.halfSize;
@@ -301,7 +339,14 @@ function buildWorldResetCommands(gameId, options = {}) {
         + `dz=${maxZ - minZ}]`
     );
 
-    if (gameId === 'dog_race') {
+    if (gameId === 'cake_race') {
+        commands.push(
+            'gamerule doMobSpawning false',
+            'difficulty peaceful',
+            ...flatFloorCommands(bounds)
+        );
+        addCakeFarm(commands);
+    } else if (gameId === 'dog_race') {
         commands.push(
             'gamerule doMobSpawning false',
             'difficulty normal',
@@ -506,6 +551,63 @@ function spectatorWarpCommands(spectatorNames) {
     });
 }
 
+function finitePosition(position) {
+    if (!position || typeof position !== 'object') return null;
+    const x = Number(position.x);
+    const y = Number(position.y);
+    const z = Number(position.z);
+    return [x, y, z].every(Number.isFinite) ? { x, y, z } : null;
+}
+
+export function parsePlayerPosition(response) {
+    const number = String.raw`[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?`;
+    const match = String(response || '').match(
+        new RegExp(
+            `\\[\\s*(${number})[dDfF]?\\s*,\\s*(${number})[dDfF]?\\s*,\\s*`
+            + `(${number})[dDfF]?\\s*\\]`
+        )
+    );
+    if (!match) return null;
+    return finitePosition({ x: match[1], y: match[2], z: match[3] });
+}
+
+function winnerPositionFromContest(contest) {
+    for (const winnerId of contest?.winnerIds || []) {
+        const position = finitePosition(contest?.submissions?.[winnerId]?.payload?.position);
+        if (position) return position;
+    }
+    return null;
+}
+
+export function buildWinnerRevealCommands(contest, position, spectatorNames = []) {
+    const winnerId = contest?.winnerIds?.[0];
+    const participants = Array.isArray(contest?.participantIds) ? contest.participantIds : [];
+    const target = finitePosition(position);
+    if (!winnerId || !target || participants.length === 0) return [];
+    participants.forEach(assertPlayerName);
+    spectatorNames.forEach(assertPlayerName);
+
+    const { x, y, z } = target;
+    const commands = [];
+    for (const name of participants) {
+        commands.push(
+            `effect clear ${name}`,
+            `effect give ${name} slowness infinite 255 true`,
+            `effect give ${name} jump_boost infinite 128 true`,
+            `effect give ${name} resistance infinite 255 true`,
+            `gamemode adventure ${name}`,
+            `tp ${name} ${x} ${y} ${z} facing ${x} ${y} ${z + 1}`
+        );
+    }
+    for (const name of spectatorNames) {
+        commands.push(
+            `gamemode spectator ${name}`,
+            `tp ${name} ${x + 6} ${y + 3} ${z + 6} facing ${x} ${y + 1} ${z}`
+        );
+    }
+    return commands;
+}
+
 function podiumXOffset(index) {
     if (index === 0) return 0;
     const distance = Math.ceil(index / 2) * (PODIUM_WIDTH + PODIUM_GAP);
@@ -535,12 +637,13 @@ function orderedContestResults(contest) {
     return results;
 }
 
-export function buildPodiumCeremonyCommands(contest) {
+export function buildPodiumCeremonyCommands(contest, spectatorNames = []) {
     if (contest?.status !== 'completed' || !contest.winnerIds?.length) return [];
 
     const results = orderedContestResults(contest);
     if (results.length === 0) return [];
     results.forEach(result => assertPlayerName(result.participantId));
+    spectatorNames.forEach(assertPlayerName);
 
     const podiums = results.map((result, index) => {
         const rank = Number.isInteger(result.rank) && result.rank > 0
@@ -568,11 +671,24 @@ export function buildPodiumCeremonyCommands(contest) {
             `fill ${podium.x - 1} ${ARENA.floorY + 1} ${minZ} `
             + `${podium.x + 1} ${ARENA.floorY + podium.height} ${maxZ} ${block}`,
             `effect clear ${podium.name}`,
+            `effect give ${podium.name} slowness infinite 255 true`,
+            `effect give ${podium.name} jump_boost infinite 128 true`,
+            `effect give ${podium.name} resistance infinite 255 true`,
             `gamemode adventure ${podium.name}`,
             `tp ${podium.name} ${podium.x} `
             + `${ARENA.floorY + podium.height + 1} ${ARENA.centerZ} 0 0`,
             `spawnpoint ${podium.name} ${podium.x} `
             + `${ARENA.floorY + podium.height + 1} ${ARENA.centerZ}`
+        );
+    }
+    const spectatorX = ARENA.centerX;
+    const spectatorY = ARENA.floorY + Math.max(...podiums.map(podium => podium.height)) + 4;
+    const spectatorZ = ARENA.centerZ + 14;
+    for (const name of spectatorNames) {
+        commands.push(
+            `gamemode spectator ${name}`,
+            `tp ${name} ${spectatorX} ${spectatorY} ${spectatorZ} `
+            + `facing ${ARENA.centerX} ${ARENA.floorY + 3} ${ARENA.centerZ}`
         );
     }
     return commands;
@@ -674,14 +790,48 @@ export class ContestArenaManager {
         };
     }
 
-    async presentResults(contest) {
-        const commands = buildPodiumCeremonyCommands(contest);
+    async presentWinner(contest) {
+        const winnerId = contest?.winnerIds?.[0];
+        if (!winnerId) return { presented: false, position: null, spectators: [] };
+        assertPlayerName(winnerId);
+
+        let position = winnerPositionFromContest(contest);
+        if (!position) {
+            position = parsePlayerPosition(
+                await this.runCommand(`data get entity ${winnerId} Pos`)
+            );
+        }
+        if (!position) {
+            return { presented: false, position: null, spectators: [] };
+        }
+
+        const participantSet = new Set(contest.participantIds || []);
+        const spectators = (await this.listOnlinePlayers())
+            .filter(name => !participantSet.has(name));
+        const commands = buildWinnerRevealCommands(contest, position, spectators);
         for (const command of commands) {
             await this.runCommand(command);
         }
         return {
             presented: commands.length > 0,
             commandCount: commands.length,
+            position,
+            spectators,
+        };
+    }
+
+    async presentResults(contest) {
+        const participantSet = new Set(contest?.participantIds || []);
+        const spectators = (await this.listOnlinePlayers())
+            .filter(name => !participantSet.has(name));
+        const commands = buildPodiumCeremonyCommands(contest, spectators);
+        for (const command of commands) {
+            await this.runCommand(command);
+        }
+        return {
+            presented: commands.length > 0,
+            commandCount: commands.length,
+            spectators,
         };
     }
 }

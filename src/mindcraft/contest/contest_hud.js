@@ -3,6 +3,11 @@ import { runMinecraftCommand } from '../minecraft_server.js';
 const BOSSBAR_ID = 'mindcraft:contest';
 const ALL_PLAYERS = '@a';
 const ITEM_RACE_PRESENTATIONS = Object.freeze({
+    cake_race: Object.freeze({
+        score: 'cake crafted',
+        winnerLabel: 'CAKE CRAFTED!',
+        titleColor: 'light_purple',
+    }),
     death_race: Object.freeze({
         score: 'died first',
         winnerLabel: 'FIRST DEATH!',
@@ -71,6 +76,14 @@ function rankedResults(contest) {
             (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER)
             || left.participantId.localeCompare(right.participantId)
         );
+}
+
+function formatWinnerCoordinates(contest) {
+    const winnerId = contest?.winnerIds?.[0];
+    const position = contest?.submissions?.[winnerId]?.payload?.position;
+    if (!position || ![position.x, position.y, position.z].every(Number.isFinite)) return '';
+    const coordinate = value => Number.isInteger(value) ? value : value.toFixed(1);
+    return `X ${coordinate(position.x)} · Y ${coordinate(position.y)} · Z ${coordinate(position.z)}`;
 }
 
 export class ContestHud {
@@ -209,8 +222,9 @@ export class ContestHud {
             : winners.length > 1 ? 'TIE!' : 'WINNER!';
         const names = winners.length > 0 ? winners.join(' & ') : 'No winner';
         const score = winnerResults[0] ? formatContestScore(contest, winnerResults[0]) : '';
+        const coordinates = formatWinnerCoordinates(contest);
         const subtitle = itemRace && winners.length > 0
-            ? `${names} WINS!`
+            ? `${names} WINS!${coordinates ? ` · ${coordinates}` : ''}`
             : score ? `${names} · ${score}` : names;
         const titleColor = itemRace?.titleColor || 'green';
         const resultLines = rankedResults(contest).map(result => {

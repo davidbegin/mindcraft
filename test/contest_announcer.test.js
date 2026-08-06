@@ -14,11 +14,11 @@ test('builds game start and winner announcements', () => {
     );
     assert.equal(
         buildContestResultAnnouncement({ winnerIds: ['billy'] }),
-        'billy was the winner!'
+        'And the winner is... billy! billy wins!'
     );
     assert.equal(
         buildContestResultAnnouncement({ winnerIds: ['billy', 'jane'] }),
-        'billy and jane were the winners!'
+        'And the winners are... billy and jane! billy and jane win!'
     );
     assert.equal(
         buildContestResultAnnouncement({ winnerIds: [] }),
@@ -30,8 +30,8 @@ test('waits after the spoken countdown before starting play', async () => {
     const calls = [];
     const announcer = new ContestAnnouncer({
         startDelayMs: 5000,
-        speak: text => {
-            calls.push(['speak', text]);
+        speak: (text, options) => {
+            calls.push(['speak', text, options]);
             return Promise.resolve();
         },
         sleep: ms => {
@@ -44,8 +44,12 @@ test('waits after the spoken countdown before starting play', async () => {
     await announcer.announceResult({ winnerIds: ['billy'] });
 
     assert.deepEqual(calls, [
-        ['speak', 'First Dog starting. Three. Two. One. Go!'],
+        ['speak', 'First Dog starting. Three. Two. One. Go!', undefined],
         ['sleep', 5000],
-        ['speak', 'billy was the winner!'],
+        [
+            'speak',
+            'And the winner is... billy! billy wins!',
+            { delivery: 'booming' },
+        ],
     ]);
 });
