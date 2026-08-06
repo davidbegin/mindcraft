@@ -69,6 +69,18 @@ export function formatContestBossbar(contest, leader, now = Date.now()) {
     return `${contest.title} · ${remaining}${leaderText}`;
 }
 
+export function formatSurvivorBossbar(state, deadlineAt = null, now = Date.now()) {
+    if (!state) return 'Survivor · Waiting';
+    const active = state.participantIds.filter(id => state.players[id].active).length;
+    const timer = Number.isFinite(deadlineAt)
+        ? ` · ${formatContestTime(deadlineAt - now)}`
+        : '';
+    const immunity = state.immunityIds?.length
+        ? ` · Immune: ${state.immunityIds.join(', ')}`
+        : '';
+    return `Survivor · Round ${state.round} · ${state.phase.replaceAll('_', ' ')} · ${active} left${timer}${immunity}`;
+}
+
 function rankedResults(contest) {
     return [...(contest.results || [])]
         .filter(result => result.rank !== null)

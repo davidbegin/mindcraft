@@ -1730,6 +1730,28 @@
             min-height: 1.2em;
         }
         .contest-status-msg.error { color: var(--red); }
+        .survivor-panel { margin-top: 14px; border-color: rgba(240, 180, 41, 0.35); }
+        .survivor-columns {
+            display: grid;
+            grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+            gap: 14px;
+            margin-top: 12px;
+        }
+        .survivor-columns h3 { margin: 0 0 8px; font-size: 0.9rem; }
+        .survivor-secret-feed {
+            min-height: 130px;
+            max-height: 320px;
+            overflow: auto;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-inset);
+            color: var(--text-dim);
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            white-space: pre-wrap;
+        }
+        .survivor-secret-entry { margin-bottom: 8px; }
         .launch-debug-report {
             margin-top: 12px;
             border: 1px solid var(--border, #333);
@@ -2124,6 +2146,39 @@
                 Loading join address…
             </div>
             <div id="gameGrid" class="game-grid"></div>
+            <div id="survivorPanel" class="contest-live survivor-panel idle">
+                <div class="games-head">
+                    <div>
+                        <h2>Survivor Bot Season</h2>
+                        <div id="survivorSummary" class="games-sub">
+                            Two tribes, team immunity challenges, private alliances, secret votes, a merge at ten, and a final-three jury.
+                        </div>
+                    </div>
+                    <button id="startSurvivorBtn" class="btn btn-amber" type="button">Set up season</button>
+                </div>
+                <div id="survivorLive" hidden>
+                    <div id="survivorPhase" class="contest-live-row"></div>
+                    <div id="survivorTribes" class="contest-participant-chips"></div>
+                    <div id="survivorVoteProgress" class="contest-live-row"></div>
+                    <div class="contest-live-row">
+                        <button id="survivorPauseBtn" class="btn btn-ghost" type="button">Pause</button>
+                        <button id="survivorAdvanceBtn" class="btn btn-amber" type="button">Advance phase</button>
+                        <select id="survivorNextChallenge" aria-label="Next Survivor challenge"></select>
+                        <button id="survivorSetChallengeBtn" class="btn btn-ghost" type="button">Set next challenge</button>
+                        <button id="survivorCancelBtn" class="btn btn-danger" type="button">Cancel season</button>
+                    </div>
+                    <div class="survivor-columns">
+                        <section>
+                            <h3>Boot order and jury</h3>
+                            <div id="survivorBootOrder" class="contest-results"></div>
+                        </section>
+                        <section>
+                            <h3>Operator secret feed</h3>
+                            <div id="survivorSecretFeed" class="survivor-secret-feed"></div>
+                        </section>
+                    </div>
+                </div>
+            </div>
             <div id="contestLive" class="contest-live idle">
                 <h3 id="contestLiveTitle">No active contest</h3>
                 <div class="contest-live-layout">
@@ -2340,6 +2395,14 @@
                         inputmode="decimal" aria-describedby="gameSetupDurationHint">
                     <span id="gameSetupDurationHint" class="games-sub">0.5–60 minutes</span>
                 </div>
+                <div id="survivorSetupOptions" class="game-setup-duration" hidden>
+                    <label for="survivorMergeAt">Merge remaining</label>
+                    <input id="survivorMergeAt" type="number" min="8" max="10" step="1" value="10">
+                    <label for="survivorStrategyMinutes">Strategy min</label>
+                    <input id="survivorStrategyMinutes" type="number" min="0.5" max="10" step="0.5" value="2">
+                    <label for="survivorVoteMinutes">Vote min</label>
+                    <input id="survivorVoteMinutes" type="number" min="0.5" max="5" step="0.5" value="1">
+                </div>
                 <div class="game-setup-prompt">
                     <label for="gameSetupSystemPrompt">Match-wide system prompt (optional)</label>
                     <textarea id="gameSetupSystemPrompt" maxlength="4000" rows="4"
@@ -2399,6 +2462,9 @@
         let contestGamesError = '';
         let contestBusy = false;
         let contestJoin = null;
+        let survivorState = null;
+        let survivorPreset = null;
+        const survivorSecretEvents = [];
         let lastLaunchReport = '';
         let currentView = 'colony';
         let contestClockTimer = null;
@@ -2905,12 +2971,19 @@
             loadProfiles();
             loadColonyState();
             loadContestState();
+            loadSurvivorState();
             Object.keys(agentSettings).forEach(name => delete agentSettings[name]);
         });
         socket.on('disconnect', () => updateStatus(false));
         socket.on('connect_error', () => updateStatus(false));
         socket.on('colony-update', renderColonyState);
         socket.on('contest-update', renderContestState);
+        socket.on('survivor-update', renderSurvivorState);
+        socket.on('survivor-secret-event', event => {
+            survivorSecretEvents.push(event);
+            if (survivorSecretEvents.length > 200) survivorSecretEvents.shift();
+            renderSurvivorSecretFeed();
+        });
         socket.on('tower-atlas-update', atlas => {
             if (contestState) contestState.towerAtlas = atlas;
             const active = contestState?.activeContest
@@ -2997,6 +3070,111 @@
                 } else if (result?.error) {
                     setContestStatus(result.error, true);
                 }
+            });
+        }
+
+        function loadSurvivorState() {
+            socket.emit('survivor-status', result => {
+                if (!result?.success) return;
+                survivorPreset = result.preset || survivorPreset;
+                renderSurvivorState(result.data);
+            });
+        }
+
+        function renderSurvivorState(state) {
+            survivorState = state || null;
+            const panel = document.getElementById('survivorPanel');
+            const live = document.getElementById('survivorLive');
+            const start = document.getElementById('startSurvivorBtn');
+            const game = state?.game;
+            const active = Boolean(game && game.status === 'running');
+            panel?.classList.toggle('idle', !active);
+            if (live) live.hidden = !game;
+            if (start) {
+                start.hidden = Boolean(state && game?.status !== 'completed');
+                start.textContent = game?.status === 'completed' ? 'Start new season' : 'Set up season';
+                start.disabled = contestBusy;
+            }
+            if (!game) return;
+
+            const activeIds = game.participantIds.filter(id => game.players[id]?.active);
+            const deadline = state.phaseDeadlineAt
+                ? ` · ${formatCountdown(state.phaseDeadlineAt)}`
+                : '';
+            document.getElementById('survivorPhase').innerHTML = `
+                <strong>Round ${esc(game.round)} · ${esc(String(game.phase).replaceAll('_', ' '))}</strong>
+                <span>${esc(activeIds.length)} remain${esc(deadline)}</span>
+                ${game.immunityIds?.length ? `<span>Immune: ${esc(game.immunityIds.join(', '))}</span>` : ''}
+                ${state.challengeContestId ? `<span>Challenge: ${esc(game.challenge?.id || 'running')}</span>` : ''}
+            `;
+            const tribeBox = document.getElementById('survivorTribes');
+            tribeBox.innerHTML = game.tribeNames.map(tribe => {
+                const members = (game.tribes[tribe] || []).filter(id => game.players[id]?.active);
+                return `<span class="contest-participant-chip"><strong>${esc(tribe)}</strong>: ${esc(members.join(', ') || 'none')}</span>`;
+            }).join('');
+
+            const received = Number(game.ballotCount || 0);
+            const expected = game.eligibleVoterIds?.length || 0;
+            const voteBox = document.getElementById('survivorVoteProgress');
+            voteBox.innerHTML = expected
+                ? `<span>Secret ballots received: <strong>${received}/${expected}</strong></span>
+                   <span>Eligible targets: ${esc((game.eligibleTargetIds || []).join(', '))}</span>`
+                : `<span>Jury: ${esc(game.juryIds?.join(', ') || 'not formed')}</span>
+                   <span>Final three: ${esc(game.finalistIds?.join(', ') || 'not reached')}</span>`;
+            const reveal = [...(game.events || [])].reverse().find(event =>
+                event.type === 'vote.revealed' || event.type === 'jury.vote.revealed'
+            );
+            if (reveal && reveal.round === game.round) {
+                const revealedBallots = Object.entries(reveal.ballots || {})
+                    .map(([voter, target]) => `${voter} → ${target}`)
+                    .join(' · ');
+                voteBox.innerHTML += `<span><strong>Revealed:</strong> ${esc(revealedBallots)}</span>`;
+            }
+
+            const boots = document.getElementById('survivorBootOrder');
+            boots.innerHTML = (game.bootOrder || []).map((id, index) => `
+                <div class="contest-result-row">
+                    <span class="rank">${index + 1}</span>
+                    <strong>${esc(id)}</strong>
+                    <span>${game.players[id]?.jury ? 'jury' : 'pre-merge'}</span>
+                </div>
+            `).join('') || '<div class="games-sub">Nobody voted out yet.</div>';
+            const challengeSelect = document.getElementById('survivorNextChallenge');
+            if (challengeSelect && challengeSelect.options.length === 0) {
+                challengeSelect.innerHTML = contestGames.map(game =>
+                    `<option value="${esc(game.id)}">${esc(game.title)}</option>`
+                ).join('');
+            }
+            document.getElementById('survivorPauseBtn').textContent = state.paused ? 'Resume' : 'Pause';
+            document.getElementById('survivorPauseBtn').disabled = game.phase === 'challenge';
+            document.getElementById('survivorAdvanceBtn').disabled = game.phase === 'challenge';
+            renderSurvivorSecretFeed();
+        }
+
+        function renderSurvivorSecretFeed() {
+            const feed = document.getElementById('survivorSecretFeed');
+            if (!feed) return;
+            feed.innerHTML = survivorSecretEvents.map(event => {
+                if (event.type === 'room.message') {
+                    return `<div class="survivor-secret-entry"><strong>${esc(event.senderId)}</strong>
+                        → [${esc((event.memberIds || []).join(', '))}]: ${esc(event.message)}</div>`;
+                }
+                if (event.type === 'room.created') {
+                    return `<div class="survivor-secret-entry">${esc(event.ownerId)} invited
+                        ${esc((event.invitedIds || []).join(', '))} to ${esc(event.roomId)}</div>`;
+                }
+                return `<div class="survivor-secret-entry">${esc(String(event.type || 'event').replaceAll('.', ' '))}</div>`;
+            }).join('') || 'Private strategy messages will appear here for operators only.';
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        function survivorControl(action, payload = {}) {
+            socket.timeout(30000).emit('survivor-control', { action, ...payload }, (err, result) => {
+                if (err || !result?.success) {
+                    setContestStatus(err ? 'Survivor control timed out' : result?.error || 'Survivor control failed', true);
+                    return;
+                }
+                renderSurvivorState(result.data);
             });
         }
 
@@ -3770,11 +3948,17 @@
         function defaultGameSetupParticipants(gameId) {
             const profiles = configuredGameProfiles();
             const reserved = new Set(namesInUse());
-            const game = contestGames.find(item => item.id === gameId);
+            const game = gameId === 'survivor'
+                ? {
+                    defaultCharacters: contestGames[0]?.defaultCharacters || [],
+                }
+                : contestGames.find(item => item.id === gameId);
             const characters = Array.isArray(game?.defaultCharacters)
                 ? game.defaultCharacters
                 : [];
-            const count = characters.length || Math.min(2, profiles.length);
+            const count = gameId === 'survivor'
+                ? Math.max(11, Number(survivorPreset?.mergeAt || 10) + 1)
+                : characters.length || Math.min(2, profiles.length);
             const rows = [];
             for (let i = 0; i < count; i++) {
                 const character = characters[i] || null;
@@ -3924,18 +4108,30 @@
                 setContestStatus('No configured model profiles available', true);
                 return;
             }
-            const game = contestGames.find(item => item.id === gameId);
+            const game = gameId === 'survivor'
+                ? {
+                    id: 'survivor',
+                    title: survivorPreset?.title || 'Survivor Bot Season',
+                    durationMs: 60_000,
+                }
+                : contestGames.find(item => item.id === gameId);
             gameSetupGameId = gameId;
             gameSetupParticipants = defaultGameSetupParticipants(gameId);
             document.getElementById('gameSetupTitle').textContent = `Set up ${game?.title || gameId}`;
             document.getElementById('gameSetupDurationMinutes').value =
                 String((game?.durationMs || 60_000) / 60_000);
+            document.querySelector('.game-setup-duration').hidden = gameId === 'survivor';
+            document.getElementById('survivorSetupOptions').hidden = gameId !== 'survivor';
+            document.getElementById('survivorMergeAt').value =
+                String(survivorPreset?.mergeAt || 10);
             document.getElementById('gameSetupSystemPrompt').value = '';
             updateGameSetupPromptCount();
             setGameSetupError('');
             hideLaunchDebugPanels();
             document.getElementById('gameSetupFooter').textContent =
-                'After the match, bots remain on their podiums for at least five minutes and wait for the next game.';
+                gameId === 'survivor'
+                    ? 'The roster persists through team challenges, Tribal Councils, the merge, and the final-three jury.'
+                    : 'After the match, bots remain on their podiums for at least five minutes and wait for the next game.';
             renderGameSetupParticipants();
             document.getElementById('gameSetupModal').style.display = 'flex';
             loadGameSetupVoices();
@@ -3945,6 +4141,8 @@
             document.getElementById('gameSetupModal').style.display = 'none';
             gameSetupGameId = null;
             gameSetupParticipants = [];
+            document.querySelector('.game-setup-duration').hidden = false;
+            document.getElementById('survivorSetupOptions').hidden = true;
             setGameSetupError('');
             setGameSetupVoiceStatus('');
             const setupPanel = document.getElementById('gameSetupDebug');
@@ -3957,6 +4155,15 @@
             const profileIds = new Set(profiles.map(profile => profile.id));
             if (!gameSetupGameId) return 'No game selected';
             if (!gameSetupParticipants.length) return 'Add at least one participant';
+            if (gameSetupGameId === 'survivor') {
+                const mergeAt = Number(document.getElementById('survivorMergeAt')?.value || 10);
+                if (!Number.isInteger(mergeAt) || mergeAt < 8 || mergeAt > 10) {
+                    return 'Survivor merge count must be from 8 to 10';
+                }
+                if (gameSetupParticipants.length <= mergeAt) {
+                    return `Survivor needs at least ${mergeAt + 1} starting bots`;
+                }
+            }
             const seenNames = new Set();
             const taken = new Set(namesInUse());
             for (let i = 0; i < gameSetupParticipants.length; i++) {
@@ -3983,11 +4190,13 @@
             if (prompt.length > MAX_GAME_SYSTEM_PROMPT) {
                 return `System prompt must be ${MAX_GAME_SYSTEM_PROMPT} characters or fewer`;
             }
-            const durationMinutes = Number(document.getElementById('gameSetupDurationMinutes')?.value);
-            if (!Number.isFinite(durationMinutes)
-                || durationMinutes < MIN_GAME_DURATION_MINUTES
-                || durationMinutes > MAX_GAME_DURATION_MINUTES) {
-                return `Duration must be between ${MIN_GAME_DURATION_MINUTES} and ${MAX_GAME_DURATION_MINUTES} minutes`;
+            if (gameSetupGameId !== 'survivor') {
+                const durationMinutes = Number(document.getElementById('gameSetupDurationMinutes')?.value);
+                if (!Number.isFinite(durationMinutes)
+                    || durationMinutes < MIN_GAME_DURATION_MINUTES
+                    || durationMinutes > MAX_GAME_DURATION_MINUTES) {
+                    return `Duration must be between ${MIN_GAME_DURATION_MINUTES} and ${MAX_GAME_DURATION_MINUTES} minutes`;
+                }
             }
             return null;
         }
@@ -4018,12 +4227,19 @@
             document.getElementById('submitGameSetupBtn').disabled = true;
             renderGameCards();
 
-            socket.timeout(CONTEST_START_TIMEOUT_MS).emit('contest-start-game', {
-                gameId,
-                participants,
-                systemPrompt,
-                durationMs,
-            }, (err, result) => {
+            const eventName = gameId === 'survivor' ? 'survivor-start' : 'contest-start-game';
+            const request = gameId === 'survivor'
+                ? {
+                    participants,
+                    systemPrompt,
+                    mergeAt: Number(document.getElementById('survivorMergeAt').value),
+                    phaseDurationsMs: {
+                        strategy: Number(document.getElementById('survivorStrategyMinutes').value) * 60_000,
+                        voting: Number(document.getElementById('survivorVoteMinutes').value) * 60_000,
+                    },
+                }
+                : { gameId, participants, systemPrompt, durationMs };
+            socket.timeout(CONTEST_START_TIMEOUT_MS).emit(eventName, request, (err, result) => {
                 contestBusy = false;
                 document.getElementById('submitGameSetupBtn').disabled = false;
                 if (err) {
@@ -4055,7 +4271,8 @@
                     contestJoin = result.data.join;
                     renderContestJoinCard();
                 }
-                loadContestState();
+                if (gameId === 'survivor') loadSurvivorState();
+                else loadContestState();
                 renderGameCards();
             });
         }
@@ -4082,6 +4299,25 @@
             if (!contestBusy) closeGameSetup();
         });
         document.getElementById('submitGameSetupBtn').addEventListener('click', submitGameSetup);
+        document.getElementById('startSurvivorBtn').addEventListener('click', () => {
+            openGameSetup('survivor');
+        });
+        document.getElementById('survivorPauseBtn').addEventListener('click', () => {
+            survivorControl(survivorState?.paused ? 'resume' : 'pause');
+        });
+        document.getElementById('survivorAdvanceBtn').addEventListener('click', () => {
+            survivorControl('advance');
+        });
+        document.getElementById('survivorSetChallengeBtn').addEventListener('click', () => {
+            survivorControl('set-next-challenge', {
+                gameId: document.getElementById('survivorNextChallenge').value,
+            });
+        });
+        document.getElementById('survivorCancelBtn').addEventListener('click', () => {
+            if (window.confirm('Cancel the active Survivor season and disconnect its bots?')) {
+                survivorControl('cancel', { reason: 'Cancelled from the operator UI' });
+            }
+        });
         document.getElementById('copyGameSetupReportBtn')?.addEventListener('click', (event) => {
             copyLaunchReportToClipboard(event.currentTarget);
         });

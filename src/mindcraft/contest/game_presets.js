@@ -52,6 +52,32 @@ export const CONTEST_BOT_CHARACTERS = Object.freeze([
     }),
 ]);
 
+export const SURVIVOR_SEASON_PRESET = Object.freeze({
+    id: 'survivor',
+    title: 'Survivor Bot Season',
+    blurb: 'Two tribes face team challenges, secret votes, a merge, and a final-three jury.',
+    mergeAt: 10,
+    tribeNames: Object.freeze(['Ember', 'Tide']),
+    phaseDurationsMs: Object.freeze({
+        strategy: 2 * 60_000,
+        voting: 60_000,
+        revote: 45_000,
+        deadlock: 60_000,
+        juryQuestioning: 3 * 60_000,
+        juryVoting: 60_000,
+    }),
+    challengeGameIds: Object.freeze([
+        'cake_race',
+        'death_race',
+        'dog_race',
+        'diamond_race',
+        'netherite_race',
+        'tower_battle',
+        'deepest_2_5',
+        'deepest_5',
+    ]),
+});
+
 export const CONTEST_GAME_PRESETS = Object.freeze({
     cake_race: Object.freeze({
         id: 'cake_race',
@@ -253,4 +279,13 @@ export function getContestGamePreset(gameId) {
         throw new Error(`Unknown contest game: ${gameId}`);
     }
     return preset;
+}
+
+export function getSurvivorSeasonPreset() {
+    return {
+        ...SURVIVOR_SEASON_PRESET,
+        tribeNames: [...SURVIVOR_SEASON_PRESET.tribeNames],
+        phaseDurationsMs: { ...SURVIVOR_SEASON_PRESET.phaseDurationsMs },
+        challengeGameIds: [...SURVIVOR_SEASON_PRESET.challengeGameIds],
+    };
 }

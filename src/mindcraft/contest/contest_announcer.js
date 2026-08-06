@@ -18,6 +18,23 @@ export function buildContestResultAnnouncement(contest) {
     return `And the winners are... ${names}! ${names} win!`;
 }
 
+export function buildSurvivorAnnouncement(event, state) {
+    switch (event?.type) {
+        case 'tribes.merged':
+            return `Drop your buffs. The tribes have merged with ${event.playerIds.length} players remaining.`;
+        case 'player.eliminated':
+            return `${event.playerId}, the tribe has spoken.${event.joinsJury ? ' You are now a member of the jury.' : ''}`;
+        case 'final_three.reached':
+            return `The final three are ${event.finalistIds.join(', ')}. Jury, prepare your questions.`;
+        case 'season.completed':
+            return `${event.winnerId} is the Sole Survivor!`;
+        case 'fire_making.started':
+            return `The vote is deadlocked. ${event.contestantIds.join(' and ')} will make fire.`;
+        default:
+            return state?.phase === 'voting' ? 'It is time to vote.' : null;
+    }
+}
+
 export class ContestAnnouncer {
     constructor(options = {}) {
         if (typeof options.speak !== 'function') {

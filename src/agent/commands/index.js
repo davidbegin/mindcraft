@@ -2,11 +2,12 @@ import { getBlockId, getItemId } from "../../utils/mcdata.js";
 import { actionsList } from './actions.js';
 import { colonyActionList, colonyQueryList } from './colony.js';
 import { queryList } from './queries.js';
+import { survivorActionList } from './survivor.js';
 import { ALLOWED_WHILE_DEAD } from './command_guard.js';
 
 let suppressNoDomainWarning = true;
 
-const allActionCommands = actionsList.concat(colonyActionList);
+const allActionCommands = actionsList.concat(colonyActionList, survivorActionList);
 const commandList = queryList.concat(colonyQueryList, allActionCommands);
 const commandMap = {};
 for (let command of commandList) {

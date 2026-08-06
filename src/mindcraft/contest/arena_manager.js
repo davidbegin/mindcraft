@@ -53,6 +53,20 @@ const DEPTH_RACE_KIT = Object.freeze([
     'ladder 128',
 ]);
 
+export function buildSurvivorEliminationCommands(playerId) {
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(playerId)) {
+        throw new Error(`Invalid Minecraft player name: ${playerId}`);
+    }
+    return [
+        `gamemode spectator ${playerId}`,
+        `tellraw @a ${JSON.stringify({
+            text: `${playerId}, the tribe has spoken.`,
+            color: 'gold',
+            bold: true,
+        })}`,
+    ];
+}
+
 const GAME_KITS = Object.freeze({
     cake_race: Object.freeze([
         'bucket 3',

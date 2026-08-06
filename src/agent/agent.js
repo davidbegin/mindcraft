@@ -22,6 +22,7 @@ import {
     sendOutputToServer,
     requestColonyCommand,
     requestContestSpeech,
+    requestSurvivorCommand,
     reportContestDeath,
     reportContestWinItem,
 } from './mindserver_proxy.js';
@@ -547,6 +548,15 @@ export class Agent {
         // bot) are read aloud; self-prompt work narration stays text-only.
         const addressed = !!to_player && to_player !== 'system' && to_player !== this.name;
         const commandName = containsCommand(message);
+        if (this.privateSurvivorResponse) {
+            const privateText = commandName
+                ? message.slice(0, message.indexOf(commandName)).trim()
+                : message.trim();
+            if (privateText) {
+                await requestSurvivorCommand('room-send', { message: privateText });
+            }
+            return;
+        }
         if (commandName) {
             if (convoManager.isOtherAgent(to_player) && convoManager.inConversation(to_player)) {
                 const conversationMessage = commandName === '!endConversation'
@@ -1032,10 +1042,13 @@ export class Agent {
     }
 
     _watchContestWinItem() {
-        const winItem = settings.game_session?.winItem;
-        if (!winItem) return;
         const checkInventory = () => {
-            if (this._contestWinReported || !this.bot?.inventory) return;
+            const winItem = settings.game_session?.winItem;
+            if (winItem !== this._contestWinItem) {
+                this._contestWinItem = winItem;
+                this._contestWinReported = false;
+            }
+            if (!winItem || this._contestWinReported || !this.bot?.inventory) return;
             const hasWinItem = this.bot.inventory.items().some(item => item.name === winItem);
             if (!hasWinItem) return;
             this._contestWinReported = true;
@@ -1052,6 +1065,8 @@ export class Agent {
             });
         };
         this.bot.inventory.on('updateSlot', checkInventory);
+        this._contestWinItemInterval = setInterval(checkInventory, 1000);
+        this._contestWinItemInterval.unref?.();
         checkInventory();
     }
 

@@ -14,17 +14,21 @@ export {
     ContestAnnouncer,
     buildContestResultAnnouncement,
     buildContestStartAnnouncement,
+    buildSurvivorAnnouncement,
 } from './contest_announcer.js';
 export {
     ContestHud,
     formatContestBossbar,
     formatContestScore,
     formatContestTime,
+    formatSurvivorBossbar,
 } from './contest_hud.js';
 export {
     CONTEST_BOT_CHARACTERS,
     CONTEST_GAME_PRESETS,
+    SURVIVOR_SEASON_PRESET,
     getContestGamePreset,
+    getSurvivorSeasonPreset,
     listContestGamePresets,
 } from './game_presets.js';
 export {
@@ -41,6 +45,7 @@ export {
 } from './depth_race.js';
 export {
     ContestArenaManager,
+    buildSurvivorEliminationCommands,
     getArenaJoinInfo,
     parseOnlinePlayers,
 } from './arena_manager.js';

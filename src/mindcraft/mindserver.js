@@ -27,17 +27,23 @@ import {
     HighlightReelBuilder,
     TowerHighScoreStore,
     buildGameSystemPrompt,
+    buildSurvivorEliminationCommands,
     defaultJudge,
     filterRecordingManifest,
     findDogRaceWinner,
+    formatSurvivorBossbar,
     getArenaJoinInfo,
     getContestGamePreset,
+    getSurvivorSeasonPreset,
     listContestGamePresets,
     safeHighlightSessionId,
     scoreDepthRace,
     scoreTowerBattle,
     serializeRecordingManifest,
 } from './contest/index.js';
+import { PrivateRoomRegistry } from './survivor/private_rooms.js';
+import { SurvivorCoordinator } from './survivor/survivor_coordinator.js';
+import { SurvivorSessionManager } from './survivor/survivor_session_manager.js';
 import { runMinecraftCommand } from './minecraft_server.js';
 import { getGpt56Profiles } from './model_profiles.js';
 import { ensureSkin, SKINS_DIR } from './skins.js';
@@ -60,6 +66,7 @@ let server;
 const agent_connections = new Map();
 let agent_id_seq = 0;
 const agent_listeners = [];
+const operator_sockets = new Set();
 // Host speakers always play bot and narrator lines; browser pages opt in as
 // extra monitors. See public/bot_voice.js for the client half.
 const voiceOutput = new VoiceOutput({
@@ -80,6 +87,9 @@ let contestCoordinator = null;
 let contestReady = null;
 let contestLoop = null;
 let gameSessionManager = null;
+let survivorCoordinator = null;
+let survivorSessionManager = null;
+let survivorRooms = null;
 let towerHighScores = null;
 let liveTowerAtlas = null;
 const contestArenaManager = new ContestArenaManager();
@@ -255,6 +265,64 @@ function emitContestUpdate(socket = io) {
     }
 }
 
+function emitToOperators(eventName, payload) {
+    for (const socket of operator_sockets) {
+        if (socket.connected) socket.emit(eventName, payload);
+    }
+}
+
+function emitSurvivorUpdate() {
+    const view = survivorSessionManager?.view() ?? null;
+    emitToOperators('survivor-update', view);
+    syncSurvivorHud(view).catch(error => {
+        console.warn('Could not update Survivor HUD:', error.message);
+    });
+}
+
+async function syncSurvivorHud(view) {
+    if (!view?.game || view.game.status !== 'running') return;
+    const label = formatSurvivorBossbar(
+        view.game,
+        view.phaseDeadlineAt,
+        Date.now()
+    );
+    await Promise.all([
+        runMinecraftCommand('bossbar add mindcraft:survivor "Survivor"').catch(() => {}),
+        runMinecraftCommand(`bossbar set mindcraft:survivor name ${JSON.stringify({ text: label })}`),
+        runMinecraftCommand('bossbar set mindcraft:survivor players @a'),
+        runMinecraftCommand('bossbar set mindcraft:survivor max 100'),
+        runMinecraftCommand('bossbar set mindcraft:survivor value 100'),
+        runMinecraftCommand('bossbar set mindcraft:survivor visible true'),
+    ]);
+}
+
+function handleSurvivorRoomEvent(event) {
+    if (!event) return;
+    survivorCoordinator?.recordPrivateEvent(event).catch(error => {
+        console.warn('Could not journal private Survivor event:', error.message);
+    });
+    emitToOperators('survivor-secret-event', event);
+    if (event.type === 'room.created') {
+        for (const inviteeId of event.invitedIds || []) {
+            getConnection(inviteeId)?.socket?.emit('survivor-room-invite', event);
+        }
+        return;
+    }
+    if (event.type === 'room.message') {
+        for (const memberId of event.memberIds || []) {
+            if (memberId !== event.senderId) {
+                getConnection(memberId)?.socket?.emit('survivor-room-message', event);
+            }
+        }
+        return;
+    }
+    if (event.type === 'room.closed') {
+        for (const memberId of event.memberIds || []) {
+            getConnection(memberId)?.socket?.emit('survivor-room-closed', event);
+        }
+    }
+}
+
 async function recordTowerHighScores(view) {
     if (!towerHighScores) return [];
     try {
@@ -329,10 +397,72 @@ async function ensureContest(options) {
                     clear: () => launchTelemetry.clearLaunchTelemetry(),
                 },
             });
+            const survivorRoot = path.join(root, 'survivor');
+            survivorCoordinator = existsSync(path.join(survivorRoot, 'state.json'))
+                ? await SurvivorCoordinator.load({ root: survivorRoot })
+                : await SurvivorCoordinator.create({ root: survivorRoot });
+            survivorRooms = new PrivateRoomRegistry({
+                onEvent: handleSurvivorRoomEvent,
+            });
+            const survivorPreset = getSurvivorSeasonPreset();
+            survivorSessionManager = new SurvivorSessionManager({
+                coordinator: survivorCoordinator,
+                contestCoordinator: coordinator,
+                rooms: survivorRooms,
+                getProfiles: getAvailableProfiles,
+                getExistingAgentNames: reservedAgentNames,
+                resolveParticipantVoice: resolveVoiceName,
+                reclaimNames: reclaimAgentNames,
+                buildAgentSettings: buildGameAgentSettings,
+                createAgent: settings => mindcraft.createAgent(settings),
+                destroyAgent: destroyGameAgent,
+                isAgentReady: agentRef => {
+                    const connection = getConnection(agentRef);
+                    return Boolean(connection?.socket && connection.in_game);
+                },
+                getContestPreset: getContestGamePreset,
+                prepareArena: (preset, participants) =>
+                    contestArenaManager.prepare(preset, participants),
+                sendDirective: sendGameDirective,
+                sendChallengeConfig: (agentRef, config) => {
+                    const connection = getConnection(agentRef);
+                    if (!connection?.socket) {
+                        return Promise.reject(new Error(`Agent '${agentRef}' is not connected`));
+                    }
+                    connection.socket.emit('survivor-challenge-config', config);
+                    return Promise.resolve();
+                },
+                phaseDurationsMs: {
+                    strategy: survivorPreset.phaseDurationsMs.strategy,
+                    voting: survivorPreset.phaseDurationsMs.voting,
+                    revote: survivorPreset.phaseDurationsMs.revote,
+                    deadlock: survivorPreset.phaseDurationsMs.deadlock,
+                    jury_questioning: survivorPreset.phaseDurationsMs.juryQuestioning,
+                    jury_voting: survivorPreset.phaseDurationsMs.juryVoting,
+                },
+                onEliminated: async (playerId, state) => {
+                    await Promise.allSettled(
+                        buildSurvivorEliminationCommands(playerId).map(command =>
+                            runMinecraftCommand(command)
+                        )
+                    );
+                    await speakContestAnnouncement(
+                        `${playerId}, the tribe has spoken. ${state.players[playerId].jury ? 'You are now on the jury.' : ''}`
+                    ).catch(error => console.warn('Survivor elimination announcement failed:', error));
+                },
+                onCompleted: async state => {
+                    await speakContestAnnouncement(
+                        `${state.winnerIds[0]} is the Sole Survivor!`
+                    ).catch(error => console.warn('Survivor winner announcement failed:', error));
+                },
+                onUpdate: emitSurvivorUpdate,
+            });
+            await survivorSessionManager.recover();
             contestLoop = new ContestLoop({
                 coordinator,
                 intervalMs: resolved.tick_interval_ms ?? 1000,
                 onTick: async view => {
+                    await survivorSessionManager?.tick();
                     const completed = await detectDogRaceWinner(view);
                     if (!completed) {
                         const gameSessionOwnsResult = !view.activeContest
@@ -352,6 +482,9 @@ async function ensureContest(options) {
                     emitContestUpdate();
                     if (gameSessionManager) {
                         await gameSessionManager.syncWithContestView(view);
+                    }
+                    if (survivorSessionManager) {
+                        await survivorSessionManager.syncContestView(view);
                     } else if (!view.activeContest) {
                         await contestRecordingManager.stop();
                     }
@@ -640,7 +773,9 @@ async function detectDogRaceWinner(view) {
     });
     const completedView = contestCoordinator.view();
     emitContestUpdate();
-    if (gameSessionManager?.view()?.contestId === contest.id) {
+    if (survivorSessionManager?.view()?.challengeContestId === contest.id) {
+        await survivorSessionManager.syncContestView(completedView);
+    } else if (gameSessionManager?.view()?.contestId === contest.id) {
         await gameSessionManager.syncWithContestView(completedView);
     } else {
         await contestHud.sync(completedView);
@@ -817,6 +952,9 @@ async function startContestGame(gameId, options = {}) {
     await ensureContest();
     if (!gameSessionManager) {
         throw new Error('Game session manager is not enabled');
+    }
+    if (survivorSessionManager?.view()) {
+        throw new Error('A Survivor season is active. Cancel it before starting another game.');
     }
     try {
         const result = await gameSessionManager.start({
@@ -1737,6 +1875,7 @@ export function createMindServer(host_public = false, port = 8080) {
         // id so a later bot reusing the name cannot be mistaken for this one.
         let curAgentId = null;
         const curAgent = () => (curAgentId ? agent_connections.get(curAgentId) : null);
+        operator_sockets.add(socket);
         console.log('Client connected');
 
         agentsStatusUpdate(socket);
@@ -1783,6 +1922,75 @@ export function createMindServer(host_public = false, port = 8080) {
         socket.on('contest-games', (callback) => {
             try {
                 callback({ success: true, games: listContestGamePresets() });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('survivor-status', async callback => {
+            try {
+                await ensureContest();
+                callback({
+                    success: Boolean(survivorSessionManager),
+                    data: survivorSessionManager?.view() ?? null,
+                    preset: getSurvivorSeasonPreset(),
+                    games: listContestGamePresets(),
+                    join: getMinecraftJoinInfo(),
+                    error: survivorSessionManager ? null : 'Survivor is not enabled',
+                });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('survivor-start', async (request, callback) => {
+            try {
+                await ensureContest();
+                if (!survivorSessionManager) throw new Error('Survivor is not enabled');
+                if (gameSessionManager?.view()) throw new Error('A contest game is already active');
+                const preset = getSurvivorSeasonPreset();
+                const data = await survivorSessionManager.start({
+                    participants: request?.participants,
+                    mergeAt: request?.mergeAt ?? preset.mergeAt,
+                    tribeNames: request?.tribeNames ?? preset.tribeNames,
+                    challengeGameIds: request?.challengeGameIds ?? preset.challengeGameIds,
+                    systemPrompt: request?.systemPrompt,
+                    phaseDurationsMs: request?.phaseDurationsMs,
+                });
+                emitSurvivorUpdate();
+                callback({ success: true, data });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('survivor-control', async (request, callback) => {
+            try {
+                await ensureContest();
+                if (!survivorSessionManager) throw new Error('Survivor is not enabled');
+                const data = await survivorSessionManager.control(
+                    request?.action,
+                    request || {}
+                );
+                emitSurvivorUpdate();
+                callback({ success: true, data });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('survivor-command', async (request, callback) => {
+            try {
+                const connection = curAgent();
+                if (!connection) throw new Error('Only a Survivor bot can use this command');
+                if (!survivorSessionManager?.view()) throw new Error('No Survivor season is active');
+                const result = await survivorSessionManager.handleAgentCommand(
+                    connection.name,
+                    request?.type,
+                    request?.payload || {}
+                );
+                emitSurvivorUpdate();
+                callback(result);
             } catch (error) {
                 callback({ success: false, error: error.message });
             }
@@ -1941,9 +2149,11 @@ export function createMindServer(host_public = false, port = 8080) {
                 emitContestUpdate();
                 callback?.({ success: true, data });
 
-                const cleanup = gameSessionManager?.view()?.contestId === active.id
-                    ? gameSessionManager.syncWithContestView(view)
-                    : contestHud.sync(view).then(() => contestRecordingManager.stop(active.id));
+                const cleanup = survivorSessionManager?.view()?.challengeContestId === active.id
+                    ? survivorSessionManager.syncContestView(view)
+                    : gameSessionManager?.view()?.contestId === active.id
+                        ? gameSessionManager.syncWithContestView(view)
+                        : contestHud.sync(view).then(() => contestRecordingManager.stop(active.id));
                 cleanup.catch(error => {
                     console.error(`Could not clean up completed contest ${active.id}:`, error);
                 });
@@ -1977,9 +2187,11 @@ export function createMindServer(host_public = false, port = 8080) {
                 emitContestUpdate();
                 callback?.({ success: true, data });
 
-                const cleanup = gameSessionManager?.view()?.contestId === active.id
-                    ? gameSessionManager.syncWithContestView(view)
-                    : contestHud.sync(view).then(() => contestRecordingManager.stop(active.id));
+                const cleanup = survivorSessionManager?.view()?.challengeContestId === active.id
+                    ? survivorSessionManager.syncContestView(view)
+                    : gameSessionManager?.view()?.contestId === active.id
+                        ? gameSessionManager.syncWithContestView(view)
+                        : contestHud.sync(view).then(() => contestRecordingManager.stop(active.id));
                 cleanup.catch(error => {
                     console.error(`Could not clean up completed contest ${active.id}:`, error);
                 });
@@ -2126,6 +2338,7 @@ export function createMindServer(host_public = false, port = 8080) {
         socket.on('connect-agent-process', (agentRef) => {
             const connection = getConnection(agentRef);
             if (connection) {
+                operator_sockets.delete(socket);
                 connection.socket = socket;
                 curAgentId = connection.id;
                 agentsStatusUpdate();
@@ -2135,6 +2348,7 @@ export function createMindServer(host_public = false, port = 8080) {
         socket.on('login-agent', (agentRef) => {
             const connection = getConnection(agentRef);
             if (connection) {
+                operator_sockets.delete(socket);
                 const agentName = connection.name;
                 connection.socket = socket;
                 connection.in_game = true;
@@ -2176,6 +2390,7 @@ export function createMindServer(host_public = false, port = 8080) {
         });
 
         socket.on('disconnect', () => {
+            operator_sockets.delete(socket);
             const connection = curAgent();
             // A restarted process can re-register this agent on a new socket
             // before the old one disconnects; that connection is live and must

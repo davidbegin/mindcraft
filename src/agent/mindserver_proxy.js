@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 import convoManager from './conversation.js';
-import { setSettings } from './settings.js';
+import settings, { setSettings } from './settings.js';
 import { clearSpeechQueue } from './speak.js';
 import { getFullState, getWallState } from './library/full_state.js';
 
@@ -139,6 +139,60 @@ class MindServerProxy {
             } catch (error) {
                 console.error('Error applying game directive:', error);
                 callback?.({ success: false, error: error.message });
+            }
+        });
+
+        this.socket.on('survivor-room-invite', async (invite) => {
+            if (!this.agent || !invite?.roomId) return;
+            const members = Array.isArray(invite.memberIds) ? invite.memberIds.join(', ') : invite.ownerId;
+            const pitch = invite.pitch ? ` Their opening pitch: "${invite.pitch}"` : '';
+            this.agent.privateSurvivorResponse = { roomId: invite.roomId };
+            try {
+                await this.agent.handleMessage(
+                    'system',
+                    `PRIVATE SURVIVOR ROOM INVITE from ${invite.ownerId}. `
+                    + `Room ${invite.roomId}; current members: ${members}.${pitch} `
+                    + `Use !joinPrivateGroup("${invite.roomId}") to join, or ignore it. `
+                    + 'Do not discuss this invitation in public chat.'
+                );
+            } finally {
+                this.agent.privateSurvivorResponse = null;
+            }
+        });
+
+        this.socket.on('survivor-room-message', async (entry) => {
+            if (!this.agent || !entry?.message) return;
+            const members = Array.isArray(entry.memberIds) ? entry.memberIds.join(', ') : 'unknown';
+            this.agent.privateSurvivorResponse = { roomId: entry.roomId };
+            try {
+                await this.agent.handleMessage(
+                    entry.senderId || 'private-room',
+                    `(PRIVATE GROUP ${entry.roomId}; MEMBERS: ${members}; FROM ${entry.senderId}) `
+                    + `${entry.message}\nReply privately; never repeat this in public chat.`
+                );
+            } finally {
+                this.agent.privateSurvivorResponse = null;
+            }
+        });
+
+        this.socket.on('survivor-room-closed', (event) => {
+            if (!this.agent || !event?.roomId) return;
+            this.agent.history.add(
+                'system',
+                `Private Survivor room ${event.roomId} closed: ${event.reason || 'closed'}.`
+            );
+        });
+
+        this.socket.on('survivor-challenge-config', config => {
+            settings.game_session = {
+                ...(settings.game_session || {}),
+                contestType: config?.contestType ?? null,
+                winItem: config?.winItem ?? null,
+                survivorChallengeId: config?.challengeId ?? null,
+            };
+            if (this.agent) {
+                this.agent._contestDeathReported = false;
+                this.agent._contestWinReported = false;
             }
         });
 
@@ -311,6 +365,22 @@ export const serverProxy = new MindServerProxy();
 // for chatting with other bots
 export function sendBotChatToServer(agentName, json) {
     serverProxy.getSocket().emit('chat-message', agentName, json);
+}
+
+export function requestSurvivorCommand(type, payload = {}) {
+    const socket = serverProxy.getSocket();
+    if (!socket?.connected) {
+        return Promise.resolve({ success: false, error: 'MindServer is not connected' });
+    }
+    return new Promise(resolve => {
+        const timeout = setTimeout(() => {
+            resolve({ success: false, error: `Survivor command '${type}' timed out` });
+        }, 10000);
+        socket.emit('survivor-command', { type, payload }, result => {
+            clearTimeout(timeout);
+            resolve(result || { success: false, error: 'No Survivor command response' });
+        });
+    });
 }
 
 // for sending general output to server for display
