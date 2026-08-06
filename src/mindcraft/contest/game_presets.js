@@ -17,10 +17,10 @@ export const CONTEST_BOT_CHARACTERS = Object.freeze([
     }),
     Object.freeze({
         name: 'Marcus',
-        voice: 'Clifford',
-        profileId: 'gemini',
+        voice: 'Sasquatch',
+        profileId: 'gpt-5-6-terra-balanced',
         systemPrompt:
-            'You are an energetic momentum player who chains small advantages into dramatic comebacks. Call out the next opportunity you are pressing and how it changes the race. Celebrate genuinely new gains with fresh phrasing, and challenge rivals with predictions more often than insults.',
+            'You are a quirky, odd, lovable, friendly, timid, but deeply curious and open person who wants to connect with others.',
     }),
     Object.freeze({
         name: 'Dario',
@@ -56,6 +56,7 @@ export const SURVIVOR_SEASON_PRESET = Object.freeze({
     id: 'survivor',
     title: 'Survivor Bot Season',
     blurb: 'Two tribes face team challenges, secret votes, a merge, and a final-three jury.',
+    defaultCharacters: CONTEST_BOT_CHARACTERS,
     mergeAt: 10,
     tribeNames: Object.freeze(['Ember', 'Tide']),
     phaseDurationsMs: Object.freeze({
@@ -284,6 +285,9 @@ export function getContestGamePreset(gameId) {
 export function getSurvivorSeasonPreset() {
     return {
         ...SURVIVOR_SEASON_PRESET,
+        defaultCharacters: SURVIVOR_SEASON_PRESET.defaultCharacters.map(
+            character => ({ ...character })
+        ),
         tribeNames: [...SURVIVOR_SEASON_PRESET.tribeNames],
         phaseDurationsMs: { ...SURVIVOR_SEASON_PRESET.phaseDurationsMs },
         challengeGameIds: [...SURVIVOR_SEASON_PRESET.challengeGameIds],

@@ -2154,7 +2154,7 @@
                             Two tribes, team immunity challenges, private alliances, secret votes, a merge at ten, and a final-three jury.
                         </div>
                     </div>
-                    <button id="startSurvivorBtn" class="btn btn-amber" type="button">Set up season</button>
+                    <button id="startSurvivorBtn" class="btn btn-amber" type="button" disabled>Loading cast…</button>
                 </div>
                 <div id="survivorLive" hidden>
                     <div id="survivorPhase" class="contest-live-row"></div>
@@ -3950,7 +3950,7 @@
             const reserved = new Set(namesInUse());
             const game = gameId === 'survivor'
                 ? {
-                    defaultCharacters: contestGames[0]?.defaultCharacters || [],
+                    defaultCharacters: survivorPreset?.defaultCharacters || [],
                 }
                 : contestGames.find(item => item.id === gameId);
             const characters = Array.isArray(game?.defaultCharacters)
@@ -4103,6 +4103,14 @@
 
         function openGameSetup(gameId) {
             if (contestBusy) return;
+            if (
+                gameId === 'survivor'
+                && !Array.isArray(survivorPreset?.defaultCharacters)
+            ) {
+                setContestStatus('Loading the canonical Survivor cast. Try again in a moment.');
+                loadSurvivorState();
+                return;
+            }
             const profiles = configuredGameProfiles();
             if (!profiles.length) {
                 setContestStatus('No configured model profiles available', true);

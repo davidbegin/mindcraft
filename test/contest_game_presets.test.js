@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
     CONTEST_BOT_CHARACTERS,
     getContestGamePreset,
+    getSurvivorSeasonPreset,
     listContestGamePresets,
 } from '../src/mindcraft/contest/game_presets.js';
 
@@ -39,7 +40,7 @@ test('lists the starter contest games for the UI', () => {
         [
             { name: 'Billy', profileId: 'gpt-5-6-luna-instant' },
             { name: 'Alice', profileId: 'claude' },
-            { name: 'Marcus', profileId: 'gemini' },
+            { name: 'Marcus', profileId: 'gpt-5-6-terra-balanced' },
             { name: 'Dario', profileId: 'gpt-5-6-terra-thorough' },
             { name: 'ChipChipperson', profileId: 'gpt-5-6-sol-instant' },
             { name: 'bridget', profileId: 'gpt-5-6-terra-balanced' },
@@ -50,11 +51,24 @@ test('lists the starter contest games for the UI', () => {
     assert.equal(tower.defaultCharacters[4].voice, 'RadioClyde');
     assert.equal(tower.defaultCharacters[5].voice, 'Bridget');
     assert.equal(tower.defaultCharacters[6].voice, 'Inferno');
+    assert.equal(tower.defaultCharacters[2].voice, 'Sasquatch');
     assert.ok(tower.defaultCharacters.every(character => character.systemPrompt.length > 40));
+    assert.match(tower.defaultCharacters[2].systemPrompt, /curious and open/i);
     assert.match(tower.defaultCharacters[3].systemPrompt, /contingency planning/i);
     assert.match(tower.defaultCharacters[4].systemPrompt, /never rerun/i);
     assert.match(tower.defaultCharacters[5].systemPrompt, /do not keep insulting/i);
     assert.match(tower.defaultCharacters[6].systemPrompt, /bluffs/i);
+});
+
+test('Survivor uses the canonical contest characters by default', () => {
+    const survivor = getSurvivorSeasonPreset();
+    assert.deepEqual(
+        survivor.defaultCharacters,
+        CONTEST_BOT_CHARACTERS.map(character => ({ ...character }))
+    );
+    assert.equal(survivor.defaultCharacters.length, 7);
+    survivor.defaultCharacters[0].name = 'Changed';
+    assert.equal(getSurvivorSeasonPreset().defaultCharacters[0].name, 'Billy');
 });
 
 test('contest presets include game-specific rules and judge metrics', () => {
