@@ -960,16 +960,20 @@ export class Agent {
             }),
             ...this.contest_recorders.map((recorder, index) => {
                 const camera = options.externalCameras[index];
+                const cameraMode = camera.camera || 'fixed';
                 return recorder.start({
                     ...common,
-                    camera: 'fixed',
-                    recordingRole: 'arena-overview',
-                    fps: camera.fps || 15,
-                    width: camera.width || 960,
-                    height: camera.height || 540,
-                    viewDistance: camera.viewDistance || 8,
+                    camera: cameraMode,
+                    recordingRole: camera.recordingRole
+                        || (cameraMode === 'fixed' ? 'arena-overview' : 'participant-wide'),
+                    fps: camera.fps ?? 15,
+                    width: camera.width ?? 960,
+                    height: camera.height ?? 540,
+                    viewDistance: camera.viewDistance ?? 8,
                     cameraPosition: camera.position,
                     cameraTarget: camera.target,
+                    followDistance: camera.followDistance,
+                    followHeight: camera.followHeight,
                 });
             }),
         ]);

@@ -49,9 +49,10 @@ function makeRecorder({ recording = false, startedAt = 1000, syncEpochMs = null 
     return recorder;
 }
 
-function makeAgent(recorder) {
+function makeAgent(recorder, contestRecorders = []) {
     return {
         pov_recorder: recorder,
+        contest_recorders: contestRecorders,
         clearBotLogs() {},
         requestInterrupt() {},
         bot: {
@@ -132,9 +133,10 @@ test('manifest entries include the collected recording events', () => {
     ]);
 });
 
-test('actions add start and end markers to the primary recorder', async () => {
+test('actions add start and end markers to every synchronized recorder', async () => {
     const recorder = makeRecorder({ recording: true });
-    const manager = new ActionManager(makeAgent(recorder));
+    const wideRecorder = makeRecorder({ recording: true });
+    const manager = new ActionManager(makeAgent(recorder, [wideRecorder]));
 
     const result = await manager.runAction('!goToCoordinates', async () => {});
 
@@ -152,6 +154,7 @@ test('actions add start and end markers to the primary recorder', async () => {
             },
         ]
     );
+    assert.deepEqual(wideRecorder.events, recorder.events);
 });
 
 test('failed actions add an error marker', async () => {

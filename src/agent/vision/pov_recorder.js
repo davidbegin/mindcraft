@@ -9,6 +9,12 @@ import { Viewer } from 'prismarine-viewer/viewer/lib/viewer.js';
 import { WorldView } from 'prismarine-viewer/viewer/lib/worldView.js';
 import { getBufferFromStream } from 'prismarine-viewer/viewer/lib/simpleUtils.js';
 import { createCanvas } from 'node-canvas-webgl/lib/index.js';
+import {
+    applyFollowCamera,
+    DEFAULT_FOLLOW_HEIGHT,
+} from './follow_camera.js';
+
+export { applyFollowCamera };
 
 // prismarine-viewer's world mesher runs in worker threads and expects a global
 // Worker, and its entity models (including the bot's own) read a global THREE.
@@ -23,6 +29,7 @@ const RECORD_DEFAULTS = {
     // Recordings always render the bot from a third-person follow camera.
     camera: 'follow',
     followDistance: 4.5,
+    followHeight: DEFAULT_FOLLOW_HEIGHT,
 };
 
 // Entity id for the recorded bot's own mesh. WorldView deliberately excludes
@@ -92,58 +99,6 @@ export function disableEntityTweens(viewer) {
 }
 
 /**
- * Third-person follow camera. Renders the bot itself as a player model with
- * a name tag (WorldView skips the bot's own entity, so we inject it) and
- * places the camera behind the bot's facing direction, pulled in when solid
- * blocks sit between the bot and the camera. Shared by the recorder and the
- * snapshotter. `smooth` lerps toward the target for fluid video; snapshots
- * jump straight there.
- */
-export function applyFollowCamera(viewer, bot, username, followDistance, smooth) {
-    const entity = bot.entity;
-    const pos = entity.position;
-    viewer.updateEntity({
-        id: POV_SELF_ID,
-        name: 'player',
-        username,
-        width: 0.6,
-        height: 1.8,
-        pos,
-        yaw: entity.yaw,
-    });
-
-    const eye = new THREE.Vector3(pos.x, pos.y + 1.6, pos.z);
-    // Directly behind the bot's facing direction, slightly raised.
-    // mineflayer yaw=0 looks toward -z, so +(sin, cos) points backwards.
-    const offset = new THREE.Vector3(
-        Math.sin(entity.yaw) * followDistance,
-        1.1,
-        Math.cos(entity.yaw) * followDistance
-    );
-    const maxDist = offset.length();
-    const dir = offset.clone().normalize();
-    let clearDist = maxDist;
-    for (let t = 0.5; t < maxDist; t += 0.25) {
-        const block = bot.blockAt(new Vec3(
-            eye.x + dir.x * t,
-            eye.y + dir.y * t,
-            eye.z + dir.z * t
-        ));
-        if (block && block.boundingBox === 'block') {
-            clearDist = Math.max(1.0, t - 0.4);
-            break;
-        }
-    }
-    const target = eye.clone().addScaledVector(dir, clearDist);
-    if (smooth) {
-        viewer.camera.position.lerp(target, 0.35);
-    } else {
-        viewer.camera.position.copy(target);
-    }
-    viewer.camera.lookAt(eye);
-}
-
-/**
  * Records the bot to an MP4 file.
  * Renders frames offscreen (node-canvas-webgl + prismarine-viewer) and pipes
  * JPEG frames into ffmpeg. One recorder per agent; start/stop from the UI via
@@ -201,6 +156,8 @@ export class PovRecorder {
             sessionId: this.sessionId,
             recordingRole: this.recordingRole,
             syncEpochMs: this.syncEpochMs,
+            followDistance: this.cameraMode === 'follow' ? this._followDistance : null,
+            followHeight: this.cameraMode === 'follow' ? this._followHeight : null,
             labels: [...(this.labels || [])],
         };
     }
@@ -295,7 +252,16 @@ export class PovRecorder {
         )) {
             throw new Error('Fixed recording cameras require numeric position and target coordinates');
         }
-        this._followDistance = Math.max(2, Number(opts.followDistance) || RECORD_DEFAULTS.followDistance);
+        const followDistance = Number(opts.followDistance);
+        const followHeight = Number(opts.followHeight);
+        this._followDistance = Math.max(
+            2,
+            Number.isFinite(followDistance) ? followDistance : RECORD_DEFAULTS.followDistance
+        );
+        this._followHeight = Math.max(
+            0,
+            Number.isFinite(followHeight) ? followHeight : RECORD_DEFAULTS.followHeight
+        );
         this._cameraPlaced = false;
         this.error = null;
         this.file = null;
@@ -402,7 +368,14 @@ export class PovRecorder {
                 this._viewer.camera.position.copy(this._fixedCamera.position);
                 this._viewer.camera.lookAt(this._fixedCamera.target);
             } else {
-                applyFollowCamera(this._viewer, this.bot, this.name, this._followDistance, this._cameraPlaced);
+                applyFollowCamera(
+                    this._viewer,
+                    this.bot,
+                    this.sourceBot,
+                    this._followDistance,
+                    this._cameraPlaced,
+                    this._followHeight
+                );
                 this._cameraPlaced = true;
                 this._worldView.updatePosition(pos).catch(() => {});
             }
@@ -569,6 +542,8 @@ export class PovRecorder {
                 contestId: this.contestId,
                 recordingRole: this.recordingRole,
                 camera: this.cameraMode,
+                followDistance: this.cameraMode === 'follow' ? this._followDistance : null,
+                followHeight: this.cameraMode === 'follow' ? this._followHeight : null,
                 syncEpochMs: this.syncEpochMs,
                 syncOffsetMs: this.syncEpochMs === null
                     ? null

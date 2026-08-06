@@ -37,6 +37,19 @@ function manifest(root) {
             ],
         },
         {
+            bot: 'alice-wide-follow',
+            sourceBot: 'alice',
+            file: path.join(root, 'alice', 'wide-follow.mp4'),
+            recordingRole: 'participant-wide',
+            startedAt: 900,
+            endedAt: 101000,
+            events: [
+                { type: 'speech', atMs: 20000 },
+                { type: 'speech', atMs: 21000 },
+                { type: 'action.place-block', atMs: 50000 },
+            ],
+        },
+        {
             bot: 'bob',
             sourceBot: 'bob',
             file: path.join(root, 'bob', 'pov.mp4'),
@@ -64,6 +77,16 @@ test('selects bounded intro, deduplicated events, and winner ending', () => {
         selected.filter(item => item.reason === 'event:speech').length,
         1,
         'nearby speech events are deduplicated'
+    );
+    assert.equal(
+        selected.find(item => item.reason === 'event:speech').recordingRole,
+        'participant-pov',
+        'speech stays on the close participant camera'
+    );
+    assert.equal(
+        selected.find(item => item.reason === 'event:action.place-block').recordingRole,
+        'participant-wide',
+        'action events use the contextual wide participant camera'
     );
     assert.ok(selected.every(item =>
         item.startMs >= contest.startedAt && item.endMs <= contest.deadlineAt

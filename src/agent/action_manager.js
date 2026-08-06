@@ -78,10 +78,17 @@ export class ActionManager {
     }
 
     _markRecordingEvent(type, data) {
-        try {
-            this.agent.pov_recorder?.addMarker?.(type, data);
-        } catch (_) {
-            // Recording metadata is best-effort and must not affect actions.
+        const atMs = Date.now();
+        const recorders = [
+            this.agent.pov_recorder,
+            ...(this.agent.contest_recorders || []),
+        ];
+        for (const recorder of recorders) {
+            try {
+                recorder?.addMarker?.(type, data, atMs);
+            } catch (_) {
+                // Recording metadata is best-effort and must not affect actions.
+            }
         }
     }
 

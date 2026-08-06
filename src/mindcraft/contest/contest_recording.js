@@ -19,6 +19,21 @@ function overviewCameras(arena) {
     ];
 }
 
+function participantWideCamera(agentName) {
+    const safeName = String(agentName).replace(/[^a-zA-Z0-9_.-]+/g, '-');
+    return {
+        id: `${safeName}-wide-follow`,
+        camera: 'follow',
+        recordingRole: 'participant-wide',
+        followDistance: 12,
+        followHeight: 4,
+        fps: 20,
+        width: 854,
+        height: 480,
+        viewDistance: 8,
+    };
+}
+
 export class ContestRecordingManager {
     constructor(options = {}) {
         if (typeof options.requestAgent !== 'function') {
@@ -46,9 +61,10 @@ export class ContestRecordingManager {
                 sessionId,
                 contestId,
                 syncEpochMs,
-                externalCameras: agentName === observer
-                    ? overviewCameras(arena)
-                    : [],
+                externalCameras: [
+                    participantWideCamera(agentName),
+                    ...(agentName === observer ? overviewCameras(arena) : []),
+                ],
             },
         }));
         const results = await Promise.allSettled(requests.map(request =>
@@ -80,7 +96,7 @@ export class ContestRecordingManager {
             syncEpochMs,
             participants: [...participants],
             observer,
-            cameraCount: participants.length + 2,
+            cameraCount: participants.length * 2 + 2,
         };
         return { ...this.active };
     }
@@ -110,4 +126,4 @@ export class ContestRecordingManager {
     }
 }
 
-export { overviewCameras };
+export { overviewCameras, participantWideCamera };

@@ -96,6 +96,22 @@ function eventTime(event, entry) {
         : null;
 }
 
+function preferredParticipantRole(event) {
+    const type = String(event?.type || event?.kind || '').toLowerCase();
+    const needsContext = [
+        'action',
+        'move',
+        'travel',
+        'build',
+        'place',
+        'mine',
+        'dig',
+        'collect',
+        'craft',
+    ].some(token => type.includes(token));
+    return needsContext ? 'participant-wide' : 'participant-pov';
+}
+
 function contestEventTime(event, bounds) {
     const atMs = finiteNumber(event?.atMs ?? event?.timestamp);
     if (atMs !== null) return atMs;
@@ -195,7 +211,12 @@ export function selectHighlightSegments(manifestEntries, contest, options = {}) 
         if (atMs === null || atMs < bounds.startMs || atMs > bounds.endMs) return [];
         const preferredBot = event.sourceBot || event.bot || event.agent
             || event.participantId || null;
-        const entry = bestEntryAt(entries, atMs, preferredBot, 'participant-pov');
+        const entry = bestEntryAt(
+            entries,
+            atMs,
+            preferredBot,
+            preferredParticipantRole(event)
+        );
         return entry ? [{ event, atMs, entry, score: eventScore(event, entry) }] : [];
     });
     const eventCandidates = [
@@ -212,7 +233,7 @@ export function selectHighlightSegments(manifestEntries, contest, options = {}) 
             entries,
             candidate.atMs,
             candidate.entry.sourceBot || candidate.entry.bot,
-            'participant-pov'
+            preferredParticipantRole(candidate.event)
         ) || candidate.entry;
         const item = windowFor(
             source,
