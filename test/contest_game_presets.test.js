@@ -6,6 +6,7 @@ import {
     getContestGamePreset,
     getSurvivorSeasonPreset,
     listContestGamePresets,
+    listSurvivorScenarios,
 } from '../src/mindcraft/contest/game_presets.js';
 
 test('lists the starter contest games for the UI', () => {
@@ -69,6 +70,31 @@ test('Survivor uses the canonical contest characters by default', () => {
     assert.equal(survivor.defaultCharacters.length, 7);
     survivor.defaultCharacters[0].name = 'Changed';
     assert.equal(getSurvivorSeasonPreset().defaultCharacters[0].name, 'Billy');
+});
+
+test('the four-player scenario casts four bots for a final two', () => {
+    const four = getSurvivorSeasonPreset('four_player');
+    assert.equal(four.castSize, 4);
+    assert.equal(four.minimumPlayers, 4);
+    assert.equal(four.finalistCount, 2);
+    assert.equal(four.mergeAt, 4);
+    assert.equal(four.defaultCharacters.length, 4);
+    assert.deepEqual(
+        four.defaultCharacters.map(character => character.name),
+        ['Billy', 'Alice', 'Marcus', 'Dario']
+    );
+    assert.ok(four.challengeGameIds.length > 0);
+    assert.ok(four.phaseDurationsMs.strategy < getSurvivorSeasonPreset().phaseDurationsMs.strategy);
+});
+
+test('scenarios are listed for the operator UI and unknown ids throw', () => {
+    const scenarios = listSurvivorScenarios();
+    assert.deepEqual(
+        scenarios.map(scenario => scenario.scenarioId),
+        ['classic', 'four_player']
+    );
+    assert.ok(scenarios.every(scenario => scenario.castSize >= scenario.minimumPlayers));
+    assert.throws(() => getSurvivorSeasonPreset('duos'), /Unknown Survivor scenario/);
 });
 
 test('contest presets include game-specific rules and judge metrics', () => {

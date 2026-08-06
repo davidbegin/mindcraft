@@ -29,14 +29,98 @@ function castPlurality(game, targetId) {
     return game.revealVotes();
 }
 
-test('creates two balanced tribes and requires a roster larger than merge threshold', () => {
+test('creates two balanced tribes and requires at least four players', () => {
     const state = createSurvivorState({ participantIds: PLAYERS, mergeAt: 10 });
     assert.equal(state.tribes.Ember.length, 6);
     assert.equal(state.tribes.Tide.length, 6);
     assert.throws(
-        () => createSurvivorState({ participantIds: PLAYERS.slice(0, 10), mergeAt: 10 }),
-        /more than 10/
+        () => createSurvivorState({ participantIds: PLAYERS.slice(0, 3), mergeAt: 10 }),
+        /at least 4/
     );
+});
+
+function playIndividualRound(game, immuneId, targetId) {
+    game.startChallenge({ id: 'cake_race' });
+    game.completeChallenge({ winnerId: immuneId });
+    game.beginVoting();
+    return castPlurality(game, targetId);
+}
+
+test('a four-player season plays two councils and ends at a final two', () => {
+    const players = PLAYERS.slice(0, 4);
+    const game = new SurvivorGame({ participantIds: players, mergeAt: 10 });
+    const opening = game.snapshot();
+    assert.equal(opening.merged, true);
+    assert.equal(opening.finalistCount, 2);
+
+    // A single boot must not end the season: four players owe the jury two councils.
+    const afterFirstBoot = playIndividualRound(game, players[0], players[1]);
+    assert.equal(afterFirstBoot.phase, 'challenge');
+    assert.equal(afterFirstBoot.round, 2);
+    assert.deepEqual(afterFirstBoot.juryIds, [players[1]]);
+
+    const afterSecondBoot = playIndividualRound(game, players[0], players[2]);
+    assert.equal(afterSecondBoot.phase, 'jury_questioning');
+    assert.deepEqual(afterSecondBoot.finalistIds, [players[0], players[3]]);
+    assert.deepEqual(afterSecondBoot.juryIds, [players[1], players[2]]);
+
+    game.beginJuryVote();
+    game.castVote(players[1], players[0]);
+    game.castVote(players[2], players[0]);
+    const completed = game.revealVotes();
+    assert.equal(completed.status, 'completed');
+    assert.deepEqual(completed.winnerIds, [players[0]]);
+    assert.deepEqual(
+        players.map(id => completed.players[id].placement),
+        [1, 4, 3, 2]
+    );
+});
+
+test('a deadlocked jury in a final two is settled by fire-making', () => {
+    const players = PLAYERS.slice(0, 4);
+    const game = new SurvivorGame({ participantIds: players, mergeAt: 10, random: () => 0 });
+    playIndividualRound(game, players[0], players[1]);
+    playIndividualRound(game, players[0], players[2]);
+
+    game.beginJuryVote();
+    game.castVote(players[1], players[0]);
+    game.castVote(players[2], players[3]);
+    const deadlocked = game.revealVotes();
+    assert.equal(deadlocked.phase, 'fire_making');
+    assert.deepEqual(deadlocked.tiedIds.sort(), [players[0], players[3]].sort());
+    assert.equal(deadlocked.events.at(-1).reason, 'jury-deadlock');
+
+    const completed = game.resolveFireMaking(players[3]);
+    assert.equal(completed.status, 'completed');
+    assert.deepEqual(completed.winnerIds, [players[3]]);
+    assert.equal(completed.players[players[3]].placement, 1);
+    assert.equal(completed.players[players[0]].placement, 2);
+    // The runner-up lost the finale, so they never join the jury they faced.
+    assert.deepEqual(completed.juryIds, [players[1], players[2]]);
+});
+
+test('losing finalists place behind the winner by jury votes', () => {
+    const state = createSurvivorState({ participantIds: PLAYERS, mergeAt: 10 });
+    for (const id of PLAYERS.slice(0, 9)) {
+        state.players[id].active = false;
+        state.players[id].jury = true;
+    }
+    state.merged = true;
+    state.juryIds = PLAYERS.slice(0, 5);
+    state.finalistIds = ['Player10', 'Player11', 'Player12'];
+    state.phase = 'jury_questioning';
+    const game = new SurvivorGame({ state });
+    game.beginJuryVote();
+    game.castVote('Player1', 'Player12');
+    game.castVote('Player2', 'Player12');
+    game.castVote('Player3', 'Player12');
+    game.castVote('Player4', 'Player11');
+    game.castVote('Player5', 'Player11');
+    const completed = game.revealVotes();
+    assert.deepEqual(completed.winnerIds, ['Player12']);
+    assert.equal(completed.players.Player12.placement, 1);
+    assert.equal(completed.players.Player11.placement, 2);
+    assert.equal(completed.players.Player10.placement, 3);
 });
 
 test('losing tribe votes, winning tribe is safe, and the merge boot is not a juror', () => {

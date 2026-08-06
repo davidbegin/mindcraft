@@ -12,6 +12,14 @@ const PHASES = Object.freeze([
     'cancelled',
 ]);
 
+export const MIN_SURVIVOR_PLAYERS = 4;
+
+// A jury needs at least two voices, so short casts end at a final two instead of
+// letting the single first boot crown the winner alone.
+export function defaultFinalistCount(rosterSize) {
+    return rosterSize >= 5 ? 3 : 2;
+}
+
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
@@ -58,8 +66,15 @@ export function createSurvivorState(options = {}) {
     if (!Number.isInteger(mergeAt) || mergeAt < 4) {
         throw new RangeError('mergeAt must be an integer of at least 4');
     }
-    if (participantIds.length <= mergeAt) {
-        throw new Error(`Survivor requires more than ${mergeAt} participants`);
+    if (participantIds.length < MIN_SURVIVOR_PLAYERS) {
+        throw new Error(`Survivor requires at least ${MIN_SURVIVOR_PLAYERS} participants`);
+    }
+    const finalistCount = options.finalistCount ?? defaultFinalistCount(participantIds.length);
+    if (!Number.isInteger(finalistCount) || finalistCount < 2 || finalistCount > 3) {
+        throw new RangeError('finalistCount must be 2 or 3');
+    }
+    if (participantIds.length <= finalistCount) {
+        throw new Error(`A final ${finalistCount} needs more than ${finalistCount} participants`);
     }
     const tribeNames = uniqueNames(options.tribeNames || ['Ember', 'Tide'], 'tribeNames');
     if (tribeNames.length !== 2) throw new Error('Survivor requires exactly two tribes');
@@ -85,7 +100,8 @@ export function createSurvivorState(options = {}) {
         phase: 'challenge',
         round: 1,
         mergeAt,
-        merged: false,
+        finalistCount,
+        merged: participantIds.length <= mergeAt,
         tribeNames,
         tribes,
         participantIds,
@@ -122,6 +138,7 @@ export class SurvivorGame {
             ? clone(options.state)
             : createSurvivorState(options);
         this.state.councilVoterIds ||= [...(this.state.eligibleVoterIds || [])];
+        this.state.finalistCount ||= 3;
         this._assertState();
     }
 
@@ -353,7 +370,7 @@ export class SurvivorGame {
 
     beginJuryVote() {
         this._requirePhase('jury_questioning');
-        if (this.state.juryIds.length === 0) throw new Error('The final three has no jury');
+        if (this.state.juryIds.length === 0) throw new Error('The finalists have no jury');
         this.state.phase = 'jury_voting';
         this.state.eligibleVoterIds = [...this.state.juryIds];
         this.state.eligibleTargetIds = [...this.state.finalistIds];
@@ -407,10 +424,11 @@ export class SurvivorGame {
         player.eliminatedRound = this.state.round;
         player.placement = remainingBefore;
         this.state.bootOrder.push(playerId);
-        if (this.state.merged) {
+        const isFinalist = this.state.finalistIds.includes(playerId);
+        if (this.state.merged && !isFinalist) {
             player.jury = true;
             this.state.juryIds.push(playerId);
-        } else {
+        } else if (!this.state.merged) {
             this.state.preMergeBootIds.push(playerId);
         }
         this._event('player.eliminated', {
@@ -421,7 +439,10 @@ export class SurvivorGame {
         });
 
         const remaining = this.activePlayerIds();
-        if (remaining.length === 3) {
+        if (remaining.length === 1 && this.state.finalistIds.length > 0) {
+            return this._complete(remaining[0]);
+        }
+        if (remaining.length === this.state.finalistCount) {
             this.state.finalistIds = remaining;
             this.state.phase = 'jury_questioning';
             this.state.challenge = null;
@@ -430,7 +451,7 @@ export class SurvivorGame {
             this.state.councilVoterIds = [];
             this.state.eligibleTargetIds = [];
             this.state.ballots = {};
-            this._event('final_three.reached', { finalistIds: remaining });
+            this._event('finalists.reached', { finalistIds: remaining });
             return this.snapshot();
         }
         if (!this.state.merged && remaining.length === this.state.mergeAt) {
@@ -464,6 +485,18 @@ export class SurvivorGame {
             const decidingFinalist = this.state.finalistIds.find(
                 id => !result.leaders.includes(id)
             );
+            if (!decidingFinalist) {
+                // A final two has nobody left to break a deadlocked jury, so the
+                // finalists settle it at the fire-making pit.
+                this.state.phase = 'fire_making';
+                this.state.tiedIds = result.leaders;
+                this.state.ballots = {};
+                this._event('fire_making.started', {
+                    contestantIds: result.leaders,
+                    reason: 'jury-deadlock',
+                });
+                return this.snapshot();
+            }
             this.state.phase = 'finalist_tiebreak';
             this.state.tiedIds = result.leaders;
             this.state.eligibleVoterIds = [decidingFinalist];
@@ -494,6 +527,17 @@ export class SurvivorGame {
         this.state.phase = 'completed';
         this.state.winnerIds = [winnerId];
         this.state.players[winnerId].placement = 1;
+        const counts = this.state.finalVote?.counts || {};
+        this.state.finalistIds
+            .filter(id => id !== winnerId)
+            .sort((left, right) =>
+                (counts[right] || 0) - (counts[left] || 0)
+                || left.localeCompare(right)
+            )
+            .forEach((id, index) => {
+                const player = this.state.players[id];
+                if (player.placement == null) player.placement = index + 2;
+            });
         this._event('season.completed', { winnerId });
         return this.snapshot();
     }

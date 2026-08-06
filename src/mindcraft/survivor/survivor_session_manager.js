@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { validateGameParticipants } from '../contest/game_session_manager.js';
 import { buildChallengeDeck, resolveTeamChallenge } from './survivor_challenges.js';
+import { MIN_SURVIVOR_PLAYERS } from './survivor_game.js';
 
 function clone(value) {
     return value === null || value === undefined
@@ -15,7 +16,9 @@ function phasePrompt(state, playerId) {
     const legalTargets = state.eligibleTargetIds.filter(id => id !== playerId);
     const common = [
         `SURVIVOR SEASON — ROUND ${state.round}.`,
-        `You are ${playerId}. Tribe: ${player.tribe}.`,
+        state.merged
+            ? `You are ${playerId}. Every player is now an individual: there are no tribes.`
+            : `You are ${playerId}. Tribe: ${player.tribe}.`,
         `Phase: ${state.phase}.`,
         `Active players: ${state.participantIds.filter(id => state.players[id].active).join(', ')}.`,
         `Jury: ${state.juryIds.join(', ') || 'none yet'}.`,
@@ -61,17 +64,20 @@ function phasePrompt(state, playerId) {
         case 'jury_questioning':
             common.push(
                 player.jury
-                    ? `Question the final three (${state.finalistIds.join(', ')}) and decide who played the best game.`
-                    : 'You are in the final three. Explain your strategic game honestly and persuade the jury.'
+                    ? `Question the final ${state.finalistIds.length} (${state.finalistIds.join(', ')}) and decide who played the best game.`
+                    : `You are in the final ${state.finalistIds.length}. Explain your strategic game honestly and persuade the jury.`
             );
             break;
-        case 'fire_making':
+        case 'fire_making': {
+            const decidesSeason = state.finalistIds.length > 0
+                && state.tiedIds.every(id => state.finalistIds.includes(id));
             common.push(
                 state.tiedIds.includes(playerId)
-                    ? 'You are in the fire-making tiebreak. Prepare to compete.'
+                    ? `You are in the fire-making tiebreak. Prepare to compete.${decidesSeason ? ' The winner is the Sole Survivor.' : ''}`
                     : `Watch the fire-making tiebreak between ${state.tiedIds.join(' and ')}.`
             );
             break;
+        }
         case 'completed':
             common.push(`The winner is ${state.winnerIds.join(', ')}.`);
             break;
@@ -319,8 +325,8 @@ export class SurvivorSessionManager {
             ...participant,
             voice: this.resolveParticipantVoice(participant.name, participant.voice),
         }));
-        if (participants.length <= mergeAt) {
-            throw new Error(`Choose at least ${mergeAt + 1} players for a merge at ${mergeAt}`);
+        if (participants.length < MIN_SURVIVOR_PLAYERS) {
+            throw new Error(`Choose at least ${MIN_SURVIVOR_PLAYERS} Survivor players`);
         }
         const phaseDurationsMs = {};
         for (const [key, value] of Object.entries(request.phaseDurationsMs || {})) {
@@ -333,6 +339,7 @@ export class SurvivorSessionManager {
         const season = await this.coordinator.start({
             participantIds,
             mergeAt,
+            finalistCount: request.finalistCount,
             tribeNames: request.tribeNames,
         });
         const challengeGameIds = request.challengeGameIds;
@@ -359,6 +366,7 @@ export class SurvivorSessionManager {
             phaseDeadlineAt: null,
             paused: false,
             phaseDurationsMs,
+            readiness: null,
         };
         this._emit();
         try {
@@ -681,7 +689,9 @@ export class SurvivorSessionManager {
         const state = this.coordinator.view();
         if (!state) return;
         const recipients = state.participantIds.filter(id =>
-            state.players[id].active || state.players[id].jury
+            state.players[id].active
+            || state.players[id].jury
+            || state.finalistIds.includes(id)
         );
         await Promise.allSettled(recipients.map(id =>
             this.sendDirective(id, phasePrompt(state, id), {
@@ -744,20 +754,38 @@ export class SurvivorSessionManager {
             const ready = participantIds.filter(id => this.isAgentReady(id));
             if (ready.length === participantIds.length) {
                 this._log('info', `all ${ready.length} bot(s) are in-game`);
+                this._publishReadiness(null);
                 return;
             }
             if (ready.length !== lastReady) {
                 lastReady = ready.length;
                 this._log('info', `waiting for bots (${ready.length}/${participantIds.length} in-game)`);
+                // Provisioning can block for the whole ready timeout, so the
+                // operator needs to see which bot everyone is waiting on.
+                this._publishReadiness({
+                    stage,
+                    ready: ready.length,
+                    total: participantIds.length,
+                    pending: participantIds.filter(id => !this.isAgentReady(id)),
+                    waitingUntil: deadline,
+                });
             }
             await this.sleep(500);
         }
+        this._publishReadiness(null);
         const missing = participantIds.filter(id => !this.isAgentReady(id));
         const detail = missing.map(id => this._describeAgentStatus(id)).join(', ');
         throw new Error(
             `Survivor bots did not join within ${Math.round(this.readyTimeoutMs / 1000)}s during ${stage}: ${detail}. `
             + 'Check that the Minecraft server is reachable and that no stale bots hold these names.'
         );
+    }
+
+    _publishReadiness(readiness) {
+        if (!this.active) return;
+        if (!readiness && !this.active.readiness) return;
+        this.active.readiness = readiness;
+        this._emit();
     }
 
     _requireActive() {

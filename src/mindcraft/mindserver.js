@@ -15,6 +15,7 @@ import {
 } from '../agent/tts_voices.js';
 import { TTSConfig as elevenLabsTTSConfig } from '../models/elevenlabs.js';
 import { ColonyCoordinator } from './colony/colony_coordinator.js';
+import { colonyControlsAgent, isGameSessionAgent } from './agent_ownership.js';
 import {
     CONTEST_NARRATOR_CHARACTER,
     ContestArenaManager,
@@ -37,6 +38,7 @@ import {
     getContestGamePreset,
     getSurvivorSeasonPreset,
     listContestGamePresets,
+    listSurvivorScenarios,
     safeHighlightSessionId,
     scoreDepthRace,
     scoreTowerBattle,
@@ -1439,7 +1441,8 @@ async function runColonySupervisor() {
 
         const wallStates = await Promise.all(listConnections().map(async (connection) => {
             const colonyAgent = colonyCoordinator.snapshot().agents[connection.name];
-            if (!colonyAgent || !connection.in_game || !connection.socket) {
+            if (!colonyAgent || !colonyControlsAgent(connection)
+                || !connection.in_game || !connection.socket) {
                 return [connection, null];
             }
             try {
@@ -1453,7 +1456,7 @@ async function runColonySupervisor() {
         for (const [connection, wallState] of wallStates) {
             const agentName = connection.name;
             const colonyAgent = colonyCoordinator.snapshot().agents[agentName];
-            if (!colonyAgent) continue;
+            if (!colonyAgent || !colonyControlsAgent(connection)) continue;
             if (connection.in_game && connection.socket) {
                 const phase = wallState?.action?.phase
                     || (wallState?.action?.isIdle ? 'idle' : 'busy');
@@ -1556,7 +1559,7 @@ function hasLiveAgentNamed(name) {
  * actually online.
  */
 function holdsName(connection) {
-    return isLiveConnection(connection) && !connection.settings?.game_session;
+    return isLiveConnection(connection) && !isGameSessionAgent(connection);
 }
 
 function reservedAgentNames() {
@@ -1658,7 +1661,11 @@ export async function unregisterAgent(agentRef, status = 'failed') {
     const connection = getConnection(agentRef);
     if (!connection) return;
     agent_connections.delete(connection.id);
-    await releaseColonyAgent(connection.name, status);
+    // Tearing down a contest bot must not retire the colony agent that happens
+    // to share its name.
+    if (colonyControlsAgent(connection)) {
+        await releaseColonyAgent(connection.name, status);
+    }
 }
 
 export function logoutAgent(agentId) {
@@ -2016,6 +2023,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     success: Boolean(survivorSessionManager),
                     data: survivorSessionManager?.view() ?? null,
                     preset: getSurvivorSeasonPreset(),
+                    scenarios: listSurvivorScenarios(),
                     games: listContestGamePresets(),
                     join: getMinecraftJoinInfo(),
                     error: survivorSessionManager ? null : 'Survivor is not enabled',
@@ -2030,14 +2038,22 @@ export function createMindServer(host_public = false, port = 8080) {
                 await ensureContest();
                 if (!survivorSessionManager) throw new Error('Survivor is not enabled');
                 if (gameSessionManager?.view()) throw new Error('A contest game is already active');
-                const preset = getSurvivorSeasonPreset();
+                const preset = getSurvivorSeasonPreset(request?.scenarioId);
                 const data = await survivorSessionManager.start({
                     participants: request?.participants,
                     mergeAt: request?.mergeAt ?? preset.mergeAt,
+                    finalistCount: request?.finalistCount ?? preset.finalistCount,
                     tribeNames: request?.tribeNames ?? preset.tribeNames,
                     challengeGameIds: request?.challengeGameIds ?? preset.challengeGameIds,
                     systemPrompt: request?.systemPrompt,
-                    phaseDurationsMs: request?.phaseDurationsMs,
+                    phaseDurationsMs: request?.phaseDurationsMs ?? {
+                        strategy: preset.phaseDurationsMs.strategy,
+                        voting: preset.phaseDurationsMs.voting,
+                        revote: preset.phaseDurationsMs.revote,
+                        deadlock: preset.phaseDurationsMs.deadlock,
+                        jury_questioning: preset.phaseDurationsMs.juryQuestioning,
+                        jury_voting: preset.phaseDurationsMs.juryVoting,
+                    },
                 });
                 emitSurvivorUpdate();
                 callback({ success: true, data });
@@ -2440,7 +2456,9 @@ export function createMindServer(host_public = false, port = 8080) {
                 // Colored nametag + model suffix, visible from any distance.
                 assignModelTeam(agentName, connection.settings?.profile?.model)
                     .catch(error => console.warn(`Nametag assignment failed for ${agentName}:`, error));
-                if (colonyCoordinator) {
+                // A game bot only borrows this name. Reconciling it against a
+                // retired colony record would stop the bot the contest just spawned.
+                if (colonyCoordinator && colonyControlsAgent(connection)) {
                     const colonyAgent = colonyCoordinator.snapshot().agents[agentName];
                     if (colonyAgent?.desired === false) {
                         mindcraft.stopAgent(connection.id);

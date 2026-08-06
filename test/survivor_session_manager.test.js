@@ -60,14 +60,21 @@ class FakeContestCoordinator {
         }];
     }
 
+    completeCurrent(manager, winnerId) {
+        const contestId = manager.view().challengeContestId;
+        const contest = this.contests[contestId];
+        this.complete(contestId, winnerId ?? contest.participantIds[0]);
+        return contestId;
+    }
+
     cancelContest(id) {
         this.activeContestId = null;
         this.contests[id].status = 'cancelled';
     }
 }
 
-function participants() {
-    return Array.from({ length: 11 }, (_, index) => ({
+function participants(count = 11) {
+    return Array.from({ length: count }, (_, index) => ({
         name: `Bot${index + 1}`,
         profileId: 'test',
         voice: '',
@@ -142,6 +149,65 @@ test('provisions a persistent roster and starts a team challenge', async () => {
     assert.equal(coordinator.view().phase, 'challenge');
     assert.ok(contestCoordinator.activeContestId);
     assert.ok(directives.some(item => item.prompt.includes('Tribe:')));
+});
+
+test('starts a four-player season already merged', async () => {
+    const { manager, coordinator, contestCoordinator, directives } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    assert.equal(manager.view().createdAgents.length, 4);
+    assert.equal(coordinator.view().merged, true);
+    assert.equal(
+        contestCoordinator.contests[manager.view().challengeContestId].metadata.survivorMode,
+        'individual'
+    );
+    // Nobody should be told they have a tribe in a season that never had one.
+    assert.ok(directives.every(item => !item.prompt.includes('Tribe:')));
+    assert.ok(directives.some(item => item.prompt.includes('no tribes')));
+});
+
+test('a four-player season runs end to end to a two-juror finale', async () => {
+    const { manager, coordinator, contestCoordinator, advance } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race', 'tower_battle'],
+    });
+
+    const phases = [];
+    for (let step = 0; step < 20; step++) {
+        const game = coordinator.view();
+        if (game.status !== 'running') break;
+        if (game.phase === 'challenge') {
+            contestCoordinator.completeCurrent(manager, 'Bot1');
+            await manager.syncContestView(contestCoordinator.view());
+        } else {
+            advance(2);
+            await manager.tick();
+        }
+        phases.push(coordinator.view().phase);
+    }
+
+    const final = coordinator.view();
+    assert.equal(final.status, 'completed');
+    assert.equal(final.round, 2, 'four players owe the jury two Tribal Councils');
+    assert.equal(final.juryIds.length, 2);
+    assert.equal(final.finalistIds.length, 2);
+    assert.deepEqual(final.winnerIds, ['Bot1']);
+    assert.ok(
+        Object.values(final.players).every(player => Number.isInteger(player.placement)),
+        'every player is ranked when the season ends'
+    );
+    assert.deepEqual(
+        [...new Set(phases)].filter(phase => phase !== 'challenge'),
+        ['strategy', 'voting', 'jury_questioning', 'jury_voting', 'completed']
+    );
+    assert.equal(manager.view().status, 'completed');
 });
 
 test('challenge result opens strategy and timeout opens secret voting', async () => {
@@ -261,6 +327,39 @@ test('recovery respawns every reachable bot even when one fails to launch', asyn
     assert.equal(recovered.lastFailure.stage, 'recovery');
     assert.match(recovered.lastFailure.error, /did not join/);
     assert.ok(recovered.lastFailure.agents.some(agent => agent.name === 'Bot3'));
+});
+
+test('provisioning reports which bots the season is still waiting on', async () => {
+    const { options, coordinator, contestCoordinator } = await createManager();
+    let clock = 0;
+    const updates = [];
+    const manager = new SurvivorSessionManager({
+        ...options,
+        coordinator,
+        contestCoordinator,
+        isAgentReady: name => name !== 'Bot3',
+        clock: () => clock,
+        sleep: () => {
+            clock += 500;
+            return Promise.resolve();
+        },
+        onUpdate: view => updates.push(view),
+    });
+
+    await assert.rejects(manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    }));
+
+    const progress = updates.map(view => view?.readiness).filter(Boolean);
+    assert.ok(progress.length > 0, 'readiness progress is broadcast while provisioning');
+    const latest = progress.at(-1);
+    assert.equal(latest.stage, 'startup');
+    assert.equal(latest.total, 4);
+    assert.equal(latest.ready, 3);
+    assert.deepEqual(latest.pending, ['Bot3']);
 });
 
 test('readiness failures name the stuck bots and their launch stage', async () => {

@@ -26,10 +26,14 @@ export {
 export {
     CONTEST_BOT_CHARACTERS,
     CONTEST_GAME_PRESETS,
+    DEFAULT_SURVIVOR_SCENARIO_ID,
+    SURVIVOR_FOUR_PLAYER_PRESET,
+    SURVIVOR_SCENARIOS,
     SURVIVOR_SEASON_PRESET,
     getContestGamePreset,
     getSurvivorSeasonPreset,
     listContestGamePresets,
+    listSurvivorScenarios,
 } from './game_presets.js';
 export {
     DOG_TAMING_ADVANCEMENT,

@@ -54,10 +54,14 @@ export const CONTEST_BOT_CHARACTERS = Object.freeze([
 
 export const SURVIVOR_SEASON_PRESET = Object.freeze({
     id: 'survivor',
+    scenarioId: 'classic',
     title: 'Survivor Bot Season',
     blurb: 'Two tribes face team challenges, secret votes, a merge, and a final-three jury.',
     defaultCharacters: CONTEST_BOT_CHARACTERS,
+    castSize: 11,
+    minimumPlayers: 11,
     mergeAt: 10,
+    finalistCount: 3,
     tribeNames: Object.freeze(['Ember', 'Tide']),
     phaseDurationsMs: Object.freeze({
         strategy: 2 * 60_000,
@@ -78,6 +82,43 @@ export const SURVIVOR_SEASON_PRESET = Object.freeze({
         'deepest_5',
     ]),
 });
+
+// A four-bot season plays entirely post-merge: two individual immunity
+// challenges, two Tribal Councils, then a two-juror finale. Short phases keep a
+// full season inside a single test sitting.
+export const SURVIVOR_FOUR_PLAYER_PRESET = Object.freeze({
+    id: 'survivor',
+    scenarioId: 'four_player',
+    title: 'Survivor Final Four',
+    blurb: 'Four bots, no tribes: two immunity challenges, two votes, and a final two judged by a jury of two.',
+    defaultCharacters: Object.freeze(CONTEST_BOT_CHARACTERS.slice(0, 4)),
+    castSize: 4,
+    minimumPlayers: 4,
+    mergeAt: 4,
+    finalistCount: 2,
+    tribeNames: Object.freeze(['Ember', 'Tide']),
+    phaseDurationsMs: Object.freeze({
+        strategy: 90_000,
+        voting: 45_000,
+        revote: 30_000,
+        deadlock: 45_000,
+        juryQuestioning: 2 * 60_000,
+        juryVoting: 45_000,
+    }),
+    challengeGameIds: Object.freeze([
+        'deepest_2_5',
+        'tower_battle',
+        'cake_race',
+        'death_race',
+    ]),
+});
+
+export const SURVIVOR_SCENARIOS = Object.freeze({
+    classic: SURVIVOR_SEASON_PRESET,
+    four_player: SURVIVOR_FOUR_PLAYER_PRESET,
+});
+
+export const DEFAULT_SURVIVOR_SCENARIO_ID = 'classic';
 
 export const CONTEST_GAME_PRESETS = Object.freeze({
     cake_race: Object.freeze({
@@ -282,14 +323,20 @@ export function getContestGamePreset(gameId) {
     return preset;
 }
 
-export function getSurvivorSeasonPreset() {
+export function getSurvivorSeasonPreset(scenarioId = DEFAULT_SURVIVOR_SCENARIO_ID) {
+    const preset = SURVIVOR_SCENARIOS[scenarioId || DEFAULT_SURVIVOR_SCENARIO_ID];
+    if (!preset) throw new Error(`Unknown Survivor scenario: ${scenarioId}`);
     return {
-        ...SURVIVOR_SEASON_PRESET,
-        defaultCharacters: SURVIVOR_SEASON_PRESET.defaultCharacters.map(
-            character => ({ ...character })
-        ),
-        tribeNames: [...SURVIVOR_SEASON_PRESET.tribeNames],
-        phaseDurationsMs: { ...SURVIVOR_SEASON_PRESET.phaseDurationsMs },
-        challengeGameIds: [...SURVIVOR_SEASON_PRESET.challengeGameIds],
+        ...preset,
+        defaultCharacters: preset.defaultCharacters.map(character => ({ ...character })),
+        tribeNames: [...preset.tribeNames],
+        phaseDurationsMs: { ...preset.phaseDurationsMs },
+        challengeGameIds: [...preset.challengeGameIds],
     };
+}
+
+export function listSurvivorScenarios() {
+    return Object.keys(SURVIVOR_SCENARIOS).map(scenarioId =>
+        getSurvivorSeasonPreset(scenarioId)
+    );
 }
