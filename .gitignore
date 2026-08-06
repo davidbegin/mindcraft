@@ -14,6 +14,7 @@ services/viaproxy/ViaLoader/**
 services/viaproxy/saves.json
 services/viaproxy/viaproxy.yml
 tmp/
+mc-server/
 wandb/
 experiments/
 andy_*.json
