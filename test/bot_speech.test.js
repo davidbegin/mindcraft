@@ -6,6 +6,8 @@ import {
     getHumanCommandAcknowledgement,
     getSpokenChatText,
     isGameOperationalMessage,
+    pickSpotReferencePhrase,
+    SPOT_REFERENCE_PHRASES,
 } from '../src/agent/speech_policy.js';
 
 test('voices conversational text while excluding robot command syntax', () => {
@@ -16,7 +18,7 @@ test('voices conversational text while excluding robot command syntax', () => {
     assert.equal(getSpokenChatText('!goToPlayer("Alex", 3)'), '');
 });
 
-test('replaces spoken coordinates with the fixed meeting line', () => {
+test('replaces spoken coordinates with a vague meeting-place phrase', () => {
     const coordinateLines = [
         'Meet me at x: 12, y: 64, z: -5.',
         'The base is X 12 Z -5.',
@@ -25,9 +27,31 @@ test('replaces spoken coordinates with the fixed meeting line', () => {
         'Meet near 12 64 -5.',
     ];
     for (const line of coordinateLines) {
-        assert.equal(getAudibleChatText(line), 'Meet me at the spot.');
+        const spoken = getAudibleChatText(line);
+        assert.ok(
+            SPOT_REFERENCE_PHRASES.includes(spoken),
+            `expected a known meeting-place phrase, got: ${spoken}`
+        );
+        assert.doesNotMatch(spoken, /\d/, 'spoken line must never leak coordinate digits');
     }
     assert.equal(getAudibleChatText('Meet me by the oak tree.'), 'Meet me by the oak tree.');
+});
+
+test('varies the spoken meeting-place phrase across a coordinate line', () => {
+    const line = 'Meet me at x: 12, y: 64, z: -5.';
+    const first = getAudibleChatText(line, () => 0);
+    const last = getAudibleChatText(line, () => 0.999999);
+    assert.equal(first, SPOT_REFERENCE_PHRASES[0]);
+    assert.equal(last, SPOT_REFERENCE_PHRASES[SPOT_REFERENCE_PHRASES.length - 1]);
+    assert.notEqual(first, last);
+});
+
+test('pickSpotReferencePhrase stays within the phrase pool for edge randoms', () => {
+    assert.equal(pickSpotReferencePhrase(() => 0), SPOT_REFERENCE_PHRASES[0]);
+    assert.equal(
+        pickSpotReferencePhrase(() => 1),
+        SPOT_REFERENCE_PHRASES[SPOT_REFERENCE_PHRASES.length - 1]
+    );
 });
 
 test('guarantees humans an audible reply when a model emits only a command', () => {
