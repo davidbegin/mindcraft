@@ -3654,6 +3654,10 @@
             btn.dataset.session = sessionKey;
         }
 
+        function contestHadRecording(contest) {
+            return contest?.metadata?.gameSession?.recordingEnabled === true;
+        }
+
         function hideHighlightReel() {
             clearTimeout(highlightReelTimer);
             highlightReelTimer = null;
@@ -3719,11 +3723,14 @@
             }
         }
 
+        // Highlight reels are opt-in: only probe when the game was launched with
+        // recording enabled. Otherwise every agents-status refresh would 404.
         function showHighlightReel(contest) {
-            if (!contest?.id || contest.status !== 'completed') {
+            if (!contest?.id || contest.status !== 'completed' || !contestHadRecording(contest)) {
                 hideHighlightReel();
                 return;
             }
+            if (highlightContestId === contest.id) return;
             clearTimeout(highlightReelTimer);
             highlightReelTimer = null;
             highlightContestId = contest.id;
@@ -3922,7 +3929,9 @@
                 warpBtn.hidden = true;
                 directorBtn.hidden = true;
                 updateWatchLiveButton(null);
-                updateGameSessionExport(latestDone.id);
+                updateGameSessionExport(
+                    contestHadRecording(latestDone) ? latestDone.id : null
+                );
                 renderContestResults(latestDone);
             } else {
                 hideHighlightReel();

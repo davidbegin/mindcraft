@@ -2318,9 +2318,9 @@ export function createMindServer(host_public = false, port = 8080) {
     app.get('/api/highlights/:contestId', (req, res) => {
         try {
             const payload = readHighlightStatus(req.params.contestId);
-            const code = payload.status === 'missing' ? 404
-                : payload.success === false ? 500
-                : 200;
+            // "missing" is the normal state when recording/highlights were never
+            // opted in — return 200 so the browser console stays quiet.
+            const code = payload.success === false ? 500 : 200;
             res.status(code).json(payload);
         } catch (error) {
             res.status(400).json({
