@@ -100,10 +100,7 @@ export function formatContestScore(contest, result) {
         return result.score > 0 ? 'cake crafted' : 'outpaced';
     }
     if (contest.rules?.type === 'team_base_siege') {
-        if (result.details?.surviving) {
-            const survivors = result.details?.survivors;
-            return Number.isFinite(survivors) ? `${survivors} alive` : 'surviving';
-        }
+        if (result.details?.surviving) return 'surviving';
         const survivedMs = result.details?.survivedMs;
         if (Number.isFinite(survivedMs)) {
             return `out at ${formatContestTime(survivedMs)}`;
@@ -169,7 +166,6 @@ function rankedResults(contest) {
             || left.participantId.localeCompare(right.participantId)
         );
     const teamMode = contest.rules?.type === 'team_tower_battle'
-        || contest.rules?.type === 'team_base_siege'
         || (
             contest.rules?.type === 'cake_race'
             && results.some(result => result.details?.teamName)
@@ -352,7 +348,7 @@ export class ContestHud {
     }
 
     async _announceCompleted(contest) {
-        const teamMode = ['team_tower_battle', 'team_base_siege', 'cake_race'].includes(contest.rules?.type)
+        const teamMode = ['team_tower_battle', 'cake_race'].includes(contest.rules?.type)
             && rankedResults(contest).some(result => result.details?.teamName);
         const winners = teamMode
             ? rankedResults(contest).filter(result => result.rank === 1)

@@ -3700,7 +3700,6 @@
             let results = contest?.results || [];
             if (
                 contest?.rules?.type === 'team_tower_battle'
-                || contest?.rules?.type === 'team_base_siege'
                 || (
                     contest?.rules?.type === 'cake_race'
                     && results.some(result => result.details?.teamName)
@@ -3745,7 +3744,7 @@
                         ? `${result.details?.towerHeight || 0} - ${result.details?.deathPenalty || 0} = ${result.score} blocks`
                     : contest?.rules?.type === 'team_base_siege'
                         ? (result.details?.surviving
-                            ? `${result.details?.survivors ?? '?'} alive`
+                            ? 'surviving'
                             : `out at ${fmtElapsed(result.details?.survivedMs || 0)}`)
                     : contest?.rules?.type === 'cake_race' && result.details?.teamName
                         ? (
@@ -4368,7 +4367,7 @@
                 showHighlightReel(latestDone);
                 live.classList.toggle('idle', latestDone.status !== 'completed');
                 title.textContent = `${latestDone.title} · ${latestDone.status}`;
-                const winningTeams = ['team_tower_battle', 'team_base_siege', 'cake_race'].includes(latestDone.rules?.type)
+                const winningTeams = ['team_tower_battle', 'cake_race'].includes(latestDone.rules?.type)
                     ? [...new Set(
                         (latestDone.results || [])
                             .filter(result => result.rank === 1)
@@ -4528,11 +4527,11 @@
             if (isBaseSiege) {
                 teamFields.push({
                     id: 'buildSeconds',
-                    label: 'Build phase after planning (seconds)',
+                    label: 'Build phase before combat (seconds)',
                     min: 0,
-                    max: 120,
+                    max: 300,
                     step: 15,
-                    value: Math.round((game?.buildPhaseMs || 30_000) / 1000),
+                    value: Math.round((game?.buildPhaseMs || 180_000) / 1000),
                 });
             }
             if (isSpleef) {
@@ -4576,8 +4575,8 @@
                     }
                     if (isBaseSiege) {
                         const buildSeconds = Number(fields.buildSeconds);
-                        if (!(Number.isFinite(buildSeconds) && buildSeconds >= 0 && buildSeconds <= 120)) {
-                            return 'Build phase must be between 0 and 120 seconds';
+                        if (!(Number.isFinite(buildSeconds) && buildSeconds >= 0 && buildSeconds <= 300)) {
+                            return 'Build phase must be between 0 and 300 seconds';
                         }
                     }
                     if (isSpleef) {

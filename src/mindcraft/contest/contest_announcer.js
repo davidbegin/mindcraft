@@ -23,9 +23,8 @@ export function buildPlanningAnnouncement(contest, planningMs) {
     const title = String(contest?.title || 'Game').trim();
     const seconds = Math.max(1, Math.round(Number(planningMs) / 1000));
     if (contest?.rules?.type === 'team_base_siege') {
-        return `${title}. Teams, you have ${seconds} seconds to plan. `
-            + 'Captain, call one quick base. Agree who builds and who hunts. '
-            + 'Balance offense and defense. Hiding forever loses — the arena will shrink if both teams survive. No building until the build phase.';
+        return `${title}. Stand by for ${seconds} seconds. `
+            + 'Do nothing yet. The three-minute build timer comes next, then combat.';
     }
     if (contest?.rules?.type === 'cake_race') {
         return `${title}. Teams, you have ${seconds} seconds to plan. `
@@ -41,8 +40,14 @@ export function buildBuildPhaseAnnouncement(contest, buildPhaseMs) {
     const title = String(contest?.title || 'Game').trim();
     const seconds = Math.max(1, Math.round(Number(buildPhaseMs) / 1000));
     if (contest?.rules?.type === 'team_base_siege') {
-        return `${title}. Build phase: ${seconds} seconds to fortify and gear up. `
-            + 'No attacking yet. Stay on the platform. Go!';
+        const minutes = seconds >= 60 && seconds % 60 === 0
+            ? Math.round(seconds / 60)
+            : null;
+        const duration = minutes
+            ? `${minutes} minute${minutes === 1 ? '' : 's'}`
+            : `${seconds} seconds`;
+        return `${title}. Build phase: ${duration} on the clock. `
+            + 'Fortify and craft. No attacking yet. Stay on the platform. Go!';
     }
     return `${title}. Build phase: ${seconds} seconds to raise a quick base. No attacking yet. Go!`;
 }
