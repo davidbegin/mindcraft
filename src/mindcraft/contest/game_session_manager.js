@@ -6,9 +6,7 @@ import {
     pickTeamCaptain,
 } from './game_content.js';
 import {
-    buildSimultaneousTeleportCommands,
     getArenaJoinInfo,
-    partitionTeleportCommands,
 } from './arena_manager.js';
 import { isBaseSiegeContest, isTeamContestType, isTeamTowerContest } from './team_games.js';
 import {
