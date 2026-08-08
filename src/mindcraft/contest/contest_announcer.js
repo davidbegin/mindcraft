@@ -40,6 +40,10 @@ export function buildPlanningAnnouncement(contest, planningMs) {
 export function buildBuildPhaseAnnouncement(contest, buildPhaseMs) {
     const title = String(contest?.title || 'Game').trim();
     const seconds = Math.max(1, Math.round(Number(buildPhaseMs) / 1000));
+    if (contest?.rules?.type === 'team_base_siege') {
+        return `${title}. Build phase: ${seconds} seconds to fortify and gear up. `
+            + 'No attacking yet. Stay on the platform. Go!';
+    }
     return `${title}. Build phase: ${seconds} seconds to raise a quick base. No attacking yet. Go!`;
 }
 
@@ -97,7 +101,7 @@ export function buildContestResultAnnouncement(contest) {
             .filter(Boolean)
     )];
     if (
-        ['team_tower_battle', 'team_base_siege', 'cake_race'].includes(contest?.rules?.type)
+        ['team_tower_battle', 'cake_race'].includes(contest?.rules?.type)
         && winningTeams.length > 0
     ) {
         if (winningTeams.length === 1) {

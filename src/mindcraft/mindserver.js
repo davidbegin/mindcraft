@@ -1236,19 +1236,7 @@ async function getContestLeader(contest) {
     } else if (contest.rules?.type === 'hot_button') {
         results = scoreHotButton(contest).filter(result => !result.disqualified);
     } else if (contest.rules?.type === 'team_base_siege') {
-        const scored = scoreTeamBaseSiege(contest).filter(result => !result.disqualified);
-        const byTeam = new Map();
-        for (const result of scored) {
-            const teamName = result.details?.teamName;
-            if (teamName && !byTeam.has(teamName)) {
-                byTeam.set(teamName, {
-                    participantId: teamName,
-                    score: result.score,
-                    details: result.details,
-                });
-            }
-        }
-        results = [...byTeam.values()];
+        results = scoreTeamBaseSiege(contest).filter(result => !result.disqualified);
     } else if (contest.rules?.type === 'cake_race' && contestHasTeamSession(contest)) {
         const atlas = liveCakeAtlas?.contestId === contest.id
             ? liveCakeAtlas

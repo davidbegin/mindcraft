@@ -421,38 +421,6 @@ export class ContestCoordinator {
             const survivors = contest.participantIds.filter(
                 id => !contest.eliminations[id]
             );
-            if (contest.rules?.type === 'team_base_siege') {
-                const gameSession = contest.metadata?.gameSession || {};
-                const teamByParticipant = gameSession.teamByParticipant || {};
-                const teamNames = Array.isArray(gameSession.teamNames) ? gameSession.teamNames : [];
-                const livingTeams = teamNames.filter(teamName =>
-                    survivors.some(id => teamByParticipant[id] === teamName)
-                );
-                if (livingTeams.length === 1) {
-                    const winningTeam = livingTeams[0];
-                    const winnerIds = survivors.filter(id => teamByParticipant[id] === winningTeam);
-                    for (const winnerId of winnerIds) {
-                        contest.submissions[winnerId] = {
-                            participantId: winnerId,
-                            payload: {
-                                event: 'last_team_standing',
-                                teamName: winningTeam,
-                                elapsedMs: now - contest.startedAt,
-                            },
-                            submittedAt: now,
-                        };
-                    }
-                    await this._commit('winner.detected', {
-                        contestId,
-                        participantId: winnerIds[0] || null,
-                        payload: { event: 'last_team_standing', teamName: winningTeam },
-                    });
-                    await this._finalizeContest(contest, 'last-team-standing');
-                } else if (survivors.length === 0) {
-                    await this._finalizeContest(contest, 'all-eliminated');
-                }
-                return clone(contest);
-            }
             if (contest.rules?.type === 'hot_button') {
                 this._ensurePressedIds(contest);
                 if (!contest.metadata.pressedIds.includes(participantId)) {
@@ -721,7 +689,6 @@ export class ContestCoordinator {
         contest.results = rankResults(contest, judged);
         if (
             contest.rules?.type === 'team_tower_battle'
-            || contest.rules?.type === 'team_base_siege'
             || (
                 contest.rules?.type === 'cake_race'
                 && Array.isArray(contest.metadata?.gameSession?.teamNames)

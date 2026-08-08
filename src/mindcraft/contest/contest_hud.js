@@ -264,7 +264,7 @@ export class ContestHud {
         const seriesLabel = contest?.metadata?.series?.bestOf > 1
             ? formatSeriesLabel(contest.metadata.series)
             : '';
-        const competitors = ['team_tower_battle', 'team_base_siege', 'cake_race'].includes(contest.rules?.type)
+        const competitors = ['team_tower_battle', 'cake_race'].includes(contest.rules?.type)
             && contest.metadata?.gameSession?.teamNames?.length === 2
             ? contest.metadata.gameSession.teamNames.join(' vs ')
             : contest.participantIds.join(' vs ');
