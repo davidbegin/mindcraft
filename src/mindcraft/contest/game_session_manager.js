@@ -6,17 +6,11 @@ import {
     pickTeamCaptain,
 } from './game_content.js';
 import {
-    buildPressureRoundCommands,
     buildSimultaneousTeleportCommands,
     getArenaJoinInfo,
     partitionTeleportCommands,
 } from './arena_manager.js';
-import {
-    canDeferSiegeDeadline,
-    nextSiegeHalfSize,
-    remainingTeamSiegeSurvivors,
-} from './team_base_siege.js';
-import { isTeamContestType, isTeamTowerContest } from './team_games.js';
+import { isBaseSiegeContest, isTeamContestType, isTeamTowerContest } from './team_games.js';
 import {
     buildSeriesIntermissionAnnouncement,
     buildSeriesResultAnnouncement,
@@ -511,7 +505,7 @@ export class GameSessionManager {
             ? request.durationMs
             : preset.durationMs;
         const planningMs = teamSetup ? resolvePlanningMs(request.planningMs, preset) : 0;
-        const buildPhaseMs = teamSetup && preset.rules?.type === 'team_base_siege'
+        const buildPhaseMs = isBaseSiegeContest(preset.rules?.type)
             ? resolveBuildPhaseMs(request.buildPhaseMs, preset)
             : 0;
         const recordingEnabled = request.recordingEnabled === true;
@@ -549,7 +543,7 @@ export class GameSessionManager {
             steps: buildLaunchSteps({
                 recording: recordingEnabled,
                 teamPlanning: Boolean(teamSetup) && planningMs > 0,
-                teamBuild: Boolean(teamSetup) && buildPhaseMs > 0,
+                teamBuild: buildPhaseMs > 0,
             }),
         };
         const reclaimStep = this.launch.steps[0];
@@ -703,6 +697,11 @@ export class GameSessionManager {
                     floorY: Number.isFinite(preset.rules?.floorY)
                         ? preset.rules.floorY
                         : null,
+                    arenaCenter: {
+                        x: getArenaJoinInfo().arena.center.x,
+                        z: getArenaJoinInfo().arena.center.z,
+                    },
+                    arenaHalfSize: getArenaJoinInfo().arena.halfSize ?? 32,
                 });
                 const result = await this.createAgent(settings);
                 if (!result?.success) {
@@ -802,7 +801,7 @@ export class GameSessionManager {
                 });
             }
 
-            if (teamSetup && buildPhaseMs > 0) {
+            if (buildPhaseMs > 0) {
                 await this._runBuildPhase({
                     contest,
                     preset,
@@ -935,7 +934,7 @@ export class GameSessionManager {
         const seconds = Math.round(planningMs / 1000);
         const planningEndsAt = this.clock() + planningMs;
         const planningLabel = preset.rules?.type === 'team_base_siege'
-            ? `Team planning: ${seconds}s to agree on a base and hunt plan…`
+            ? `Waiting: ${seconds}s before the build timer…`
             : `Team planning: ${seconds}s to agree on one tower…`;
         this._setStatus(
             'planning',
@@ -987,7 +986,7 @@ export class GameSessionManager {
         this._setStatus(
             'building',
             'team_build',
-            `Build phase: ${seconds}s to raise a quick base…`,
+            `Build phase: ${seconds}s left on the timer…`,
             { buildPhaseMs, buildEndsAt }
         );
         await this._announce(
@@ -995,19 +994,28 @@ export class GameSessionManager {
             contest
         );
         await Promise.all(participantIds.map(name => {
-            const teamId = teamSetup.teamByParticipant[name];
+            if (teamSetup) {
+                const teamId = teamSetup.teamByParticipant[name];
+                return this.sendDirective(
+                    name,
+                    buildBaseSiegeBuildDirective({
+                        title: preset.title,
+                        buildPhaseMs,
+                        participantName: name,
+                        rivalIds: participantIds.filter(id =>
+                            teamSetup.teamByParticipant[id] !== teamId
+                        ),
+                    }),
+                    { endConversations: true }
+                );
+            }
             return this.sendDirective(
                 name,
                 buildBaseSiegeBuildDirective({
                     title: preset.title,
                     buildPhaseMs,
                     participantName: name,
-                    teamId,
-                    teammateIds: teamSetup.teams[teamId].filter(id => id !== name),
-                    enemyIds: participantIds.filter(id =>
-                        teamSetup.teamByParticipant[id] !== teamId
-                    ),
-                    captainId: captainByTeam?.[teamId] ?? null,
+                    rivalIds: participantIds.filter(id => id !== name),
                 }),
                 { endConversations: true }
             );
@@ -1045,73 +1053,11 @@ export class GameSessionManager {
     }
 
     /**
-     * Called inside ContestCoordinator.tick while the contest is still running.
-     * Mutates contest metadata/deadline in place when both teams are still alive.
+     * Pressure rounds were removed from Base Siege (FFA last-alive on one platform).
+     * Kept as a no-op so older deadline hooks do not throw.
      */
-    async applyPressureRound(contest) {
-        if (contest?.rules?.type !== 'team_base_siege') return null;
-        if (!canDeferSiegeDeadline(contest)) return null;
-        if (typeof this.runArenaCommands !== 'function') return null;
-
-        const gameSession = contest.metadata.gameSession || (contest.metadata.gameSession = {});
-        const currentHalf = Number.isFinite(gameSession.arenaHalfSize)
-            ? gameSession.arenaHalfSize
-            : (getArenaJoinInfo().arena.halfSize ?? 32);
-        const nextHalf = nextSiegeHalfSize(
-            currentHalf,
-            contest.rules?.shrinkStep,
-            contest.rules?.minHalfSize
-        );
-        const pressureRound = (Number(gameSession.pressureRound) || 0) + 1;
-        const survivors = remainingTeamSiegeSurvivors(contest);
-        const commands = buildPressureRoundCommands({
-            survivors,
-            teamNames: gameSession.teamNames || [],
-            teamByParticipant: gameSession.teamByParticipant || {},
-            halfSize: nextHalf,
-        });
-        // Shrink the walls and re-kit each survivor in order, then fire all of
-        // their teleports on a single tick so the tribe is repositioned together.
-        const { setup, teleports } = partitionTeleportCommands(commands);
-        for (const command of setup) {
-            await this.runArenaCommands(command);
-        }
-        for (const command of buildSimultaneousTeleportCommands(teleports)) {
-            await this.runArenaCommands(command);
-        }
-
-        gameSession.pressureRound = pressureRound;
-        gameSession.arenaHalfSize = nextHalf;
-        if (this.active) this.active.arenaHalfSize = nextHalf;
-        contest.deadlineAt = this.clock() + contest.durationMs;
-
-        await this._announce(
-            () => this.announcePressureRound({
-                halfSize: nextHalf,
-                pressureRound,
-            }),
-            contest
-        );
-        await Promise.all(survivors.map(name =>
-            this.sendDirective(
-                name,
-                [
-                    `PRESSURE ROUND ${pressureRound}. The arena just shrank.`,
-                    'Both teams were still alive, so hiding failed. Hunt and eliminate the other team now.',
-                    'Death still eliminates you permanently. Friendly fire is still off.',
-                ].join(' '),
-                { endConversations: true }
-            )
-        ));
-        if (this.active?.contestId === contest.id) {
-            this._setStatus(
-                'running',
-                'pressure_round',
-                `Pressure round ${pressureRound}: arena half-size ${nextHalf}`,
-                { pressureRound, arenaHalfSize: nextHalf }
-            );
-        }
-        return { reason: 'pressure-round', halfSize: nextHalf, pressureRound };
+    async applyPressureRound() {
+        return null;
     }
 
     async syncWithContestView(view) {
