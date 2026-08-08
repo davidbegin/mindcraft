@@ -7,12 +7,27 @@ import {
     buildSimultaneousTeleportCommands,
     getArenaJoinInfo,
     parseOnlinePlayers,
+    participantSpawnPositions,
     partitionTeleportCommands,
 } from '../src/mindcraft/contest/arena_manager.js';
 import { getContestGamePreset } from '../src/mindcraft/contest/game_presets.js';
 
 function listReply(names) {
     return `There are ${names.length} of a max of 20 players online: ${names.join(', ')}`;
+}
+
+/**
+ * Answer the placement audit's position reads the way a healthy server would:
+ * every bot standing on the spot the starting teleport sent it to. Without this
+ * the audit sees no position at all and re-teleports the whole cast.
+ */
+function positionReply(gameId, participants) {
+    const spawns = participantSpawnPositions(gameId, participants);
+    return command => {
+        if (!command.startsWith('data get entity ') || !command.endsWith(' Pos')) return null;
+        const { x, y, z } = spawns.get(command.split(' ')[3]);
+        return `has the following entity data: [${x}.0d, ${y}.0d, ${z}.0d]`;
+    };
 }
 
 // Participant teleports now ride a chain-command-block rig, so a `tp` shows up
@@ -474,11 +489,12 @@ test('builds a deep enclosed mine with equal depth-race kits', async () => {
 
 async function prepareDogArena(seed) {
     const commands = [];
+    const reportPosition = positionReply('dog_race', ['alice', 'bob']);
     const manager = new ContestArenaManager({
-        runCommand: async command => {
+        runCommand: command => {
             commands.push(command);
             if (command === 'list') return listReply(['alice', 'bob']);
-            return 'ok';
+            return reportPosition(command) ?? 'ok';
         },
     });
 

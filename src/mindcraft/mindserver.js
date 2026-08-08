@@ -19,6 +19,7 @@ import { ColonyCoordinator } from './colony/colony_coordinator.js';
 import { colonyControlsAgent, isGameSessionAgent } from './agent_ownership.js';
 import {
     CONTEST_NARRATOR_CHARACTER,
+    ContestArchive,
     ContestArenaManager,
     ContestAnnouncer,
     ContestCoordinator,
@@ -31,6 +32,7 @@ import {
     TowerHighScoreStore,
     buildGameSystemPrompt,
     buildSurvivorEliminationCommands,
+    describeCompetitor,
     defaultJudge,
     filterRecordingManifest,
     findDogRaceWinner,
@@ -39,6 +41,7 @@ import {
     getArenaWorldKnowledge,
     getContestGamePreset,
     getSurvivorSeasonPreset,
+    launchRefusedError,
     listContestGamePresets,
     listSurvivorScenarios,
     safeHighlightSessionId,
@@ -122,6 +125,7 @@ let colonySettings = null;
 let contestCoordinator = null;
 let contestReady = null;
 let contestLoop = null;
+let contestArchive = null;
 let gameSessionManager = null;
 let survivorCoordinator = null;
 let survivorArchive = null;
@@ -304,6 +308,44 @@ function emitContestUpdate(socket = io) {
     }
 }
 
+// Games we have already run the post-game integrity check on, so it prints once.
+const loggedIntegrityContestIds = new Set();
+
+// When a game finishes, run the same spawn/inventory check the archive uses and
+// print the verdict to the terminal. A flagged game is worth seeing without
+// opening the browser — that is the whole point of the "where did that diamond
+// come from" question.
+async function logCompletedGameIntegrity(view) {
+    if (!contestArchive) return;
+    for (const contest of view?.contests || []) {
+        if (contest.status !== 'completed') continue;
+        if (!contest.metadata?.gameId && contest.metadata?.startedFrom !== 'game-session-ui') {
+            continue;
+        }
+        if (loggedIntegrityContestIds.has(contest.id)) continue;
+        loggedIntegrityContestIds.add(contest.id);
+        try {
+            const game = await contestArchive.get(contest.id);
+            if (!game) continue;
+            if (game.integrity.clean) {
+                console.log(
+                    `[contest] Integrity clean for ${game.title} (${contest.id.slice(0, 8)}): `
+                    + `${game.winnerId || 'no winner'}${game.winItem ? ` won with ${game.winItem}` : ''}`
+                );
+            } else {
+                console.warn(
+                    `[contest] INTEGRITY FLAGS for ${game.title} (${contest.id.slice(0, 8)}):`
+                );
+                for (const flag of game.integrity.flags) {
+                    console.warn(`[contest]   - ${flag.participantId || 'game'} · ${flag.kind}: ${flag.detail}`);
+                }
+            }
+        } catch (error) {
+            console.warn(`[contest] Could not run integrity check for ${contest.id}: ${error.message}`);
+        }
+    }
+}
+
 // Statuses that mean a game is still being set up rather than played.
 const LAUNCHING_SESSION_STATUSES = new Set([
     'provisioning',
@@ -440,11 +482,15 @@ async function ensureContest(options) {
                 ? gameSessionManager.applyPressureRound(contest)
                 : null,
         };
-        contestReady = (existsSync(path.join(root, 'state.json'))
+        const pending = (existsSync(path.join(root, 'state.json'))
             ? ContestCoordinator.load(coordinatorOptions)
             : ContestCoordinator.create(coordinatorOptions)
         ).then(async coordinator => {
             contestCoordinator = coordinator;
+            contestArchive = new ContestArchive({
+                root,
+                botsRoot: path.join(projectRoot, 'bots'),
+            });
             towerHighScores = await TowerHighScoreStore.create({ root });
             await recordTowerHighScores(coordinator.view());
             gameSessionManager = new GameSessionManager({
@@ -599,8 +645,11 @@ async function ensureContest(options) {
                     ).catch(error => console.warn('Survivor elimination announcement failed:', error));
                 },
                 onCompleted: async state => {
+                    const winnerId = state.winnerIds[0];
+                    const winnerModel = survivorSessionManager?.view()?.participants
+                        ?.find(participant => participant.name === winnerId)?.model;
                     await speakSurvivorAnnouncement(
-                        `${state.winnerIds[0]} is the Sole Survivor!`
+                        `${describeCompetitor(winnerId, winnerModel)} is the Sole Survivor!`
                     ).catch(error => console.warn('Survivor winner announcement failed:', error));
                 },
                 onUpdate: emitSurvivorUpdate,
@@ -627,6 +676,7 @@ async function ensureContest(options) {
                         await spectatorDirector.stop();
                     }
                     emitContestUpdate();
+                    await logCompletedGameIntegrity(view);
                     if (gameSessionManager) {
                         await gameSessionManager.syncWithContestView(view);
                     }
@@ -655,6 +705,7 @@ async function ensureContest(options) {
             launchTelemetry.recordError(error, { stage: 'contest_bootstrap' });
             throw error;
         });
+        contestReady = pending;
     }
     return contestReady;
 }
@@ -735,8 +786,9 @@ function buildGameAgentSettings(profile, gameSession) {
     settings.speak = true;
     settings.speak_proximity = false;
     settings.render_bot_view = true;
-    settings.record_bot_view = false;
-    settings.record_actions = false;
+    settings.record_bot_view = gameSession.recordBotView === true;
+    settings.record_actions = !settings.record_bot_view
+        && gameSession.autoRecordingEnabled === true;
     settings.chat_ingame = true;
     settings.chat_bot_messages = true;
     settings.colony = { ...(settings.colony || {}), enabled: false };
@@ -780,6 +832,9 @@ function sendGameDirective(agentRef, prompt, options = {}) {
                 pause: options.pause === true,
                 react: options.react === true,
                 endConversations: options.endConversations === true,
+                // The clock is running: from here a fall or a death puts this bot
+                // out. Planning and build directives leave it false.
+                gameStarted: options.gameStarted === true,
                 automaticAction: options.automaticAction ?? null,
                 floorY: Number.isFinite(options.floorY) ? options.floorY : null,
                 worldKnowledge,
@@ -1311,7 +1366,7 @@ async function startContestGame(gameId, options = {}) {
     // games can run in between is the whole point of suspending it.
     if (survivorSessionManager?.occupiesWorld()) {
         const blockingSeason = survivorSessionManager.view();
-        throw new Error(blockingSeason
+        throw launchRefusedError(blockingSeason
             ? `A Survivor season is active (${blockingSeason.status}). `
                 + 'Suspend it to run other games, or cancel it outright.'
             : 'A Survivor season is still recorded as running but has no session. '
@@ -1326,6 +1381,8 @@ async function startContestGame(gameId, options = {}) {
             planningMs: options.planningMs,
             buildPhaseMs: options.buildPhaseMs,
             teamNames: options.teamNames,
+            recordingEnabled: options.recordingEnabled,
+            autoRecordingEnabled: options.autoRecordingEnabled,
         });
         await contestHud.sync(contestCoordinator.view());
         return {
@@ -1337,6 +1394,10 @@ async function startContestGame(gameId, options = {}) {
             },
         };
     } catch (error) {
+        // A refusal says nothing about the game that is already on the arena, and
+        // reporting it would file that healthy game's current step as a failure
+        // and bury the last real report.
+        if (error.launchRefused) throw error;
         const report = buildLaunchFailureReport(error);
         error.diagnosticsReport = report;
         throw error;
@@ -2187,6 +2248,7 @@ export function createMindServer(host_public = false, port = 8080) {
     const survivorHtml = path.join(publicDir, 'survivor.html');
     const conversationsHtml = path.join(publicDir, 'conversations.html');
     const seasonsHtml = path.join(publicDir, 'seasons.html');
+    const gamesArchiveHtml = path.join(publicDir, 'games_archive.html');
     // index: false so `/` can redirect to `/colony` instead of silently serving index.html
     app.use(express.static(publicDir, { index: false }));
     // Client-side views share index.html; each has a real URL for copy/share/reload.
@@ -2206,6 +2268,11 @@ export function createMindServer(host_public = false, port = 8080) {
     // the archive is its own page rather than a panel in the control room.
     app.get('/seasons', (_req, res) => {
         res.sendFile(seasonsHtml);
+    });
+    // Reviewing past games — who said what, where the diamond really came from —
+    // is its own archive page, separate from the live games dashboard.
+    app.get('/games/archive', (_req, res) => {
+        res.sendFile(gamesArchiveHtml);
     });
     app.get('/', (_req, res) => {
         res.redirect(302, '/colony');
@@ -2450,6 +2517,35 @@ export function createMindServer(host_public = false, port = 8080) {
             }
         });
 
+        // Post-game analysis reads from disk, not the live session, so every
+        // contest game that ever ran is available whether or not one is running
+        // now. The list stays light; a game's transcript and integrity detail
+        // only travel when somebody opens it.
+        socket.on('contest-archive-list', async callback => {
+            try {
+                await ensureContest();
+                if (!contestArchive) throw new Error('Contests are not enabled');
+                callback({ success: true, games: await contestArchive.list() });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-archive-game', async (request, callback) => {
+            try {
+                await ensureContest();
+                if (!contestArchive) throw new Error('Contests are not enabled');
+                const game = await contestArchive.get(request?.contestId);
+                callback({
+                    success: Boolean(game),
+                    data: game,
+                    error: game ? null : `No game on record with id ${request?.contestId}`,
+                });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
         socket.on('survivor-season', async (request, callback) => {
             try {
                 await ensureContest();
@@ -2503,6 +2599,8 @@ export function createMindServer(host_public = false, port = 8080) {
                     challengeGameIds: request?.challengeGameIds ?? preset.challengeGameIds,
                     systemPrompt: request?.systemPrompt,
                     councilAutoAdvance: request?.councilAutoAdvance ?? false,
+                    recordingEnabled: request?.recordingEnabled === true,
+                    autoRecordingEnabled: request?.autoRecordingEnabled === true,
                     phaseDurationsMs: request?.phaseDurationsMs ?? {
                         strategy: preset.phaseDurationsMs.strategy,
                         tribal_council: preset.phaseDurationsMs.tribalCouncil,
@@ -2574,11 +2672,20 @@ export function createMindServer(host_public = false, port = 8080) {
                     participants: request?.participants,
                     systemPrompt: request?.systemPrompt,
                     teamNames: request?.teamNames,
+                    recordingEnabled: request?.recordingEnabled === true,
+                    autoRecordingEnabled: request?.autoRecordingEnabled === true,
                 });
                 callback({ success: true, data });
             } catch (error) {
-                const report = error.diagnosticsReport || buildLaunchFailureReport(error);
-                callback({ success: false, error: error.message, report });
+                const report = error.launchRefused
+                    ? null
+                    : error.diagnosticsReport || buildLaunchFailureReport(error);
+                callback({
+                    success: false,
+                    error: error.message,
+                    report,
+                    launchRefused: Boolean(error.launchRefused),
+                });
             }
         });
 
@@ -3189,8 +3296,29 @@ export function createMindServer(host_public = false, port = 8080) {
 			}
 		});
 
-        socket.on('bot-output', (agentName, message) => {
-            io.emit('bot-output', agentName, message);
+        socket.on('bot-output', (agentName, message, position = null) => {
+            io.emit('bot-output', agentName, message, position);
+            // Persist every line a contestant says while a game is running, so
+            // the archive can replay who said what, when, and where they stood.
+            try {
+                const activeContestId = contestCoordinator?.snapshot()?.activeContestId;
+                if (!activeContestId || typeof message !== 'string' || message.trim() === '') {
+                    return;
+                }
+                const participants = contestCoordinator
+                    .snapshot().contests[activeContestId]?.participantIds || [];
+                if (!participants.includes(agentName)) return;
+                contestCoordinator.recordGameEvent('message.said', {
+                    contestId: activeContestId,
+                    participantId: agentName,
+                    text: message,
+                    position: position || null,
+                }).catch(error => {
+                    console.warn('Could not journal contest message:', error.message);
+                });
+            } catch (error) {
+                console.warn('Could not journal contest message:', error.message);
+            }
         });
 
         socket.on('start-voice-monitor', () => addVoiceMonitor(socket));

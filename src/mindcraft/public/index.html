@@ -2059,6 +2059,7 @@
         <nav class="view-nav" aria-label="Main views">
             <a href="/colony" id="viewColonyBtn" class="active" data-view="colony">Colony</a>
             <a href="/games" id="viewGamesBtn" data-view="games">Games</a>
+            <a href="/games/archive" id="viewGamesArchiveBtn">Games Log</a>
             <a href="/survivor" id="viewSurvivorBtn">Survivor</a>
             <a href="/conversations" id="viewConversationsBtn">Conversations</a>
             <a href="/seasons" id="viewSeasonsBtn">Archive</a>
@@ -2849,6 +2850,13 @@
         }
 
         const statusEl = document.getElementById('msStatus');
+        // Socket.IO drops and reconnects on its own over a flaky link, and a
+        // launch runs in MindServer, not here — it survives the blip. Handing the
+        // roster straight back invited a second Start that the server could only
+        // refuse, so a short outage now waits for the reconnect to say whether
+        // the launch is still there.
+        const LAUNCH_DISCONNECT_GRACE_MS = 20_000;
+        let launchUnlockTimer = null;
         function unlockContestBusyOnDisconnect(reason) {
             if (!contestBusy) return;
             contestBusy = false;
@@ -2858,6 +2866,28 @@
             setContestStatus(message, true);
             renderGameCards();
             fetchLastLaunchReport();
+        }
+        function holdLaunchThroughDisconnect() {
+            if (!contestBusy || launchUnlockTimer) return;
+            const message = 'Lost connection to MindServer — reconnecting. The launch keeps running there.';
+            setContestStatus(message, true);
+            gameSetup.setFooter(message);
+            launchUnlockTimer = setTimeout(() => {
+                launchUnlockTimer = null;
+                unlockContestBusyOnDisconnect('MindServer stayed unreachable during start');
+            }, LAUNCH_DISCONNECT_GRACE_MS);
+        }
+        // Reconnected: the session the server reports decides whether we are
+        // still watching a launch or the launch died with the connection.
+        function resolveLaunchAfterReconnect(gameSession) {
+            if (!launchUnlockTimer) return;
+            clearTimeout(launchUnlockTimer);
+            launchUnlockTimer = null;
+            if (sessionHoldsArena(gameSession)) {
+                updateLaunchProgressFromSession(gameSession);
+                return;
+            }
+            unlockContestBusyOnDisconnect('The launch did not survive the lost connection');
         }
         function updateStatus(connected) {
             if (!statusEl) return;
@@ -2869,7 +2899,7 @@
                 statusEl.textContent = 'mindserver offline';
                 statusEl.classList.remove('online');
                 statusEl.classList.add('offline');
-                unlockContestBusyOnDisconnect('Lost connection to MindServer during start');
+                holdLaunchThroughDisconnect();
             }
         }
 
@@ -3082,17 +3112,40 @@
                 card.textContent = 'Join address unavailable until MindServer reconnects.';
                 return;
             }
-            const center = join.arena?.center || join.arenaReset?.center;
-            const coords = center
-                ? `${center.x} ${center.y} ${center.z}`
-                : '100000 100 100000';
-            const tp = join.teleportCommand || `/tp @s ${coords}`;
             card.innerHTML = `
-                <div><strong>Join Minecraft here:</strong> <code>${esc(join.address)}</code></div>
-                <div>This page is the spy UI on port <code>${esc(String(join.mindserverPort || 8080))}</code>. Live Wall ports (<code>3000+</code>) are camera views only — not where you join.</div>
-                <div>Contests happen in the <strong>same world</strong>. Bots (and any human already online) get teleported to arena <code>${esc(coords)}</code>.</div>
-                <div>If you are already connected, run <code>${esc(tp)}</code> or click <strong>Warp me to arena</strong> during a live contest.</div>
+                <button type="button" class="join-copy" onclick="copyJoinAddress(event)"
+                    title="Click to copy the Minecraft server address">
+                    ${esc(join.address)}<span class="join-copy-hint">copy</span>
+                </button>
             `;
+        }
+
+        async function copyJoinAddress(event) {
+            const button = event?.currentTarget;
+            const address = contestJoin?.address;
+            if (!button || !address) return;
+            try {
+                await navigator.clipboard.writeText(address);
+            } catch {
+                // Fallback for older browsers / insecure contexts
+                const ta = document.createElement('textarea');
+                ta.value = address;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            const hint = button.querySelector('.join-copy-hint');
+            button.classList.add('copied');
+            if (hint) hint.textContent = 'copied';
+            clearTimeout(button._copyTimer);
+            button._copyTimer = setTimeout(() => {
+                button.classList.remove('copied');
+                if (hint) hint.textContent = 'copy';
+            }, 1200);
         }
 
         function setContestStatus(message, isError = false) {
@@ -3128,6 +3181,15 @@
 
         function isLaunchingSession(gameSession) {
             return Boolean(gameSession) && LAUNCHING_STATUSES.includes(gameSession.status);
+        }
+
+        // A session on the podium has let go of the arena and a failed one never
+        // held it; everything else — launching, running, cleaning up — owns the
+        // world and refuses another game.
+        function sessionHoldsArena(gameSession) {
+            return Boolean(gameSession)
+                && gameSession.status !== 'failed'
+                && gameSession.status !== 'awaiting-next-game';
         }
 
         function formatElapsed(ms) {
@@ -3331,11 +3393,7 @@
             const podiumRemaining = gameSession?.status === 'awaiting-next-game'
                 ? Math.max(0, (gameSession.podiumHoldUntil || 0) - Date.now())
                 : 0;
-            const sessionBusy = Boolean(
-                gameSession
-                && gameSession.status !== 'failed'
-                && gameSession.status !== 'awaiting-next-game'
-            );
+            const sessionBusy = sessionHoldsArena(gameSession);
             const blocked = contestBusy
                 || Boolean(active && ['running', 'draft', 'judging'].includes(active.status))
                 || sessionBusy;
@@ -3949,6 +4007,7 @@
             renderGamePlayers(provisioning || active ? sessionParticipants : null);
             renderTowerAtlas(active, state?.towerAtlas);
             renderGameCards();
+            resolveLaunchAfterReconnect(gameSession);
             if (contestBusy && gameSession) updateLaunchProgressFromSession(gameSession);
             const copyLastBtn = document.getElementById('copyLaunchReportBtn');
             if (copyLastBtn) copyLastBtn.hidden = !lastLaunchReport;
@@ -3964,6 +4023,13 @@
                 .filter(agent => (agent.in_game || agent.socket_connected) && !agent.gameSession)
                 .map(agent => agent.name),
             onStatus: setContestStatus,
+            getLaunchInProgress: () => {
+                const gameSession = contestState?.gameSession;
+                if (!sessionHoldsArena(gameSession)) return null;
+                const where = launchProgressMessage(gameSession);
+                return `${gameSession.title || 'A game'} is already on the arena${where ? ` — ${where}` : ''}.`
+                    + ' Watch its progress, or cancel it before starting another game.';
+            },
             onBusyChange: (busy) => {
                 contestBusy = busy;
                 // Each launch starts with a clean log. The previous one is
@@ -4035,7 +4101,15 @@
                     }
                     return null;
                 },
-                buildRequest: ({ participants, systemPrompt, durationMs, teamNames, fields }) => {
+                buildRequest: ({
+                    participants,
+                    systemPrompt,
+                    durationMs,
+                    teamNames,
+                    fields,
+                    recordingEnabled,
+                    autoRecordingEnabled,
+                }) => {
                     const planningMs = hasPlanning ? Number(fields.planningSeconds) * 1000 : 0;
                     const buildPhaseMs = isBaseSiege ? Number(fields.buildSeconds) * 1000 : 0;
                     return {
@@ -4046,6 +4120,8 @@
                             participants,
                             systemPrompt,
                             durationMs,
+                            recordingEnabled,
+                            autoRecordingEnabled,
                             ...(isTeamGame ? { teamNames, ...(hasPlanning ? { planningMs } : {}) } : {}),
                             ...(isBaseSiege ? { buildPhaseMs } : {}),
                         },
