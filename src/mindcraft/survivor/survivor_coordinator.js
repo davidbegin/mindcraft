@@ -93,12 +93,51 @@ export class SurvivorCoordinator {
     recordPrivateEvent(event) {
         return this._enqueue(async () => {
             if (!this.game) return false;
-            await this._appendJournal(`private.${event?.type || 'event'}`, {
-                seasonId: this.game.snapshot().id,
+            const snapshot = this.game.snapshot();
+            // Round and phase are stamped here, at journal time, so recovery can
+            // replay a private event back into the round it actually happened in
+            // rather than the round the server restarted in. The raw registry
+            // event carries neither.
+            const data = {
+                seasonId: snapshot.id,
+                round: snapshot.round ?? null,
+                phase: snapshot.phase ?? null,
                 ...clone(event || {}),
-            });
+            };
+            await this._appendJournal(`private.${event?.type || 'event'}`, data);
             return true;
         });
+    }
+
+    // Every private event ever journaled for a season, in the order it happened,
+    // with the enclosing `private.` prefix stripped back off so the shapes match
+    // what the registries emitted. A torn final line (a crash mid-append) is
+    // skipped rather than throwing the whole recovery away.
+    async readPrivateEvents(seasonId = null) {
+        let contents;
+        try {
+            contents = await readFile(this.journalPath, 'utf8');
+        } catch (error) {
+            if (error.code === 'ENOENT') return [];
+            throw error;
+        }
+        const events = [];
+        for (const line of contents.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            let entry;
+            try {
+                entry = JSON.parse(trimmed);
+            } catch {
+                continue;
+            }
+            if (typeof entry?.type !== 'string' || !entry.type.startsWith('private.')) continue;
+            const { seasonId: entrySeasonId, ...event } = entry.data || {};
+            if (seasonId && entrySeasonId && entrySeasonId !== seasonId) continue;
+            if (event.at == null) event.at = entry.at ?? null;
+            events.push(event);
+        }
+        return events;
     }
 
     async _commit(type, data) {

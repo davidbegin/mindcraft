@@ -334,8 +334,12 @@ function handleSurvivorConversationEvent(event) {
     survivorCoordinator?.recordPrivateEvent(event).catch(error => {
         console.warn('Could not journal Survivor conversation event:', error.message);
     });
-    survivorSessionManager?.recordConversationEvent(event);
-    emitToOperators('survivor-secret-event', event);
+    // The recorded copy carries the round and phase it happened in, which the
+    // conversation browser needs and the raw registry event does not have.
+    emitToOperators(
+        'survivor-secret-event',
+        survivorSessionManager?.recordConversationEvent(event) ?? event
+    );
 }
 
 function handleSurvivorRoomEvent(event) {
@@ -343,8 +347,10 @@ function handleSurvivorRoomEvent(event) {
     survivorCoordinator?.recordPrivateEvent(event).catch(error => {
         console.warn('Could not journal private Survivor event:', error.message);
     });
-    survivorSessionManager?.recordRoomEvent(event);
-    emitToOperators('survivor-secret-event', event);
+    emitToOperators(
+        'survivor-secret-event',
+        survivorSessionManager?.recordRoomEvent(event) ?? event
+    );
     if (event.type === 'room.message') {
         for (const memberId of event.memberIds || []) {
             if (memberId !== event.senderId) {
@@ -517,18 +523,20 @@ async function ensureContest(options) {
                     jury_questioning: survivorPreset.phaseDurationsMs.juryQuestioning,
                     jury_voting: survivorPreset.phaseDurationsMs.juryVoting,
                 },
+                announce: (text, options) => speakSurvivorAnnouncement(text, options),
+                speakAs: (playerId, text) => speakSurvivorPlayerLine(playerId, text),
                 onEliminated: async (playerId, state) => {
                     await Promise.allSettled(
                         buildSurvivorEliminationCommands(playerId).map(command =>
                             runMinecraftCommand(command)
                         )
                     );
-                    await speakContestAnnouncement(
+                    await speakSurvivorAnnouncement(
                         `${playerId}, the tribe has spoken. ${state.players[playerId].jury ? 'You are now on the jury.' : ''}`
                     ).catch(error => console.warn('Survivor elimination announcement failed:', error));
                 },
                 onCompleted: async state => {
-                    await speakContestAnnouncement(
+                    await speakSurvivorAnnouncement(
                         `${state.winnerIds[0]} is the Sole Survivor!`
                     ).catch(error => console.warn('Survivor winner announcement failed:', error));
                 },
@@ -736,7 +744,7 @@ async function speakContestAnnouncement(text, options = {}) {
         elevenLabsTTSConfig.baseUrl,
         { voiceSettings }
     );
-    const sessionId = gameSessionManager?.view()?.sessionId;
+    const sessionId = options.sessionId || gameSessionManager?.view()?.sessionId;
     if (sessionId) {
         broadcastContestSessionRecordingAudio(sessionId, {
             sessionId,
@@ -750,6 +758,45 @@ async function speakContestAnnouncement(text, options = {}) {
         text,
         audio,
     });
+}
+
+function survivorRecordingSessionId() {
+    const seasonId = survivorCoordinator?.view()?.id;
+    return seasonId ? `survivor-${seasonId}` : null;
+}
+
+// Jeff's half of the show: questions, phase calls, and eliminations, in the
+// narrator voice, tagged so the season recording picks them up.
+function speakSurvivorAnnouncement(text, options = {}) {
+    return speakContestAnnouncement(text, {
+        ...options,
+        sessionId: survivorRecordingSessionId(),
+    });
+}
+
+// A council answer reaches the server as text from !answerCouncil, so nothing
+// has voiced it yet. Play it back in that player's own ElevenLabs voice.
+async function speakSurvivorPlayerLine(playerId, text) {
+    const line = String(text || '').trim().slice(0, 800);
+    if (!line) return;
+    const connection = getConnection(playerId);
+    const audio = await elevenLabsTTSConfig.sendAudioRequest(
+        line,
+        getVoicesConfig().elevenlabs_model,
+        resolveVoice(playerId, connection?.settings?.game_session?.voice ?? null),
+        elevenLabsTTSConfig.baseUrl
+    );
+    const sessionId = connection?.settings?.game_session?.sessionId
+        || survivorRecordingSessionId();
+    if (sessionId) {
+        broadcastContestSessionRecordingAudio(sessionId, {
+            sessionId,
+            speaker: playerId,
+            audio,
+            atMs: Date.now(),
+        });
+    }
+    dispatchBotVoice({ agentName: playerId, text: line, audio });
 }
 
 function requestGameTowerReport(agentRef, options = {}) {
@@ -1968,6 +2015,7 @@ export function createMindServer(host_public = false, port = 8080) {
     const publicDir = path.join(__dirname, 'public');
     const indexHtml = path.join(publicDir, 'index.html');
     const survivorHtml = path.join(publicDir, 'survivor.html');
+    const conversationsHtml = path.join(publicDir, 'conversations.html');
     // index: false so `/` can redirect to `/colony` instead of silently serving index.html
     app.use(express.static(publicDir, { index: false }));
     // Client-side views share index.html; each has a real URL for copy/share/reload.
@@ -1977,6 +2025,11 @@ export function createMindServer(host_public = false, port = 8080) {
     // The Survivor control room is its own page: too much state to share a view.
     app.get('/survivor', (_req, res) => {
         res.sendFile(survivorHtml);
+    });
+    // Reading private conversations is a full-attention job, so it gets a page of
+    // its own rather than a card competing with the council console.
+    app.get('/conversations', (_req, res) => {
+        res.sendFile(conversationsHtml);
     });
     app.get('/', (_req, res) => {
         res.redirect(302, '/colony');
@@ -2171,6 +2224,22 @@ export function createMindServer(host_public = false, port = 8080) {
                     // Backfill for the operator feed: survivor-secret-event only
                     // reaches sockets that were connected when it happened.
                     secretEvents: survivorSessionManager?.secretEvents() ?? [],
+                    error: survivorSessionManager ? null : 'Survivor is not enabled',
+                });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        // The conversation browser loads the whole transcript once and then keeps
+        // itself current from survivor-secret-event, so this is the only place
+        // full private text crosses the wire.
+        socket.on('survivor-transcripts', async callback => {
+            try {
+                await ensureContest();
+                callback({
+                    success: Boolean(survivorSessionManager),
+                    data: survivorSessionManager?.conversationTranscripts() ?? null,
                     error: survivorSessionManager ? null : 'Survivor is not enabled',
                 });
             } catch (error) {

@@ -19,9 +19,11 @@ export {
     buildBuildPhaseAnnouncement,
     buildContestResultAnnouncement,
     buildContestStartAnnouncement,
+    buildCouncilQuestionAnnouncement,
     buildPlanningAnnouncement,
     buildPressureRoundAnnouncement,
     buildSurvivorAnnouncement,
+    buildSurvivorPhaseAnnouncement,
 } from './contest_announcer.js';
 export {
     ContestHud,

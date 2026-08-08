@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mindcraft — Private Conversations</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/conversations.js" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0e1210;
+            --bg-elevated: #161c19;
+            --bg-card: #1a221e;
+            --bg-inset: #101614;
+            --border: #2a3530;
+            --border-strong: #3d4d45;
+            --text: #e8efe9;
+            --text-dim: #8a9a90;
+            --text-mute: #5f7066;
+            --lime: #9fe870;
+            --lime-dim: rgba(159, 232, 112, 0.15);
+            --amber: #f0b429;
+            --amber-dim: rgba(240, 180, 41, 0.18);
+            --red: #ef5350;
+            --red-dim: rgba(239, 83, 80, 0.16);
+            --cyan: #5ec8c0;
+            --font: "DM Sans", system-ui, sans-serif;
+            --mono: "JetBrains Mono", ui-monospace, monospace;
+            --radius: 12px;
+        }
+
+        * { box-sizing: border-box; }
+        [hidden] { display: none !important; }
+
+        html, body { height: 100%; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 14px;
+            line-height: 1.5;
+            display: flex;
+            flex-direction: column;
+        }
+
+        h1, h2, h3 { margin: 0; }
+
+        /* —— Top bar —— */
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+            flex: none;
+        }
+
+        .brand { display: flex; align-items: baseline; gap: 8px; }
+        .brand h1 { font-size: 1.05rem; letter-spacing: -0.01em; }
+
+        .brand .tag {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .view-nav { display: flex; gap: 4px; margin-left: 8px; }
+
+        .view-nav a {
+            padding: 5px 12px;
+            border-radius: 8px;
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.85rem;
+            border: 1px solid transparent;
+        }
+
+        .view-nav a:hover { color: var(--text); }
+        .view-nav a.active { background: var(--amber-dim); color: var(--amber); }
+
+        .status-pill {
+            margin-left: auto;
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+
+        .status-pill.online { color: var(--lime); border-color: var(--lime); }
+        .status-pill.offline { color: var(--red); border-color: var(--red); }
+
+        /* —— Season bar —— */
+        .season-bar {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            flex-wrap: wrap;
+            padding: 10px 20px;
+            background: linear-gradient(180deg, var(--bg-elevated), var(--bg));
+            border-bottom: 1px solid var(--border);
+            flex: none;
+        }
+
+        .sb-item { display: flex; flex-direction: column; min-width: 60px; }
+
+        .sb-item .label {
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+        }
+
+        .sb-item .value { font-family: var(--mono); font-size: 0.9rem; }
+        .sb-item .value.phase { color: var(--amber); text-transform: uppercase; font-size: 0.8rem; }
+
+        .live-dot {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--lime);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .live-dot::before {
+            content: "";
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--lime);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse { 50% { opacity: 0.25; } }
+
+        /* —— Three-pane layout —— */
+        .panes {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 280px 340px minmax(0, 1fr);
+            gap: 1px;
+            background: var(--border);
+        }
+
+        @media (max-width: 1200px) {
+            .panes { grid-template-columns: 240px 290px minmax(0, 1fr); }
+        }
+
+        @media (max-width: 900px) {
+            .panes { grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(200px, auto); }
+        }
+
+        .pane {
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            min-width: 0;
+        }
+
+        .pane-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-elevated);
+            flex: none;
+        }
+
+        .pane-head h2 {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .pane-head .count {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--text-mute);
+            margin-left: auto;
+            white-space: nowrap;
+        }
+
+        .pane-body { flex: 1; overflow-y: auto; min-height: 0; }
+
+        .filter-input {
+            margin-left: auto;
+            width: 108px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 7px;
+            padding: 4px 8px;
+            font: inherit;
+            font-size: 0.78rem;
+        }
+
+        .filter-input:focus { outline: none; border-color: var(--border-strong); }
+
+        .empty {
+            padding: 18px 16px;
+            color: var(--text-mute);
+            font-size: 0.84rem;
+            font-style: italic;
+        }
+
+        /* —— Roster —— */
+        .cast-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 9px 14px;
+            background: none;
+            border: none;
+            border-bottom: 1px solid var(--border);
+            border-left: 2px solid transparent;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .cast-row:hover { background: var(--bg-elevated); }
+
+        .cast-row.selected {
+            background: var(--bg-card);
+            border-left-color: var(--amber);
+        }
+
+        .cast-row.out .cast-name { color: var(--text-mute); text-decoration: line-through; }
+        .cast-main { min-width: 0; flex: 1; }
+
+        .cast-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .cast-sub {
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--text-mute);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chip {
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 2px 6px;
+            border-radius: 999px;
+            border: 1px solid var(--border-strong);
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .chip.tribe { border-color: var(--cyan); color: var(--cyan); }
+        .chip.jury { border-color: var(--amber); color: var(--amber); }
+        .chip.gone { border-color: var(--border); color: var(--text-mute); }
+        .chip.open { border-color: var(--lime); color: var(--lime); }
+
+        /* —— Thread list —— */
+        .thread-row {
+            display: block;
+            width: 100%;
+            padding: 10px 14px;
+            background: none;
+            border: none;
+            border-bottom: 1px solid var(--border);
+            border-left: 2px solid transparent;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .thread-row:hover { background: var(--bg-elevated); }
+
+        .thread-row.selected {
+            background: var(--bg-card);
+            border-left-color: var(--lime);
+        }
+
+        .thread-top { display: flex; align-items: center; gap: 8px; }
+
+        .thread-with {
+            font-weight: 600;
+            font-size: 0.88rem;
+            min-width: 0;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .thread-meta {
+            font-family: var(--mono);
+            font-size: 0.67rem;
+            color: var(--text-mute);
+            margin-top: 2px;
+        }
+
+        .thread-snippet {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-top: 4px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .pane-section {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-inset);
+        }
+
+        .pane-section h3 {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+            margin-bottom: 6px;
+        }
+
+        .refusal {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            padding: 3px 0;
+        }
+
+        .refusal strong { color: var(--red); font-weight: 600; }
+
+        /* —— Transcript —— */
+        .transcript-body { padding: 14px 18px 28px; }
+
+        .thread-banner {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg-elevated);
+            padding: 10px 12px;
+            margin-bottom: 14px;
+        }
+
+        .thread-banner .pitch {
+            font-style: italic;
+            color: var(--text-dim);
+            margin-top: 4px;
+            font-size: 0.85rem;
+        }
+
+        .msg {
+            display: grid;
+            grid-template-columns: 150px minmax(0, 1fr);
+            gap: 14px;
+            padding: 7px 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .msg:first-of-type { border-top: none; }
+
+        .msg-side {
+            text-align: right;
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--text-mute);
+            padding-top: 2px;
+        }
+
+        .msg-who { display: block; font-size: 0.78rem; color: var(--text-dim); font-weight: 600; }
+        .msg.mine .msg-who { color: var(--lime); }
+        .msg-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .msg.mine .msg-text { color: var(--text); }
+        .msg:not(.mine) .msg-text { color: var(--text-dim); }
+
+        .msg-audience {
+            font-family: var(--mono);
+            font-size: 0.66rem;
+            color: var(--text-mute);
+            margin-top: 3px;
+        }
+
+        @media (max-width: 700px) {
+            .msg { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+            .msg-side { text-align: left; }
+        }
+
+        .page-empty {
+            padding: 60px 24px;
+            text-align: center;
+            color: var(--text-mute);
+        }
+
+        .page-empty a { color: var(--amber); }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <h1>Conversations</h1>
+            <span class="tag">operators only</span>
+        </div>
+        <nav class="view-nav">
+            <a href="/colony">Colony</a>
+            <a href="/games">Games</a>
+            <a href="/survivor">Survivor</a>
+            <a href="/conversations" class="active" aria-current="page">Conversations</a>
+        </nav>
+        <span id="msStatus" class="status-pill offline">mindserver offline</span>
+    </header>
+
+    <div class="season-bar" id="seasonBar" hidden>
+        <div class="sb-item">
+            <span class="label">Round</span>
+            <span class="value" id="sbRound">—</span>
+        </div>
+        <div class="sb-item">
+            <span class="label">Phase</span>
+            <span class="value phase" id="sbPhase">—</span>
+        </div>
+        <div class="sb-item">
+            <span class="label">Threads</span>
+            <span class="value" id="sbThreads">0</span>
+        </div>
+        <div class="sb-item">
+            <span class="label">Open now</span>
+            <span class="value" id="sbOpen">0</span>
+        </div>
+        <div class="sb-item">
+            <span class="label">Messages</span>
+            <span class="value" id="sbMessages">0</span>
+        </div>
+        <span class="live-dot">live</span>
+    </div>
+
+    <main class="panes" id="panes" hidden>
+        <aside class="pane">
+            <div class="pane-head">
+                <h2>Cast</h2>
+                <input id="rosterFilter" class="filter-input" type="text" placeholder="Filter" aria-label="Filter cast">
+            </div>
+            <div class="pane-body" id="roster"></div>
+        </aside>
+        <section class="pane">
+            <div class="pane-head">
+                <h2 id="threadsTitle">Conversations</h2>
+                <span class="count" id="threadsCount"></span>
+            </div>
+            <div class="pane-body" id="threads"></div>
+        </section>
+        <section class="pane">
+            <div class="pane-head">
+                <h2 id="transcriptTitle">Transcript</h2>
+                <span class="count" id="transcriptCount"></span>
+            </div>
+            <div class="pane-body" id="transcript"></div>
+        </section>
+    </main>
+
+    <div class="page-empty" id="pageEmpty">
+        <p id="pageEmptyText">Loading private conversations…</p>
+        <p><a href="/survivor">Go to the Survivor control room</a></p>
+    </div>
+</body>
+</html>

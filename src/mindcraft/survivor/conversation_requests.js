@@ -31,6 +31,10 @@ export class ConversationRequestRegistry {
         // A bot who was just turned down should read the room instead of asking
         // the same player again on the next tick.
         this.declineCooldownMs = options.declineCooldownMs ?? 45_000;
+        // Settled requests stay in the registry long enough for the control room
+        // to show the outcome. Nothing clears them wholesale any more, so they
+        // have to age out or a season would accumulate every ask ever made.
+        this.resolvedRetentionMs = options.resolvedRetentionMs ?? 120_000;
         this.requests = new Map();
         this.declinedAt = new Map();
     }
@@ -174,6 +178,13 @@ export class ConversationRequestRegistry {
     // show cannot wait on a bot that never answered.
     dueRequests(now = this.clock()) {
         return this.pending().filter(request => now >= request.expiresAt);
+    }
+
+    pruneResolved(now = this.clock()) {
+        for (const [id, request] of this.requests) {
+            if (request.status === 'pending' || request.resolvedAt == null) continue;
+            if (now - request.resolvedAt >= this.resolvedRetentionMs) this.requests.delete(id);
+        }
     }
 
     cancel(requestId, reason = 'cancelled') {

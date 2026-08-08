@@ -108,17 +108,27 @@ async function createManager() {
     let now = 0;
     const directives = [];
     const notifications = [];
+    const spoken = [];
     let requestSequence = 0;
+    let roomSequence = 0;
     const options = {
         coordinator,
         contestCoordinator,
-        rooms: new PrivateRoomRegistry({ idFactory: () => 'room-1' }),
+        rooms: new PrivateRoomRegistry({ idFactory: () => `room-${++roomSequence}` }),
         conversations: new ConversationRequestRegistry({
             idFactory: () => `talk-${++requestSequence}`,
         }),
         notifyAgent: (id, event, payload) => {
             notifications.push({ id, event, payload });
             return Promise.resolve({ success: true });
+        },
+        announce: text => {
+            spoken.push({ speaker: 'narrator', text });
+            return Promise.resolve();
+        },
+        speakAs: (playerId, text) => {
+            spoken.push({ speaker: playerId, text });
+            return Promise.resolve();
         },
         getProfiles: () => [{
             id: 'test',
@@ -164,6 +174,7 @@ async function createManager() {
         contestCoordinator,
         directives,
         notifications,
+        spoken,
         advance: milliseconds => {
             now += milliseconds;
         },
@@ -344,6 +355,65 @@ test('the host questions players and every other bot hears the answer', async ()
     );
 });
 
+test('council is spoken aloud: the host asks, the player answers in their own voice', async () => {
+    const { manager, contestCoordinator, spoken, advance } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+    advance(2);
+    await manager.tick();
+    assert.ok(
+        spoken.some(line => line.speaker === 'narrator' && /Tribal Council is now in session/.test(line.text)),
+        'opening council is narrated'
+    );
+
+    spoken.length = 0;
+    await manager.control('council-question', {
+        prompt: 'Who here has been playing you?',
+        targetIds: ['Bot2'],
+    });
+    await manager.handleAgentCommand('Bot2', 'council-answer', {
+        answer: 'Bot4 has been running this whole thing.',
+    });
+    assert.deepEqual(spoken, [
+        { speaker: 'narrator', text: 'Bot2. Who here has been playing you?' },
+        { speaker: 'Bot2', text: 'Bot4 has been running this whole thing.' },
+    ]);
+
+    spoken.length = 0;
+    await manager.control('end-council');
+    assert.deepEqual(spoken, [
+        { speaker: 'narrator', text: 'Council is closed. It is time to vote.' },
+    ]);
+});
+
+test('a failed announcement is reported without stopping council', async () => {
+    const { manager, contestCoordinator, notifications, advance } = await createManager();
+    manager.announce = () => Promise.reject(new Error('ElevenLabs is unreachable'));
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+    advance(2);
+    await manager.tick();
+
+    await manager.control('council-question', { prompt: 'Why you?', targetIds: ['Bot2'] });
+    assert.ok(
+        notifications.some(item => item.event === 'survivor-council-question'),
+        'the question still reaches the bot'
+    );
+    assert.ok(manager.view().problems.some(problem => problem.stage === 'narration'));
+});
+
 test('agent commands keep ballot contents private from status responses', async () => {
     const { manager, coordinator, contestCoordinator, advance } = await createManager();
     await manager.start({
@@ -405,6 +475,54 @@ test('recovers a running season from persisted coordinator and session state', a
     assert.equal(view.id, manager.view().id);
     assert.equal(view.game.phase, 'challenge');
     assert.equal(view.participantIds.length, 11);
+});
+
+test('recovery replays private alliance memory from the journal', async () => {
+    const { manager, root, options, coordinator, contestCoordinator } = await createManager();
+    // Mirror production wiring: private events are both kept in memory for the
+    // operator feed and journaled through the coordinator so a restart can
+    // replay them.
+    manager.rooms.onEvent = event => {
+        manager.recordRoomEvent(event);
+        coordinator.recordPrivateEvent(event);
+    };
+    manager.conversations.onEvent = event => {
+        manager.recordConversationEvent(event);
+        coordinator.recordPrivateEvent(event);
+    };
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    await openPrivateRoom(manager, 'Bot2', ['Bot3']);
+    await manager.handleAgentCommand('Bot2', 'room-send', { message: 'final two, you and me' });
+    await manager._persistOperation;
+    // The journal is appended fire-and-forget from the event handlers, so wait
+    // for the coordinator's queue to drain before reloading from disk.
+    await coordinator._operation;
+
+    const recovered = new SurvivorSessionManager({
+        ...options,
+        coordinator: await SurvivorCoordinator.load({ root, random: () => 0 }),
+        rooms: new PrivateRoomRegistry({ idFactory: () => 'recovered-room' }),
+    });
+    await recovered.recover();
+
+    assert.ok(
+        recovered.secretEvents().some(event =>
+            event.type === 'room.message' && event.message === 'final two, you and me'
+        ),
+        'the private message is back in the secret feed'
+    );
+    const [thread] = recovered.roomHistory;
+    assert.deepEqual(thread.memberIds.sort(), ['Bot2', 'Bot3']);
+    assert.equal(thread.messageCount, 1);
+    assert.match(recovered.briefingFor('Bot3'), /told you privately/);
 });
 
 test('recovery respawns every reachable bot even when one fails to launch', async () => {
@@ -555,7 +673,38 @@ test('rejects a deck that names a game nobody has a preset for', async () => {
 });
 
 test('remembers private rooms after they close so alliances stay visible', async () => {
-    const { manager, contestCoordinator, advance } = await createManager();
+    const { manager, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    await openPrivateRoom(manager, 'Bot2', ['Bot3']);
+    await manager.handleAgentCommand('Bot2', 'room-send', { message: 'final two?' });
+    assert.equal(manager.view().rooms.length, 1);
+
+    // Walking out is the only thing that ends a two-player room now.
+    await manager.handleAgentCommand('Bot3', 'room-leave');
+    assert.equal(manager.view().rooms.length, 0);
+
+    const [history] = manager.roomHistory;
+    assert.deepEqual(history.memberIds.sort(), ['Bot2', 'Bot3']);
+    assert.equal(history.messageCount, 1);
+    assert.ok(history.closedAt != null);
+
+    const edge = manager.view().relationships.edges.find(item =>
+        item.a === 'Bot2' && item.b === 'Bot3'
+    );
+    assert.equal(edge.roomsShared, 1);
+    assert.equal(edge.messagesExchanged, 1);
+});
+
+test('a private room outlives every phase change so the talk never stops', async () => {
+    const { manager, coordinator, contestCoordinator, advance } = await createManager();
     await manager.start({
         participants: participants(4),
         mergeAt: 4,
@@ -568,21 +717,158 @@ test('remembers private rooms after they close so alliances stay visible', async
     await openPrivateRoom(manager, 'Bot2', ['Bot3']);
     await manager.handleAgentCommand('Bot2', 'room-send', { message: 'final two?' });
 
-    assert.equal(manager.view().rooms.length, 1);
     advance(2);
     await manager.tick();
-    assert.equal(manager.view().rooms.length, 0, 'voting closes the room');
+    assert.equal(coordinator.view().phase, 'tribal_council');
+    assert.equal(manager.view().rooms.length, 1, 'the mat does not break up the room');
+    await manager.handleAgentCommand('Bot3', 'room-send', { message: 'do not blink out there' });
 
-    const [history] = manager.roomHistory;
-    assert.deepEqual(history.memberIds.sort(), ['Bot2', 'Bot3']);
-    assert.equal(history.messageCount, 1);
-    assert.ok(history.closedAt != null);
+    await manager.control('end-council');
+    assert.equal(coordinator.view().phase, 'voting');
+    const sent = await manager.handleAgentCommand('Bot2', 'room-send', {
+        message: 'writing Bot4, you too',
+    });
+    assert.equal(sent.success, true, 'an open ballot no longer closes the room');
 
-    const edge = manager.view().relationships.edges.find(item =>
-        item.a === 'Bot2' && item.b === 'Bot3'
+    const [thread] = manager.conversationTranscripts().threads;
+    assert.equal(thread.open, true);
+    assert.deepEqual(
+        thread.messages.map(message => message.phase),
+        ['strategy', 'tribal_council', 'voting']
     );
-    assert.equal(edge.roomsShared, 1);
-    assert.equal(edge.messagesExchanged, 1);
+});
+
+test('transcripts index every thread by the castaway who was in it', async () => {
+    const { manager, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    await openPrivateRoom(manager, 'Bot2', ['Bot3'], { pitch: 'final two' });
+    await manager.handleAgentCommand('Bot2', 'room-send', { message: 'we write Bot4' });
+    await manager.handleAgentCommand('Bot3', 'room-send', { message: 'agreed' });
+    await manager.handleAgentCommand('Bot3', 'room-leave');
+    await openPrivateRoom(manager, 'Bot3', ['Bot4']);
+    await manager.handleAgentCommand('Bot3', 'room-send', { message: 'Bot2 is coming for you' });
+
+    const transcripts = manager.conversationTranscripts();
+    assert.equal(transcripts.threads.length, 2);
+
+    const bot3 = transcripts.players.find(player => player.id === 'Bot3');
+    assert.deepEqual(bot3.partnerIds, ['Bot2', 'Bot4']);
+    assert.equal(bot3.threadCount, 2);
+    assert.equal(bot3.openThreadCount, 1);
+    assert.equal(bot3.spokenCount, 2, 'one line to Bot2 and one to Bot4');
+    assert.equal(bot3.messageCount, 3, 'everything said in the rooms it sat in');
+
+    // Bot4 was never in the first room, so it stays out of Bot4's index.
+    const bot4 = transcripts.players.find(player => player.id === 'Bot4');
+    assert.deepEqual(bot4.partnerIds, ['Bot3']);
+    assert.equal(bot4.threadCount, 1);
+    assert.equal(bot4.spokenCount, 0);
+
+    const firstThread = transcripts.threads[0];
+    assert.equal(firstThread.pitch, 'final two');
+    assert.deepEqual(firstThread.memberIds.sort(), ['Bot2', 'Bot3']);
+    assert.deepEqual(
+        firstThread.messages.map(message => [message.senderId, message.message]),
+        [['Bot2', 'we write Bot4'], ['Bot3', 'agreed']]
+    );
+    assert.deepEqual(transcripts.threads[1].currentMemberIds.sort(), ['Bot3', 'Bot4']);
+});
+
+test('a refusal stays readable even though it never opened a room', async () => {
+    const { manager, contestCoordinator, advance } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+    await manager.control('set-phase-deadline', { seconds: null });
+
+    await openPrivateRoom(manager, 'Bot2', ['Bot3'], {
+        declineIds: ['Bot3'],
+        reason: 'I am not working with you',
+    });
+    assert.deepEqual(manager.conversationTranscripts().refusals.map(item => [
+        item.requesterId,
+        item.inviteeId,
+        item.reason,
+    ]), [['Bot2', 'Bot3', 'I am not working with you']]);
+
+    // Silence is a refusal too, and only the resolution knows who never answered.
+    manager.conversations.requestTtlMs = 10;
+    await manager.handleAgentCommand('Bot4', 'talk-request', { inviteeIds: ['Bot3'] });
+    advance(1000);
+    await manager.tick();
+    assert.deepEqual(
+        manager.conversationTranscripts().refusals.at(-1),
+        {
+            requestId: 'talk-2',
+            requesterId: 'Bot4',
+            inviteeId: 'Bot3',
+            reason: 'never answered',
+            at: 1000,
+            round: 1,
+            phase: 'strategy',
+        }
+    );
+});
+
+test('before the merge a bot works its own camp, not the tribe going to council', async () => {
+    const { manager, coordinator, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(),
+        mergeAt: 10,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    const game = coordinator.view();
+    const safe = game.participantIds.filter(id => game.players[id].tribe !== game.councilTribe);
+    const doomed = game.participantIds.find(id => game.players[id].tribe === game.councilTribe);
+
+    // The safe tribe used to be frozen out of private talk entirely.
+    const opened = await manager.handleAgentCommand(safe[0], 'talk-request', {
+        inviteeIds: [safe[1]],
+    });
+    assert.ok(opened.data.requestId);
+
+    await assert.rejects(
+        manager.handleAgentCommand(safe[1], 'talk-request', { inviteeIds: [doomed] }),
+        /Not available to talk/
+    );
+});
+
+test('settled talk requests age out instead of piling up all season', async () => {
+    const { manager, contestCoordinator, advance } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+    await manager.control('set-phase-deadline', { seconds: null });
+    manager.conversations.resolvedRetentionMs = 500;
+
+    await openPrivateRoom(manager, 'Bot2', ['Bot3']);
+    assert.equal(manager.view().conversationRequests.length, 1);
+
+    advance(1000);
+    await manager.tick();
+    assert.deepEqual(manager.view().conversationRequests, []);
+    assert.equal(manager.view().rooms.length, 1, 'pruning the ask does not close the room');
 });
 
 test('a private room opening pushes a fresh view to the dashboard', async () => {

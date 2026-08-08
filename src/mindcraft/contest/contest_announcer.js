@@ -58,6 +58,58 @@ export function buildContestResultAnnouncement(contest) {
     return `And the winners are... ${names}! ${names} win!`;
 }
 
+function joinNames(names) {
+    if (names.length <= 1) return names[0] || '';
+    return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+// The host reads the question out loud before the bots answer it. Naming one or
+// two targets keeps it conversational; a question put to the whole tribe reads
+// better without a roll call in front of it.
+export function buildCouncilQuestionAnnouncement(question) {
+    const prompt = String(question?.prompt || '').trim();
+    if (!prompt) return null;
+    const targets = (question?.targetIds || []).map(id => String(id || '').trim()).filter(Boolean);
+    return targets.length > 0 && targets.length <= 2
+        ? `${joinNames(targets)}. ${prompt}`
+        : prompt;
+}
+
+// Spoken when the season moves into a phase the audience needs narrated.
+// Returns null for phases that announce themselves some other way (challenges
+// run through the contest announcer, eliminations through onEliminated).
+export function buildSurvivorPhaseAnnouncement(state) {
+    const tied = joinNames(state?.tiedIds || []);
+    switch (state?.phase) {
+        case 'strategy':
+            return state.merged
+                ? 'Everyone is vulnerable tonight. Get to work before Tribal Council.'
+                : `${state.councilTribe}, I will see you at Tribal Council tonight.`;
+        case 'tribal_council':
+            return 'Tribal Council is now in session. '
+                + 'Nobody votes until I close council.';
+        case 'voting':
+            return 'Council is closed. It is time to vote.';
+        case 'revote':
+            return `We have a tie between ${tied}. `
+                + `Everyone else votes again, and you may only vote for ${tied}.`;
+        case 'deadlock':
+            return `Still deadlocked between ${tied}. `
+                + 'Talk it out. It has to be unanimous, or everyone without immunity draws rocks.';
+        case 'fire_making':
+            return `${tied} will make fire.`;
+        case 'jury_questioning':
+            return `Final Tribal Council. The final ${state.finalistIds.length} are `
+                + `${joinNames(state.finalistIds)}. Jury, it is time to question them.`;
+        case 'jury_voting':
+            return 'Jurors, it is time to vote for the Sole Survivor.';
+        case 'finalist_tiebreak':
+            return 'The jury is deadlocked. The remaining vote breaks the tie.';
+        default:
+            return null;
+    }
+}
+
 export function buildSurvivorAnnouncement(event, state) {
     switch (event?.type) {
         case 'tribes.merged':

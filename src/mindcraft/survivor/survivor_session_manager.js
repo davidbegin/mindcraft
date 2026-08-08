@@ -1,6 +1,10 @@
 import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import {
+    buildCouncilQuestionAnnouncement,
+    buildSurvivorPhaseAnnouncement,
+} from '../contest/contest_announcer.js';
 import { validateGameParticipants } from '../contest/game_session_manager.js';
 import { ConversationRequestRegistry } from './conversation_requests.js';
 import { buildChallengeDeck, resolveTeamChallenge } from './survivor_challenges.js';
@@ -14,6 +18,21 @@ function clone(value) {
         ? value
         : JSON.parse(JSON.stringify(value));
 }
+
+// Private talk used to be a strategy-phase privilege that every phase change
+// tore down. It is now permanently available, so the toolbox rides along with
+// every directive instead of being spelled out inside one phase's copy.
+const PRIVATE_TALK_TOOLBOX = [
+    'PRIVATE TALK IS ALWAYS OPEN — in every phase, including during a challenge,',
+    'at the council mat, and while ballots are open. Nobody but the people you name',
+    'hears it, and your room stays open until you walk out of it.',
+    '  !requestPrivateChat("Alice,Bob", "why they should hear you out") — asks them to step aside with you.',
+    '  !acceptPrivateChat("request id") or !declinePrivateChat("request id", "reason") — you may refuse anyone.',
+    '  !sendPrivateMessage("...") — talks to everyone currently in your private room.',
+    '  !leavePrivateGroup() — walks out, which frees you to be pulled aside by someone else.',
+    'Refusing to talk is a real move, and so is being refused. Note who will not meet with you.',
+    'Lying in private is legal. Being caught lying is what costs you the jury, so weigh it.',
+].join('\n');
 
 function phaseInstructions(state, playerId) {
     const player = state.players[playerId];
@@ -30,18 +49,14 @@ function phaseInstructions(state, playerId) {
             if (!state.merged && player.tribe !== state.councilTribe) {
                 return [
                     `Your tribe is safe. ${state.councilTribe} goes to Tribal Council.`,
-                    'Give one short public confessional about what the result means, then wait.',
+                    'Give one short public confessional about what the result means.',
+                    'Your own tribemates are still worth working — the vote that ends your game is later.',
                 ];
             }
             return [
                 `You are going to Tribal Council. Immunity: ${state.immunityIds.join(', ') || 'nobody'}.`,
                 `Vulnerable tonight: ${state.eligibleTargetIds.join(', ')}.`,
-                'This is your only window to work people before the vote. To pull players aside:',
-                '  !requestPrivateChat("Alice,Bob", "why they should hear you out") — asks them to step away with you.',
-                '  !acceptPrivateChat("request id") or !declinePrivateChat("request id", "reason") — you may refuse anyone.',
-                '  !sendPrivateMessage("...") — talks to everyone currently in your private room.',
-                'Refusing to talk is a real move, and so is being refused. Note who will not meet with you.',
-                'Lying in private is legal. Being caught lying is what costs you the jury, so weigh it.',
+                'This is the widest window you get to work people before the vote. Use it.',
                 'Speak publicly in short confessionals too, so the audience follows your reasoning.',
             ];
         case 'tribal_council':
@@ -62,18 +77,22 @@ function phaseInstructions(state, playerId) {
                 'Before you do: reconsider everything that just came out on the mat. If someone',
                 'exposed a lie, panicked, or handed you a better target, change your vote accordingly.',
                 `Legal targets: ${legalTargets.join(', ')}.`,
-                'Cast exactly one secret ballot with !castSurvivorVote("Name"). Do not announce it.',
+                'Cast exactly one secret ballot with !castSurvivorVote("Name", "why"). Do not announce it.',
+                'The reason is sealed with your ballot: no other player ever sees it, so write the',
+                'real reason you are writing this name down, not the version you told them.',
+                'You may keep working people privately while you decide, but the ballot comes first:',
+                'a bot still whispering when the clock runs out has cast nothing.',
             ];
         case 'jury_voting':
             return [
                 `Vote for the winner: ${legalTargets.join(', ')}.`,
                 'Judge the game that was played, not how much you liked being voted out.',
-                'Cast your ballot with !castSurvivorVote("Name").',
+                'Cast your ballot with !castSurvivorVote("Name", "why they earned your vote").',
             ];
         case 'finalist_tiebreak':
             return [
                 `The jury deadlocked. You break the tie between ${legalTargets.join(' and ')}.`,
-                'Cast your ballot with !castSurvivorVote("Name").',
+                'Cast your ballot with !castSurvivorVote("Name", "why").',
             ];
         case 'deadlock':
             return [
@@ -128,6 +147,7 @@ function phasePrompt(state, playerId, briefing = '') {
         JURY_LENS,
         briefing,
         phaseInstructions(state, playerId).join('\n'),
+        player.active ? PRIVATE_TALK_TOOLBOX : '',
     ].filter(Boolean).join('\n\n');
 }
 
@@ -182,6 +202,11 @@ export class SurvivorSessionManager {
         // Pushes to a single bot that are not phase directives: a request to
         // talk, a council question, another player's public answer.
         this.notifyAgent = options.notifyAgent || (() => {});
+        // Council is a spoken show: the host reads questions and phase calls in
+        // the narrator voice, and each answer is played back in that player's
+        // own voice. Both default to silence so a season still runs without TTS.
+        this.announce = options.announce || (() => {});
+        this.speakAs = options.speakAs || (() => {});
         this.conversations = options.conversations || new ConversationRequestRegistry({
             clock: this.clock,
         });
@@ -195,12 +220,16 @@ export class SurvivorSessionManager {
         this.telemetry = options.telemetry || null;
         this.active = null;
         this.lastFailure = null;
-        // Private rooms close at every phase change, so alliances only stay
-        // visible if we keep our own record of who was in them.
+        // The secret feed is capped because it is a scrolling log, but the
+        // transcripts behind it are the point of the conversation browser: they
+        // keep the full text of every thread for as long as the season runs.
         this.roomHistoryLimit = options.roomHistoryLimit ?? 200;
+        this.threadMessageLimit = options.threadMessageLimit ?? 500;
         this.secretEventLimit = options.secretEventLimit ?? 300;
+        this.refusalLimit = options.refusalLimit ?? 200;
         this.roomHistory = [];
         this.secretEventLog = [];
+        this.refusals = [];
         // Everything that went wrong, kept in the view so the control room can
         // show it instead of burying it in the server console.
         this.problemLimit = options.problemLimit ?? 60;
@@ -210,72 +239,193 @@ export class SurvivorSessionManager {
     }
 
     // Called for every private-room event so a reloaded dashboard can replay the
-    // secret feed and so the relationship graph outlives the rooms themselves.
+    // secret feed, so the relationship graph outlives the rooms themselves, and
+    // so the conversation browser can show a full transcript per thread.
+    // Returns the event stamped with when and where it happened, which is what
+    // the operator sockets should carry.
     recordRoomEvent(event) {
-        if (!event?.type) return;
-        const state = this.coordinator.view();
-        const at = event.at ?? this.clock();
-        this.secretEventLog.push({ ...clone(event), at, round: state?.round ?? null });
-        if (this.secretEventLog.length > this.secretEventLimit) {
-            this.secretEventLog.splice(0, this.secretEventLog.length - this.secretEventLimit);
-        }
-        if (!event.roomId) return;
-
-        let entry = this.roomHistory.find(item => item.roomId === event.roomId);
-        if (!entry) {
-            entry = {
-                roomId: event.roomId,
-                round: state?.round ?? null,
-                phase: state?.phase ?? null,
-                ownerId: event.ownerId ?? null,
-                memberIds: [],
-                messageCount: 0,
-                messageCountBySender: {},
-                openedAt: at,
-                closedAt: null,
-            };
-            this.roomHistory.push(entry);
-            if (this.roomHistory.length > this.roomHistoryLimit) {
-                this.roomHistory.splice(0, this.roomHistory.length - this.roomHistoryLimit);
-            }
-        }
-        // memberIds is the union across the room's life: someone who talked and
-        // then walked out still built a relationship.
-        for (const memberId of event.memberIds || []) {
-            if (!entry.memberIds.includes(memberId)) entry.memberIds.push(memberId);
-        }
-        if (event.memberId && !entry.memberIds.includes(event.memberId)) {
-            entry.memberIds.push(event.memberId);
-        }
-        if (event.type === 'room.message' && event.senderId) {
-            entry.messageCount += 1;
-            entry.messageCountBySender[event.senderId] =
-                (entry.messageCountBySender[event.senderId] || 0) + 1;
-        }
-        if (event.type === 'room.closed') entry.closedAt = at;
+        if (!event?.type) return null;
+        const stamped = this._stamp(event);
+        this._pushSecretEvent(stamped);
+        if (stamped.roomId) this._recordThreadEvent(stamped);
         // Rooms and relationships live in view(), and nothing else in this path
         // changes session state, so push the refresh without re-persisting.
         this.onUpdate(this.view());
+        return stamped;
     }
 
     // Conversation requests are secret in the same way rooms are: operators see
     // everything, bots only see their own.
     recordConversationEvent(event) {
-        if (!event?.type) return;
-        const state = this.coordinator.view();
-        this.secretEventLog.push({
-            ...clone(event),
-            at: event.at ?? this.clock(),
-            round: state?.round ?? null,
-        });
-        if (this.secretEventLog.length > this.secretEventLimit) {
-            this.secretEventLog.splice(0, this.secretEventLog.length - this.secretEventLimit);
-        }
+        if (!event?.type) return null;
+        const stamped = this._stamp(event);
+        this._pushSecretEvent(stamped);
+        this._recordRefusals(stamped);
         this.onUpdate(this.view());
+        return stamped;
     }
 
     secretEvents() {
         return clone(this.secretEventLog);
+    }
+
+    // Everything the operator conversation browser needs in one payload: each
+    // private thread with its full text, plus a per-castaway index so clicking a
+    // name does not mean scanning every thread in the browser.
+    conversationTranscripts() {
+        const game = this.coordinator.view();
+        const openRoomIds = new Set(this.rooms.view().map(room => room.id));
+        const threads = this.roomHistory.map(thread => ({
+            ...clone(thread),
+            open: openRoomIds.has(thread.roomId),
+        }));
+        return {
+            seasonId: this.active?.id ?? null,
+            status: this.active?.status ?? null,
+            round: game?.round ?? null,
+            phase: game?.phase ?? null,
+            players: (game?.participantIds ?? this.active?.participantIds ?? [])
+                .map(id => this._transcriptPlayer(id, game, threads)),
+            threads,
+            refusals: clone(this.refusals),
+        };
+    }
+
+    _transcriptPlayer(id, game, threads) {
+        const player = game?.players?.[id] ?? {};
+        const own = threads.filter(thread => thread.memberIds.includes(id));
+        const partnerIds = [...new Set(
+            own.flatMap(thread => thread.memberIds).filter(other => other !== id)
+        )].sort();
+        return {
+            id,
+            tribe: player.tribe ?? null,
+            active: Boolean(player.active),
+            jury: Boolean(player.jury),
+            placement: player.placement ?? null,
+            partnerIds,
+            threadCount: own.length,
+            openThreadCount: own.filter(thread => thread.open).length,
+            // Split so an operator can tell a talker from someone being talked at.
+            spokenCount: own.reduce(
+                (total, thread) => total + (thread.messageCountBySender[id] || 0),
+                0
+            ),
+            messageCount: own.reduce((total, thread) => total + thread.messageCount, 0),
+            lastMessageAt: own.reduce(
+                (latest, thread) => Math.max(latest, thread.lastMessageAt ?? 0),
+                0
+            ) || null,
+        };
+    }
+
+    _stamp(event) {
+        const state = this.coordinator.view();
+        return {
+            ...clone(event),
+            at: event.at ?? this.clock(),
+            round: state?.round ?? null,
+            phase: state?.phase ?? null,
+        };
+    }
+
+    _pushSecretEvent(event) {
+        this.secretEventLog.push(event);
+        if (this.secretEventLog.length > this.secretEventLimit) {
+            this.secretEventLog.splice(0, this.secretEventLog.length - this.secretEventLimit);
+        }
+    }
+
+    _recordThreadEvent(event) {
+        let thread = this.roomHistory.find(item => item.roomId === event.roomId);
+        if (!thread) {
+            thread = {
+                roomId: event.roomId,
+                round: event.round,
+                phase: event.phase,
+                ownerId: event.ownerId ?? null,
+                memberIds: [],
+                currentMemberIds: [],
+                invitedIds: [],
+                pitch: '',
+                messages: [],
+                messageCount: 0,
+                messageCountBySender: {},
+                openedAt: event.at,
+                closedAt: null,
+                closeReason: null,
+                lastMessageAt: null,
+            };
+            this.roomHistory.push(thread);
+            if (this.roomHistory.length > this.roomHistoryLimit) {
+                this.roomHistory.splice(0, this.roomHistory.length - this.roomHistoryLimit);
+            }
+        }
+        // memberIds is the union across the thread's life: someone who talked and
+        // then walked out still built a relationship, and their words stay in the
+        // transcript.
+        for (const memberId of [...(event.memberIds || []), event.memberId]) {
+            if (memberId && !thread.memberIds.includes(memberId)) thread.memberIds.push(memberId);
+        }
+        // Every room event carries the membership as it stands afterwards, which
+        // is how the browser knows who is still sitting in an open thread.
+        if (Array.isArray(event.memberIds)) thread.currentMemberIds = [...event.memberIds];
+        if (event.type === 'room.created') {
+            thread.invitedIds = [...(event.invitedIds || [])];
+            thread.pitch = event.pitch || '';
+        }
+        if (event.type === 'room.message' && event.senderId) {
+            thread.messages.push({
+                id: event.id,
+                senderId: event.senderId,
+                message: event.message,
+                at: event.at,
+                round: event.round,
+                phase: event.phase,
+            });
+            if (thread.messages.length > this.threadMessageLimit) thread.messages.shift();
+            thread.messageCount += 1;
+            thread.messageCountBySender[event.senderId] =
+                (thread.messageCountBySender[event.senderId] || 0) + 1;
+            thread.lastMessageAt = event.at;
+        }
+        if (event.type === 'room.closed') {
+            thread.closedAt = event.at;
+            thread.closeReason = event.reason ?? null;
+            thread.currentMemberIds = [];
+        }
+    }
+
+    // "I will not meet with you" never becomes a thread, so it would vanish from
+    // the browser entirely if we only kept rooms. Silence counts as a refusal
+    // too, and only talk.resolved knows who never answered.
+    _recordRefusals(event) {
+        const push = (requesterId, inviteeId, reason) => {
+            if (!requesterId || !inviteeId) return;
+            const already = this.refusals.some(item =>
+                item.requestId === event.requestId && item.inviteeId === inviteeId
+            );
+            if (already) return;
+            this.refusals.push({
+                requestId: event.requestId ?? null,
+                requesterId,
+                inviteeId,
+                reason,
+                at: event.at,
+                round: event.round,
+                phase: event.phase,
+            });
+            if (this.refusals.length > this.refusalLimit) this.refusals.shift();
+        };
+        if (event.type === 'talk.declined') {
+            push(event.requesterId, event.inviteeId, event.reason || 'no reason given');
+            return;
+        }
+        if (event.type === 'talk.resolved') {
+            for (const inviteeId of event.declinerIds || []) {
+                push(event.requesterId, inviteeId, 'never answered');
+            }
+        }
     }
 
     // A named failure the operator can act on, without aborting the season.
@@ -292,6 +442,28 @@ export class SurvivorSessionManager {
         }
         this._log('warn', `${stage}: ${entry.message}`, detail);
         return entry;
+    }
+
+    // A dead microphone must never stall the season, so both speech paths
+    // swallow their failures into the operator's problem feed.
+    async _narrate(text, options = {}) {
+        const line = String(text ?? '').trim();
+        if (!line) return;
+        try {
+            await this.announce(line, options);
+        } catch (error) {
+            this._problem('narration', error, { text: line });
+        }
+    }
+
+    async _speakPlayerLine(playerId, text) {
+        const line = String(text ?? '').trim();
+        if (!line) return;
+        try {
+            await this.speakAs(playerId, line);
+        } catch (error) {
+            this._problem('council-voice', error, { playerId });
+        }
     }
 
     _log(level, message, detail = null) {
@@ -350,6 +522,7 @@ export class SurvivorSessionManager {
         if (game) {
             game.ballotCount = Object.keys(game.ballots || {}).length;
             game.ballots = {};
+            game.ballotReasons = {};
             game.deadlockDecisionCount = Object.keys(game.deadlockDecisions || {}).length;
             game.deadlockDecisions = {};
         }
@@ -432,6 +605,11 @@ export class SurvivorSessionManager {
         this.active.status = 'running';
         this.rooms.closeAll('server-restarted');
         this.conversations.cancelAll('server-restarted');
+        // Private alliance memory lives only in memory during a season, so a
+        // restart would otherwise wipe every bot's private history and the
+        // operator's relationship graph. Rebuild both from the journal before the
+        // phase directive goes out, since briefingFor() reads secretEventLog.
+        await this._replayPrivateJournal(game);
         this._log('info', `recovering season ${game.id} in phase '${game.phase}' with ${this.active.participantIds.length} bots`);
         const missing = this.active.participantIds.filter(id =>
             (game.players[id]?.active || game.players[id]?.jury) && !this.isAgentReady(id)
@@ -522,6 +700,40 @@ export class SurvivorSessionManager {
         }
     }
 
+    // Rebuild the in-memory private record (secret feed, per-bot private history,
+    // and the relationship graph's room transcripts) by replaying the journal
+    // through the same accumulators the live path uses. Round and phase are read
+    // back from the stamped journal entry so a replayed line lands in the round
+    // it happened in, not the round we recovered in. A journal that cannot be
+    // read is a degraded recovery, not a failed one: the season still continues,
+    // it just starts with empty private memory.
+    async _replayPrivateJournal(game) {
+        if (typeof this.coordinator.readPrivateEvents !== 'function') return;
+        let events;
+        try {
+            events = await this.coordinator.readPrivateEvents(game.id);
+        } catch (error) {
+            this._problem('recovery-journal', error);
+            return;
+        }
+        this.roomHistory = [];
+        this.secretEventLog = [];
+        this.refusals = [];
+        for (const event of events) {
+            if (!event?.type) continue;
+            const stamped = {
+                ...clone(event),
+                at: event.at ?? this.clock(),
+                round: event.round ?? null,
+                phase: event.phase ?? null,
+            };
+            this._pushSecretEvent(stamped);
+            if (stamped.roomId) this._recordThreadEvent(stamped);
+            this._recordRefusals(stamped);
+        }
+        this._log('info', `replayed ${events.length} private event(s) from the journal`);
+    }
+
     // A finished season keeps its final standings on screen until something else
     // needs the arena. That archive is not a lock, so the games dashboard can
     // clear it the same way a new season does.
@@ -564,6 +776,7 @@ export class SurvivorSessionManager {
         const participantIds = participants.map(participant => participant.name);
         this.roomHistory = [];
         this.secretEventLog = [];
+        this.refusals = [];
         this.problems = [];
         this.conversations.cancelAll('new-season');
         const season = await this.coordinator.start({
@@ -807,6 +1020,9 @@ export class SurvivorSessionManager {
             askedAt: this.clock(),
         };
         await this.coordinator.apply('askCouncilQuestion', question);
+        // Spoken before the bots are prompted, so the host is heard asking the
+        // question before any answer lands in the speech queue behind it.
+        await this._narrate(buildCouncilQuestionAnnouncement(question));
         const results = await Promise.allSettled(targets.map(id =>
             this.notifyAgent(id, 'survivor-council-question', {
                 councilId: state.council.id,
@@ -842,6 +1058,7 @@ export class SurvivorSessionManager {
             prompt: question?.prompt || '',
             questionId: result.questionId,
         };
+        await this._speakPlayerLine(playerId, entry.answer);
         // The public record only exists if the other bots actually hear it.
         const audience = after.participantIds.filter(id =>
             id !== playerId && (after.players[id].active || after.players[id].jury)
@@ -856,18 +1073,14 @@ export class SurvivorSessionManager {
     async handleAgentCommand(agentId, type, payload = {}) {
         const state = this._requireRunning();
         if (!state.participantIds.includes(agentId)) throw new Error('Agent is not in this season');
-        const player = state.players[agentId];
         switch (type) {
             case 'status':
                 return { success: true, data: this._privateStatus(agentId) };
             case 'talk-request': {
-                if (state.phase !== 'strategy') {
-                    throw new Error('You can only pull players aside during strategy');
-                }
                 const request = this.conversations.open(
                     agentId,
                     payload.inviteeIds,
-                    this._strategyPlayerIds(),
+                    this._privateTalkPlayerIds(agentId),
                     { pitch: payload.pitch }
                 );
                 await Promise.allSettled(request.inviteeIds.map(id =>
@@ -907,7 +1120,6 @@ export class SurvivorSessionManager {
                 this.rooms.leave(agentId);
                 return { success: true, message: 'Left the private room' };
             case 'room-send': {
-                if (state.phase !== 'strategy') throw new Error('Private rooms open during strategy');
                 const entry = this.rooms.send(agentId, payload.message);
                 return { success: true, data: { id: entry.id }, message: 'Private message sent' };
             }
@@ -924,7 +1136,12 @@ export class SurvivorSessionManager {
                 };
             }
             case 'cast-vote': {
-                const data = await this.coordinator.apply('castVote', agentId, payload.targetId);
+                const data = await this.coordinator.apply(
+                    'castVote',
+                    agentId,
+                    payload.targetId,
+                    payload.reason
+                );
                 this._emit();
                 return { success: true, data, message: 'Secret ballot accepted' };
             }
@@ -946,7 +1163,7 @@ export class SurvivorSessionManager {
         const accepterIds = pending.inviteeIds.filter(id => pending.responses[id]?.accepted);
         let roomId = null;
         if (accepterIds.length > 0) {
-            const eligible = this._strategyPlayerIds();
+            const eligible = this._privateTalkPlayerIds(pending.requesterId);
             try {
                 const room = this.rooms.create(
                     pending.requesterId,
@@ -999,6 +1216,7 @@ export class SurvivorSessionManager {
                 this._problem('talk-expire', error, { requestId: request.id });
             }
         }
+        this.conversations.pruneResolved(this.clock());
     }
 
     async control(action, payload = {}) {
@@ -1126,10 +1344,11 @@ export class SurvivorSessionManager {
     }
 
     async _afterStateChange(before, after) {
-        if (after.phase !== before.phase) {
-            this.rooms.closeAll(`phase-${after.phase}`);
-            this.conversations.cancelAll(`phase-${after.phase}`);
-        }
+        // A phase change deliberately leaves private rooms alone. An alliance
+        // formed in strategy is still an alliance at the mat and in the voting
+        // booth, and the conversation browser is meant to be live all season.
+        // It does get narrated, so the audience hears the show move.
+        const phaseChanged = after.phase !== before.phase;
         const newlyEliminated = after.bootOrder.filter(id => !before.bootOrder.includes(id));
         for (const playerId of newlyEliminated) {
             this.rooms.removePlayer(playerId);
@@ -1151,6 +1370,7 @@ export class SurvivorSessionManager {
         }
         const duration = this._durationForPhase(after.phase);
         this.active.phaseDeadlineAt = duration == null ? null : this.clock() + duration;
+        if (phaseChanged) await this._narrate(buildSurvivorPhaseAnnouncement(after));
         await this._broadcastPhase();
         this._emit();
     }
@@ -1206,14 +1426,17 @@ export class SurvivorSessionManager {
         };
     }
 
-    _strategyPlayerIds() {
+    // Who this player may pull aside, in any phase. Before the merge the tribes
+    // are camped apart, so the set is the player's own tribe rather than whoever
+    // happens to be going to council; afterwards it is everyone left.
+    _privateTalkPlayerIds(playerId) {
         const state = this.coordinator.view();
-        if (state.phase !== 'strategy') return [];
+        if (!state || state.status !== 'running') return [];
+        if (!state.players[playerId]?.active) return [];
+        const active = state.participantIds.filter(id => state.players[id].active);
         return state.merged
-            ? state.participantIds.filter(id => state.players[id].active)
-            : state.participantIds.filter(
-                id => state.players[id].active && state.players[id].tribe === state.councilTribe
-            );
+            ? active
+            : active.filter(id => state.players[id].tribe === state.players[playerId].tribe);
     }
 
     _duration(key, fallback) {

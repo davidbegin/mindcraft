@@ -908,7 +908,7 @@
     function renderSecretFeed() {
         const feed = el('secretFeed');
         if (!secretEvents.length) {
-            feed.innerHTML = '<div class="secret-entry system">Private strategy talk shows up here, operators only.</div>';
+            feed.innerHTML = '<div class="secret-entry system">Private talk shows up here in every phase, operators only.</div>';
             return;
         }
         feed.innerHTML = secretEvents.map(event => {

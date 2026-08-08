@@ -94,9 +94,13 @@ export const survivorActionList = [
         description: 'Cast your one secret ballot for the current Tribal Council, revote, or final jury vote. Only legal after council closes.',
         params: {
             player_name: { type: 'string', description: 'An eligible target from !survivorStatus.' },
+            reason: {
+                type: 'string',
+                description: 'Why you are writing this name down. Sealed with your ballot: no other player ever sees it, so give the honest reason.',
+            },
         },
-        perform: function (_agent, playerName) {
-            return request('cast-vote', { targetId: playerName });
+        perform: function (_agent, playerName, reason) {
+            return request('cast-vote', { targetId: playerName, reason });
         },
     },
     {

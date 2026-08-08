@@ -7,6 +7,7 @@
     <script src="/socket.io/socket.io.js"></script>
     <script src="/bot_voice.js"></script>
     <script src="/game_setup.js"></script>
+    <script src="/mc_avatar.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -394,42 +395,182 @@
 
         .vote-progress span { display: block; height: 100%; background: var(--amber); }
 
-        .tally-row {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) 34px;
-            align-items: center;
-            gap: 8px;
-            padding: 3px 0;
-            font-size: 0.82rem;
+        /* —— Bot portraits (composited from /skins by mc_avatar.js) —— */
+        .mc-av {
+            display: block;
+            image-rendering: pixelated;
+            border-radius: 3px;
+            background: var(--bg-inset);
         }
 
-        .tally-bar {
-            height: 6px;
-            border-radius: 999px;
-            background: var(--red-dim);
-            border: 1px solid var(--red);
+        /* —— Post-vote results —————————————————————————————————————— */
+        .results {
+            margin: 16px 20px 0;
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
+            background: var(--bg-elevated);
+            overflow: hidden;
         }
 
-        .tally-count { font-family: var(--mono); text-align: right; font-size: 0.78rem; }
+        /* The vote that just landed is the one the operator is reading. */
+        .results.fresh { border-color: var(--red); box-shadow: var(--shadow); }
 
-        .ballot-list {
+        .results-head {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            flex-wrap: wrap;
+            padding: 12px 16px;
+            background: linear-gradient(90deg, var(--red-dim), transparent 70%);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .results-head h2 { font-size: 1rem; }
+        .results-head .sub { font-size: 0.8rem; color: var(--text-dim); }
+        .results-tabs { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
+
+        .results-tab {
             font-family: var(--mono);
-            font-size: 0.74rem;
+            font-size: 0.7rem;
+            padding: 3px 9px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--bg-inset);
             color: var(--text-dim);
-            margin-top: 6px;
-            line-height: 1.6;
+            cursor: pointer;
         }
 
-        .vote-block { padding: 10px 0; border-bottom: 1px solid var(--bg-card); }
-        .vote-block:last-child { border-bottom: none; }
+        .results-tab:hover { color: var(--text); }
+        .results-tab.on { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
 
-        .vote-block h3 {
-            font-size: 0.76rem;
+        .results-body {
+            display: grid;
+            grid-template-columns: 190px minmax(0, 1fr) minmax(0, 1.15fr);
+            gap: 16px;
+            padding: 14px 16px;
+            align-items: start;
+        }
+
+        @media (max-width: 1200px) {
+            .results-body { grid-template-columns: 190px minmax(0, 1fr); }
+        }
+
+        @media (max-width: 760px) {
+            .results-body { grid-template-columns: minmax(0, 1fr); }
+        }
+
+        .results-col-label {
+            font-size: 0.68rem;
             text-transform: uppercase;
-            letter-spacing: 0.06em;
+            letter-spacing: 0.08em;
             color: var(--text-mute);
-            margin-bottom: 4px;
+            margin-bottom: 8px;
         }
+
+        /* Who went home */
+        .boot-card {
+            text-align: center;
+            border: 1px solid var(--red);
+            border-radius: 10px;
+            background: var(--red-dim);
+            padding: 14px 12px;
+        }
+
+        .boot-card.safe { border-color: var(--border-strong); background: var(--bg-inset); }
+        .boot-card.win { border-color: var(--amber); background: var(--amber-dim); }
+        .boot-card .mc-av { margin: 0 auto 8px; }
+        /* Torch snuffed: the portrait goes cold. */
+        .boot-card .mc-av-body { filter: grayscale(0.55) brightness(0.85); }
+        .boot-card.win .mc-av-body { filter: none; }
+
+        .boot-label {
+            font-family: var(--mono);
+            font-size: 0.66rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--red);
+        }
+
+        .boot-card.safe .boot-label { color: var(--text-mute); }
+        .boot-card.win .boot-label { color: var(--amber); }
+        .boot-name { font-size: 1.3rem; font-weight: 700; line-height: 1.2; }
+        .boot-meta { font-size: 0.76rem; color: var(--text-dim); margin-top: 2px; }
+
+        .boot-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        /* Tally */
+        .tally { display: flex; flex-direction: column; gap: 10px; }
+
+        .tally-line {
+            display: grid;
+            grid-template-columns: 32px minmax(0, 1fr) 26px;
+            gap: 9px;
+            align-items: center;
+        }
+
+        .tally-line .who { font-size: 0.85rem; font-weight: 600; }
+        .tally-line.out .who { color: var(--red); }
+
+        .tally-track {
+            height: 9px;
+            border-radius: 999px;
+            background: var(--bg-inset);
+            border: 1px solid var(--border);
+            overflow: hidden;
+            margin-top: 4px;
+        }
+
+        .tally-track span { display: block; height: 100%; background: var(--border-strong); }
+        .tally-line.out .tally-track span { background: var(--red); }
+        .tally-line .num { font-family: var(--mono); font-size: 1.05rem; text-align: right; }
+        .tally-voters { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 5px; }
+        .tally-voters .mc-av { opacity: 0.85; }
+
+        /* Ballots, one card per voter */
+        .ballots { display: flex; flex-direction: column; gap: 7px; max-height: 540px; overflow-y: auto; }
+
+        .ballot {
+            display: grid;
+            grid-template-columns: auto 16px auto minmax(0, 1fr);
+            gap: 9px;
+            align-items: center;
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border-strong);
+            border-radius: 8px;
+            padding: 8px 10px;
+            background: var(--bg-inset);
+        }
+
+        .ballot.majority { border-left-color: var(--red); }
+        .ballot.minority { border-left-color: var(--cyan); }
+        .ballot.autofilled { border-style: dashed; }
+        .ballot .arrow { font-family: var(--mono); color: var(--text-mute); text-align: center; }
+
+        .ballot-who {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            width: 50px;
+        }
+
+        .ballot-who span {
+            font-size: 0.68rem;
+            color: var(--text-dim);
+            max-width: 50px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .ballot-say { font-size: 0.82rem; line-height: 1.45; }
+        .ballot-say.none { color: var(--text-mute); font-style: italic; font-size: 0.78rem; }
 
         /* —— Timeline —— */
         .timeline-entry {
@@ -741,6 +882,7 @@
             <a href="/colony">Colony</a>
             <a href="/games">Games</a>
             <a href="/survivor" class="active" aria-current="page">Survivor</a>
+            <a href="/conversations">Conversations</a>
         </nav>
         <span id="msStatus" class="status-pill offline">mindserver offline</span>
     </header>
@@ -831,6 +973,28 @@
         </div>
     </section>
 
+    <section id="voteResults" class="results" hidden>
+        <div class="results-head">
+            <h2 id="resultsTitle">The vote</h2>
+            <span class="sub" id="resultsSub"></span>
+            <div class="results-tabs" id="resultsTabs"></div>
+        </div>
+        <div class="results-body">
+            <div>
+                <div class="results-col-label">Result</div>
+                <div id="resultsBoot"></div>
+            </div>
+            <div>
+                <div class="results-col-label" id="resultsTallyLabel">Votes cast against</div>
+                <div class="tally" id="resultsTally"></div>
+            </div>
+            <div>
+                <div class="results-col-label">Every ballot, and why</div>
+                <div class="ballots" id="resultsBallots"></div>
+            </div>
+        </div>
+    </section>
+
     <main id="controlGrid" class="control-grid" hidden>
         <div class="col">
             <section class="card" style="margin-bottom:14px">
@@ -873,7 +1037,6 @@
                     <span class="count" id="voteCount"></span>
                 </div>
                 <div class="card-body" id="voteLive"></div>
-                <div class="card-body scroll-body" id="voteHistory" style="border-top:1px solid var(--border)"></div>
             </section>
 
             <section class="card" style="margin-bottom:14px">
@@ -931,6 +1094,7 @@
                     <div id="talkRequests"></div>
                     <div id="rooms"></div>
                     <div class="secret-feed" id="secretFeed"></div>
+                    <a class="btn btn-ghost" href="/conversations" style="margin-top:10px">Read full transcripts by castaway</a>
                 </div>
             </section>
 

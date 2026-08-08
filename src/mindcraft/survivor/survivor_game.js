@@ -22,6 +22,13 @@ export const MAX_COUNCIL_QUESTION_LENGTH = 1000;
 export const MAX_COUNCIL_ANSWER_LENGTH = 1200;
 const MAX_COUNCIL_QUESTIONS = 40;
 
+// A voter may attach private reasoning to their ballot. It stays sealed with the
+// ballot and only surfaces in the reveal event, so the audience learns why a
+// vote happened without the other players ever hearing it.
+export const MAX_VOTE_REASON_LENGTH = 500;
+
+const VOTE_PHASES = Object.freeze(['voting', 'revote', 'jury_voting', 'finalist_tiebreak']);
+
 // A jury needs at least two voices, so short casts end at a final two instead of
 // letting the single first boot crown the winner alone.
 export function defaultFinalistCount(rosterSize) {
@@ -122,6 +129,7 @@ export function createSurvivorState(options = {}) {
         councilVoterIds: [],
         eligibleTargetIds: [],
         ballots: {},
+        ballotReasons: {},
         tiedIds: [],
         deadlockDecisions: {},
         preMergeBootIds: [],
@@ -149,6 +157,7 @@ export class SurvivorGame {
         this.state.councilVoterIds ||= [...(this.state.eligibleVoterIds || [])];
         this.state.finalistCount ||= 3;
         this.state.council ??= null;
+        this.state.ballotReasons ??= {};
         this._assertState();
     }
 
@@ -328,7 +337,7 @@ export class SurvivorGame {
     beginVoting() {
         this._requirePhase('tribal_council');
         this.state.phase = 'voting';
-        this.state.ballots = {};
+        this._clearBallots();
         this._event('vote.started', {
             voters: [...this.state.eligibleVoterIds],
             targets: [...this.state.eligibleTargetIds],
@@ -337,14 +346,22 @@ export class SurvivorGame {
         return this.snapshot();
     }
 
-    castVote(voterId, targetId) {
-        if (!['voting', 'revote', 'jury_voting', 'finalist_tiebreak'].includes(this.state.phase)) {
+    castVote(voterId, targetId, reason = '') {
+        if (!VOTE_PHASES.includes(this.state.phase)) {
             throw new Error(`Votes are not accepted during ${this.state.phase}`);
         }
         this._validateBallot(voterId, targetId);
         if (this.state.ballots[voterId]) throw new Error(`${voterId} already voted`);
+        const note = String(reason ?? '').trim().slice(0, MAX_VOTE_REASON_LENGTH);
         this.state.ballots[voterId] = targetId;
-        this._event('ballot.cast', { voterId, phase: this.state.phase });
+        if (note) this.state.ballotReasons[voterId] = note;
+        // The target stays sealed until the reveal, so this only says a ballot
+        // landed and whether it came with reasoning attached.
+        this._event('ballot.cast', {
+            voterId,
+            phase: this.state.phase,
+            explained: Boolean(note),
+        });
         return {
             accepted: true,
             received: Object.keys(this.state.ballots).length,
@@ -353,7 +370,7 @@ export class SurvivorGame {
     }
 
     fillMissingBallots() {
-        if (!['voting', 'revote', 'jury_voting', 'finalist_tiebreak'].includes(this.state.phase)) {
+        if (!VOTE_PHASES.includes(this.state.phase)) {
             throw new Error(`Ballots cannot be filled during ${this.state.phase}`);
         }
         const filled = [];
@@ -364,7 +381,11 @@ export class SurvivorGame {
             this.state.ballots[voterId] = targetId;
             filled.push({ voterId, targetId });
         }
-        if (filled.length > 0) this._event('ballots.autofilled', { ballots: filled });
+        // The phase is stamped here so a reveal can tell which of its ballots the
+        // clock filled in rather than the player.
+        if (filled.length > 0) {
+            this._event('ballots.autofilled', { phase: this.state.phase, ballots: filled });
+        }
         return filled;
     }
 
@@ -380,6 +401,7 @@ export class SurvivorGame {
         this._event('vote.revealed', {
             phase: this.state.phase,
             ballots: clone(this.state.ballots),
+            reasons: clone(this.state.ballotReasons),
             counts: result.counts,
         });
         if (result.leaders.length === 1) {
@@ -393,7 +415,7 @@ export class SurvivorGame {
                 id => !tiedIds.includes(id)
             );
             this.state.eligibleTargetIds = tiedIds;
-            this.state.ballots = {};
+            this._clearBallots();
             this._event('revote.started', {
                 tiedIds,
                 voters: this.state.eligibleVoterIds,
@@ -485,7 +507,7 @@ export class SurvivorGame {
         this.state.phase = 'jury_voting';
         this.state.eligibleVoterIds = [...this.state.juryIds];
         this.state.eligibleTargetIds = [...this.state.finalistIds];
-        this.state.ballots = {};
+        this._clearBallots();
         this._event('jury.vote.started', {
             jurorIds: this.state.juryIds,
             finalistIds: this.state.finalistIds,
@@ -519,7 +541,7 @@ export class SurvivorGame {
             id => !tiedIds.includes(id)
         );
         this.state.eligibleTargetIds = tiedIds;
-        this.state.ballots = {};
+        this._clearBallots();
         this.state.deadlockDecisions = {};
         this._event('deadlock.started', {
             tiedIds,
@@ -572,7 +594,7 @@ export class SurvivorGame {
             this.state.eligibleVoterIds = [];
             this.state.councilVoterIds = [];
             this.state.eligibleTargetIds = [];
-            this.state.ballots = {};
+            this._clearBallots();
             // The finale is a council too, so the host can put the same
             // questions to finalists and jurors on the record.
             this.state.council = this._createCouncil(
@@ -602,7 +624,7 @@ export class SurvivorGame {
         this.state.eligibleVoterIds = [];
         this.state.councilVoterIds = [];
         this.state.eligibleTargetIds = [];
-        this.state.ballots = {};
+        this._clearBallots();
         this.state.tiedIds = [];
         this.state.deadlockDecisions = {};
         return this.snapshot();
@@ -612,6 +634,7 @@ export class SurvivorGame {
         const result = tally(this.state.ballots);
         this.state.finalVote = {
             ballots: clone(this.state.ballots),
+            reasons: clone(this.state.ballotReasons),
             counts: result.counts,
         };
         this._event('jury.vote.revealed', this.state.finalVote);
@@ -625,7 +648,7 @@ export class SurvivorGame {
                 // finalists settle it at the fire-making pit.
                 this.state.phase = 'fire_making';
                 this.state.tiedIds = result.leaders;
-                this.state.ballots = {};
+                this._clearBallots();
                 this._event('fire_making.started', {
                     contestantIds: result.leaders,
                     reason: 'jury-deadlock',
@@ -636,7 +659,7 @@ export class SurvivorGame {
             this.state.tiedIds = result.leaders;
             this.state.eligibleVoterIds = [decidingFinalist];
             this.state.eligibleTargetIds = result.leaders;
-            this.state.ballots = {};
+            this._clearBallots();
             this._event('jury.tiebreak.started', {
                 voterId: decidingFinalist,
                 finalistIds: result.leaders,
@@ -653,6 +676,7 @@ export class SurvivorGame {
         this._event('jury.tiebreak.revealed', {
             voterId: this.state.eligibleVoterIds[0],
             winnerId,
+            reasons: clone(this.state.ballotReasons),
         });
         return this._complete(winnerId);
     }
@@ -675,6 +699,13 @@ export class SurvivorGame {
             });
         this._event('season.completed', { winnerId });
         return this.snapshot();
+    }
+
+    // Ballots and the reasoning attached to them are sealed and unsealed as one
+    // unit; clearing them separately would leak last round's notes into this one.
+    _clearBallots() {
+        this.state.ballots = {};
+        this.state.ballotReasons = {};
     }
 
     _validateBallot(voterId, targetId) {
