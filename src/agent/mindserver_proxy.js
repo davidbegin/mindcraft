@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 import convoManager from './conversation.js';
 import settings, { setSettings } from './settings.js';
-import { clearSpeechQueue } from './speak.js';
+import { clearSpeechQueue, silenceBot } from './speak.js';
 import { getFullState, getWallState } from './library/full_state.js';
 import * as skills from './library/skills.js';
 import { findAgentSpatialEntry } from '../utils/spatial.js';
@@ -337,7 +337,12 @@ class MindServerProxy {
         });
 
         this.socket.on('contest-clear-speech', () => {
-            clearSpeechQueue();
+            // Match is over (or the ceremony is about to speak). Drop the local
+            // backlog and refuse new lines until a directive reinstates the bot
+            // — otherwise a fallback TTS path can still play mid-match chatter
+            // after the winner has been called.
+            if (this.agent?.name) silenceBot(this.agent.name);
+            else clearSpeechQueue();
         });
 
         this.socket.on('contest-recording-audio', (payload) => {

@@ -68,6 +68,7 @@ import { assignModelTeam } from './nametags.js';
 import {
     allowBot,
     clearSpeechQueue,
+    isBotSilenced,
     playSpeech,
     setMuted,
     silenceBot,
@@ -870,9 +871,14 @@ function silenceEliminatedAgent(agentRef, reason = 'eliminated') {
 }
 
 function clearContestVoice(contest) {
+    // Flush whatever is already queued, then silence each competitor so a line
+    // whose TTS is still generating cannot re-enter the speakers after the
+    // match ended. Winner reactions restore voice via sendGameDirective.
     voiceOutput.clear();
     for (const participantId of contest?.participantIds || []) {
         const connection = getConnection(participantId);
+        const name = connection?.name || participantId;
+        voiceOutput.silence(name);
         if (connection?.socket?.connected) {
             connection.socket.emit('contest-clear-speech');
         }
@@ -3345,6 +3351,13 @@ export function createMindServer(host_public = false, port = 8080) {
                 if (!connection?.settings?.game_session?.serverBroadcastVoice) {
                     throw new Error('Contest voice broadcast is only available to active game agents');
                 }
+                // Out of the match (or match already over): do not spend credits
+                // and do not play. Success — not failure — so the agent does not
+                // fall back to local playback of the same stale line.
+                if (isBotSilenced(connection.name)) {
+                    callback?.({ success: true, suppressed: true });
+                    return;
+                }
                 if (!hasKey('ELEVENLABS_API_KEY')) {
                     const missingKey = new Error('ELEVENLABS_API_KEY is not configured');
                     noteVoiceFailure(missingKey, { botName: connection.name });
@@ -3367,6 +3380,13 @@ export function createMindServer(host_public = false, port = 8080) {
                     audio,
                     atMs: Date.now(),
                 });
+                // TTS takes seconds. If the game ended while this was generating,
+                // the line still belongs in the recording, but playing it after
+                // the winner call puts mid-match chatter on the ceremony.
+                if (isBotSilenced(connection.name)) {
+                    callback?.({ success: true, audio, suppressed: true });
+                    return;
+                }
                 dispatchBotVoice({ agentName: connection.name, text, audio });
                 callback?.({ success: true, audio });
             } catch (error) {

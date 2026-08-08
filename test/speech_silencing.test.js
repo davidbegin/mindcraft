@@ -60,3 +60,18 @@ test('flushing one bot leaves the rest of the cast speakable', () => {
     assert.equal(isBotSilenced('chip'), true);
     assert.equal(isBotSilenced('kimmy'), false);
 });
+
+test('a line that was already generating is dropped once its bot is silenced', async () => {
+    resetVoiceHealth();
+    let releaseChip;
+    queueLine('chip', new Promise(resolve => { releaseChip = resolve; }));
+
+    // Chip spoke before the match ended; TTS was still in flight when the
+    // ceremony cleared the cast. The finished audio must not play afterward.
+    silenceBot('chip');
+    releaseChip('AUDIO');
+    await settle();
+
+    assert.equal(getVoiceHealth().failureCount, 0);
+    assert.equal(isBotSilenced('chip'), true);
+});
