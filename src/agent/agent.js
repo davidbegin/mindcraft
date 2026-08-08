@@ -1075,7 +1075,10 @@ export class Agent {
     }
 
     _reportContestDeath() {
-        if (settings.game_session?.contestType === 'spleef') {
+        if (
+            settings.game_session?.contestType === 'spleef'
+            || settings.game_session?.contestType === 'team_base_siege'
+        ) {
             this._reportContestEliminated('death');
             return;
         }
@@ -1122,8 +1125,9 @@ export class Agent {
     }
 
     _reportContestEliminated(reason = 'fell') {
+        const contestType = settings.game_session?.contestType;
         if (
-            settings.game_session?.contestType !== 'spleef'
+            (contestType !== 'spleef' && contestType !== 'team_base_siege')
             || this._contestEliminatedReported
         ) {
             return;

@@ -9,47 +9,223 @@ const SPOKEN_COORDINATE_PATTERNS = [
 ];
 
 /**
- * Spoken coordinates leak exact numeric locations to the audience, so TTS
- * swaps them for a vague, in-character reference to a shared meeting place.
- * Keeping a broad pool of phrasings (and destinations) makes the bots sound
- * like people improvising rather than reading the same canned line every time.
+ * Earlier prompts told models to say the literal line "Meet me at the spot."
+ * Those lines carry no digits, so the coordinate patterns never caught them and
+ * the audience heard the same sentence all match. Models still fall back to
+ * that memorized phrasing, so treat a bare placeholder "the spot" as a canned
+ * line and re-roll it. A descriptive place ("the hidden clearing") is left
+ * alone, since that is the varied speech we want.
  */
-export const SPOT_REFERENCE_PHRASES = [
-    'Meet me at the spot.',
-    "Let's head to the spot.",
-    "Let's regroup at the spot.",
-    "Let's rally at the spot.",
-    "Let's link up at the spot.",
-    "Let's get to the secret spot.",
-    'Come find me at the usual place.',
-    'Meet me where we always meet.',
-    "Let's meet at the usual corner.",
-    "Let's go to that secret location.",
-    'Head to the secret location.',
-    'Head over to the secret meeting point.',
-    'Come to the secret base.',
-    'Meet me at our hideout.',
-    'Get to the hideout when you can.',
-    'Find me at the hideaway.',
-    'Head to the rendezvous point.',
-    'Find me at the rendezvous.',
-    'Meet me at the old rendezvous.',
-    'You know the place — meet me there.',
-    'Head to the marked location.',
-    'Meet me at the waypoint.',
-    'Head to the hidden clearing.',
-    "Let's meet at the checkpoint.",
-    'Come to the meeting point.',
-    'Come find me at the meeting place.',
-    'Come to the gathering spot.',
-    "Let's meet at the drop-off.",
-    'Come to the stash.',
-    'Meet me at the landmark.',
-    'Meet up at base camp.',
-    'Head to that special place.',
-    'Meet me at that quiet place.',
-    "Let's assemble at the spot.",
+const CANNED_SPOT_LINE_PATTERN =
+    /^(?:meet|come|head|go|let's|lets|we're|were|i'll|ill|see)\b[^.!?]*\b(?:the|our|that) spot\b\s*[.!?]*$/i;
+
+const SPOT_ACTIONS = [
+    place => `Meet me at ${place}.`,
+    place => `Come meet me at ${place}.`,
+    place => `Come find me at ${place}.`,
+    place => `Join me at ${place}.`,
+    place => `Catch up with me at ${place}.`,
+    place => `Link up with me at ${place}.`,
+    place => `Rendezvous with me at ${place}.`,
+    place => `Wait for me at ${place}.`,
+    place => `I'll meet you at ${place}.`,
+    place => `I'll be waiting at ${place}.`,
+    place => `We're meeting at ${place}.`,
+    place => `Head to ${place}.`,
+    place => `Head over to ${place}.`,
+    place => `Make your way to ${place}.`,
+    place => `Get over to ${place}.`,
+    place => `Find your way to ${place}.`,
+    place => `Set a course for ${place}.`,
+    place => `Make for ${place}.`,
+    place => `Proceed to ${place}.`,
+    place => `Report to ${place}.`,
+    place => `Move toward ${place}.`,
+    place => `Push toward ${place}.`,
+    place => `Travel to ${place}.`,
+    place => `Trek over to ${place}.`,
+    place => `Swing by ${place}.`,
+    place => `Slip away to ${place}.`,
+    place => `Sneak over to ${place}.`,
+    place => `Fall back to ${place}.`,
+    place => `Return to ${place}.`,
+    place => `Rally at ${place}.`,
+    place => `Regroup at ${place}.`,
+    place => `Gather at ${place}.`,
+    place => `Assemble at ${place}.`,
+    place => `Reconvene at ${place}.`,
+    place => `Check in at ${place}.`,
+    place => `Converge on ${place}.`,
+    place => `Let's meet at ${place}.`,
+    place => `Let's head to ${place}.`,
+    place => `Let's go to ${place}.`,
+    place => `Let's make for ${place}.`,
+    place => `Let's move toward ${place}.`,
+    place => `Let's regroup at ${place}.`,
+    place => `Let's rally at ${place}.`,
+    place => `Let's link up at ${place}.`,
+    place => `Let's gather at ${place}.`,
+    place => `Let's assemble at ${place}.`,
+    place => `Let's reconvene at ${place}.`,
+    place => `Let's rendezvous at ${place}.`,
+    place => `Let's fall back to ${place}.`,
+    place => `Let's return to ${place}.`,
+    place => `Let's sneak off to ${place}.`,
+    place => `Let's slip over to ${place}.`,
+    place => `Let's find each other at ${place}.`,
+    place => `We should meet at ${place}.`,
+    place => `We should regroup at ${place}.`,
+    place => `We should rendezvous at ${place}.`,
+    place => `We can link up at ${place}.`,
+    place => `You can find me at ${place}.`,
+    place => `Look for me at ${place}.`,
 ];
+
+const SPOT_DESCRIPTORS = [
+    'secret',
+    'hidden',
+    'quiet',
+    'secluded',
+    'concealed',
+    'out-of-the-way',
+    'sheltered',
+    'forgotten',
+    'old',
+    'familiar',
+    'usual',
+    'marked',
+    'chosen',
+    'agreed-upon',
+    'safe',
+    'secure',
+    'private',
+    'remote',
+    'distant',
+    'nearby',
+    'back',
+    'side',
+    'upper',
+    'lower',
+    'underground',
+    'woodland',
+];
+
+const SPOT_NOUNS = [
+    'spot',
+    'place',
+    'location',
+    'meeting place',
+    'meeting point',
+    'rendezvous point',
+    'rally point',
+    'gathering point',
+    'waypoint',
+    'checkpoint',
+    'landmark',
+    'hideout',
+    'hideaway',
+    'base',
+    'base camp',
+    'camp',
+    'outpost',
+    'shelter',
+    'refuge',
+    'retreat',
+    'sanctuary',
+    'stash',
+    'cache',
+    'drop-off',
+    'crossroads',
+    'corner',
+    'clearing',
+    'grove',
+    'lookout',
+    'overlook',
+    'passage',
+    'entrance',
+];
+
+const PERSONAL_SPOT_REFERENCES = [
+    'our spot',
+    'our place',
+    'our hideout',
+    'our little hideaway',
+    'our meeting place',
+    'our rendezvous point',
+    'our rally point',
+    'our waypoint',
+    'our checkpoint',
+    'our base',
+    'our base camp',
+    'our shelter',
+    'our safe place',
+    'our fallback point',
+    'the place we picked',
+    'the place we discussed',
+    'the place we agreed on',
+    'the place we know',
+    'the place from before',
+    'the place we used last time',
+    'the place only we know',
+    'that special place',
+    'that quiet place',
+    'that tucked-away place',
+    'that place we found',
+    'that place we talked about',
+    'the usual place',
+    'the usual spot',
+    'the usual corner',
+    'the usual meeting point',
+    'the same old spot',
+    'the familiar place',
+];
+
+const DIRECT_SPOT_REFERENCES = [
+    'You know the place — meet me there.',
+    'You know the spot — head there now.',
+    'You know where to find me.',
+    'Meet me where we always meet.',
+    'Meet me where we met before.',
+    'Meet me where we agreed.',
+    'Meet me at the place we discussed.',
+    'Go to the place we talked about.',
+    'Head where we planned to meet.',
+    'Head back to where we started.',
+    'Make your way to our agreed location.',
+    'Come to the place only we know.',
+    'Find me at our little secret.',
+    'Same place as before — see you there.',
+    'Back to the usual place.',
+    'Time to return to our meeting point.',
+    "I'll see you at the place we picked.",
+    "Let's go to that secret location.",
+    "Let's meet somewhere only we know.",
+    'Make for the place we chose.',
+];
+
+const GENERATED_SPOT_REFERENCES = [
+    ...SPOT_NOUNS.map(noun => `the ${noun}`),
+    ...SPOT_DESCRIPTORS.flatMap(descriptor =>
+        SPOT_NOUNS.map(noun => `the ${descriptor} ${noun}`)
+    ),
+    ...PERSONAL_SPOT_REFERENCES,
+];
+
+/**
+ * Spoken coordinates leak exact numeric locations to the audience. This
+ * combinatorial catalog creates tens of thousands of natural alternatives
+ * while keeping every generated line reviewable through small source lists.
+ * Canned "the spot" phrasings are filtered out so a rewrite never produces the
+ * very line it is meant to replace.
+ */
+export const SPOT_REFERENCE_PHRASES = Object.freeze([
+    ...new Set([
+        ...GENERATED_SPOT_REFERENCES.flatMap(place =>
+            SPOT_ACTIONS.map(createPhrase => createPhrase(place))
+        ),
+        ...DIRECT_SPOT_REFERENCES,
+    ]),
+].filter(phrase => !CANNED_SPOT_LINE_PATTERN.test(phrase)));
 
 /**
  * Pick a random vague meeting-place phrase. Accepts an injectable random
@@ -78,7 +254,8 @@ export function getSpokenChatText(message) {
  */
 export function getAudibleChatText(message, randomFn = Math.random) {
     const text = String(message || '').trim();
-    if (SPOKEN_COORDINATE_PATTERNS.some(pattern => pattern.test(text))) {
+    const leaksCoordinates = SPOKEN_COORDINATE_PATTERNS.some(pattern => pattern.test(text));
+    if (leaksCoordinates || CANNED_SPOT_LINE_PATTERN.test(text)) {
         return pickSpotReferencePhrase(randomFn);
     }
     return text;

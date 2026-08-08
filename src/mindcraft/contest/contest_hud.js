@@ -70,6 +70,17 @@ export function formatContestScore(contest, result) {
         }
         return 'eliminated';
     }
+    if (contest.rules?.type === 'team_base_siege') {
+        if (result.details?.surviving) {
+            const survivors = result.details?.survivors;
+            return Number.isFinite(survivors) ? `${survivors} alive` : 'surviving';
+        }
+        const survivedMs = result.details?.survivedMs;
+        if (Number.isFinite(survivedMs)) {
+            return `out at ${formatContestTime(survivedMs)}`;
+        }
+        return 'eliminated';
+    }
     const itemRace = ITEM_RACE_PRESENTATIONS[contest.rules?.type];
     if (itemRace) return itemRace.score;
     return `${result.score} points`;
@@ -106,7 +117,10 @@ function rankedResults(contest) {
             (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER)
             || left.participantId.localeCompare(right.participantId)
         );
-    if (contest.rules?.type !== 'team_tower_battle') return results;
+    if (
+        contest.rules?.type !== 'team_tower_battle'
+        && contest.rules?.type !== 'team_base_siege'
+    ) return results;
     const byTeam = new Map();
     for (const result of results) {
         const teamName = result.details?.teamName;
@@ -192,7 +206,7 @@ export class ContestHud {
 
     async _announceStart(contest) {
         const maxSeconds = Math.max(1, Math.ceil(contest.durationMs / 1000));
-        const competitors = contest.rules?.type === 'team_tower_battle'
+        const competitors = ['team_tower_battle', 'team_base_siege'].includes(contest.rules?.type)
             ? (contest.metadata?.gameSession?.teamNames || contest.participantIds).join(' vs ')
             : contest.participantIds.join(' vs ');
         await this._commands([
@@ -266,7 +280,7 @@ export class ContestHud {
     }
 
     async _announceCompleted(contest) {
-        const teamMode = contest.rules?.type === 'team_tower_battle';
+        const teamMode = ['team_tower_battle', 'team_base_siege'].includes(contest.rules?.type);
         const winners = teamMode
             ? rankedResults(contest).filter(result => result.rank === 1)
                 .map(result => result.participantId)

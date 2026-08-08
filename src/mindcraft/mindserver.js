@@ -42,6 +42,7 @@ import {
     safeHighlightSessionId,
     scoreDepthRace,
     scoreSpleef,
+    scoreTeamBaseSiege,
     measureTeamTowerBattle,
     scoreTeamTowerBattle,
     scoreTowerBattle,
@@ -374,7 +375,13 @@ async function ensureContest(options) {
     if (!resolved?.enabled) return null;
     if (!contestReady) {
         const root = getContestRoot(resolved);
-        const coordinatorOptions = { root, judge: judgeContest };
+        const coordinatorOptions = {
+            root,
+            judge: judgeContest,
+            onDeadline: contest => gameSessionManager
+                ? gameSessionManager.applyPressureRound(contest)
+                : null,
+        };
         contestReady = (existsSync(path.join(root, 'state.json'))
             ? ContestCoordinator.load(coordinatorOptions)
             : ContestCoordinator.create(coordinatorOptions)
@@ -423,9 +430,14 @@ async function ensureContest(options) {
                 queueHighlight: ({ session, contest }) => queueContestHighlight({ session, contest }),
                 sendDirective: sendGameDirective,
                 clearQueuedVoice: clearContestVoice,
+                runArenaCommands: command => runMinecraftCommand(command),
                 announceStart: contest => contestAnnouncer.announceStart(contest),
                 announcePlanning: (contest, options) =>
                     contestAnnouncer.announcePlanning(contest, options),
+                announceBuildPhase: (contest, options) =>
+                    contestAnnouncer.announceBuildPhase(contest, options),
+                announcePressureRound: options =>
+                    contestAnnouncer.announcePressureRound(options),
                 announceResult: contest => contestAnnouncer.announceResult(contest),
                 announceVisualResult: () => contestHud.sync(contestCoordinator.view()),
                 onUpdate: () => emitContestUpdate(),
@@ -882,6 +894,20 @@ async function getContestLeader(contest) {
             .filter(result => !result.disqualified);
     } else if (contest.rules?.type === 'spleef') {
         results = scoreSpleef(contest).filter(result => !result.disqualified);
+    } else if (contest.rules?.type === 'team_base_siege') {
+        const scored = scoreTeamBaseSiege(contest).filter(result => !result.disqualified);
+        const byTeam = new Map();
+        for (const result of scored) {
+            const teamName = result.details?.teamName;
+            if (teamName && !byTeam.has(teamName)) {
+                byTeam.set(teamName, {
+                    participantId: teamName,
+                    score: result.score,
+                    details: result.details,
+                });
+            }
+        }
+        results = [...byTeam.values()];
     } else {
         results = defaultJudge(contest).filter(result => !result.disqualified);
     }
@@ -946,6 +972,9 @@ async function judgeContest(contest) {
     }
     if (contest.rules?.type === 'spleef') {
         return scoreSpleef(contest);
+    }
+    if (contest.rules?.type === 'team_base_siege') {
+        return scoreTeamBaseSiege(contest);
     }
     return defaultJudge(contest);
 }
@@ -1099,8 +1128,13 @@ async function startContestGame(gameId, options = {}) {
     if (!gameSessionManager) {
         throw new Error('Game session manager is not enabled');
     }
-    if (survivorSessionManager?.view()) {
-        throw new Error('A Survivor season is active. Cancel it before starting another game.');
+    await survivorSessionManager?.archiveFinishedSeason();
+    const blockingSeason = survivorSessionManager?.view();
+    if (blockingSeason) {
+        throw new Error(
+            `A Survivor season is active (${blockingSeason.status}). `
+            + 'Cancel it before starting another game.'
+        );
     }
     try {
         const result = await gameSessionManager.start({
@@ -1109,6 +1143,7 @@ async function startContestGame(gameId, options = {}) {
             systemPrompt: options.systemPrompt,
             durationMs: options.durationMs,
             planningMs: options.planningMs,
+            buildPhaseMs: options.buildPhaseMs,
             teamNames: options.teamNames,
         });
         await contestHud.sync(contestCoordinator.view());
@@ -2147,7 +2182,14 @@ export function createMindServer(host_public = false, port = 8080) {
             try {
                 await ensureContest();
                 if (!survivorSessionManager) throw new Error('Survivor is not enabled');
-                if (gameSessionManager?.view()) throw new Error('A contest game is already active');
+                await gameSessionManager?.releasePodiumHold();
+                const blockingGame = gameSessionManager?.view();
+                if (blockingGame) {
+                    throw new Error(
+                        `A contest game is already active: ${blockingGame.title} (${blockingGame.status}). `
+                        + 'Cancel it on the games dashboard before starting Survivor.'
+                    );
+                }
                 const preset = getSurvivorSeasonPreset(request?.scenarioId);
                 const data = await survivorSessionManager.start({
                     participants: request?.participants,
@@ -2212,6 +2254,7 @@ export function createMindServer(host_public = false, port = 8080) {
                 const data = await startContestGame(request?.gameId, {
                     durationMs: request?.durationMs,
                     planningMs: request?.planningMs,
+                    buildPhaseMs: request?.buildPhaseMs,
                     participants: request?.participants,
                     systemPrompt: request?.systemPrompt,
                     teamNames: request?.teamNames,
@@ -2437,14 +2480,14 @@ export function createMindServer(host_public = false, port = 8080) {
                 if (connection.settings.game_session.contestId !== active.id) {
                     throw new Error('Game participant is not in the active contest');
                 }
-                if (active.rules?.type !== 'spleef') {
-                    throw new Error('The active contest is not a Spleef game');
+                if (active.rules?.type !== 'spleef' && active.rules?.type !== 'team_base_siege') {
+                    throw new Error('The active contest does not support eliminations');
                 }
                 const data = await contestCoordinator.eliminate(
                     active.id,
                     connection.name,
                     {
-                        reason: request?.reason || 'fell',
+                        reason: request?.reason || 'eliminated',
                         position: request?.position || null,
                         elapsedMs: Date.now() - active.startedAt,
                     }
@@ -2455,7 +2498,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     }
                 } catch (error) {
                     console.warn(
-                        `Could not spectate eliminated Spleef player ${connection.name}:`,
+                        `Could not spectate eliminated player ${connection.name}:`,
                         error.message
                     );
                 }

@@ -2656,7 +2656,7 @@
             if (!contestBusy) return;
             contestBusy = false;
             const message = reason || 'Lost connection to MindServer during start';
-            gameSetup.setStatusMessage(message);
+            gameSetup.abortLaunch(message);
             gameSetup.setFooter('Connection lost. Fix the server connection and try again.');
             setContestStatus(message, true);
             renderGameCards();
@@ -2987,7 +2987,7 @@
         function renderContestResults(contest) {
             const box = document.getElementById('contestResults');
             let results = contest?.results || [];
-            if (contest?.rules?.type === 'team_tower_battle') {
+            if (contest?.rules?.type === 'team_tower_battle' || contest?.rules?.type === 'team_base_siege') {
                 const byTeam = new Map();
                 for (const result of results) {
                     const teamName = result.details?.teamName;
@@ -3023,6 +3023,10 @@
                     ? 'DQ'
                     : contest?.rules?.type === 'team_tower_battle'
                         ? `${result.details?.towerHeight || 0} - ${result.details?.deathPenalty || 0} = ${result.score} blocks`
+                    : contest?.rules?.type === 'team_base_siege'
+                        ? (result.details?.surviving
+                            ? `${result.details?.survivors ?? '?'} alive`
+                            : `out at ${fmtElapsed(result.details?.survivedMs || 0)}`)
                     : Number.isFinite(height)
                         ? `${result.score} blocks tall`
                         : Number.isFinite(elapsedMs)
@@ -3454,7 +3458,7 @@
                 showHighlightReel(latestDone);
                 live.classList.toggle('idle', latestDone.status !== 'completed');
                 title.textContent = `${latestDone.title} · ${latestDone.status}`;
-                const winningTeams = latestDone.rules?.type === 'team_tower_battle'
+                const winningTeams = ['team_tower_battle', 'team_base_siege'].includes(latestDone.rules?.type)
                     ? [...new Set(
                         (latestDone.results || [])
                             .filter(result => result.rank === 1)
@@ -3543,47 +3547,71 @@
         function openGameSetup(gameId) {
             if (contestBusy) return;
             const game = contestGames.find(item => item.id === gameId);
-            const isTeamTower = gameId === 'team_tower_battle';
+            const isTeamGame = gameId === 'team_tower_battle' || gameId === 'team_base_siege';
+            const isBaseSiege = gameId === 'team_base_siege';
+            const teamFields = [];
+            if (isTeamGame) {
+                teamFields.push({
+                    id: 'planningSeconds',
+                    label: 'Team planning time before the clock starts (seconds)',
+                    min: 0,
+                    max: 300,
+                    step: 15,
+                    value: Math.round((game?.planningMs || (isBaseSiege ? 30_000 : 60_000)) / 1000),
+                });
+            }
+            if (isBaseSiege) {
+                teamFields.push({
+                    id: 'buildSeconds',
+                    label: 'Build phase after planning (seconds)',
+                    min: 0,
+                    max: 120,
+                    step: 15,
+                    value: Math.round((game?.buildPhaseMs || 30_000) / 1000),
+                });
+            }
             gameSetup.open({
                 gameId,
                 title: `Set up ${game?.title || gameId}`,
                 footer: 'After the match, bots remain on their podiums for at least five minutes and wait for the next game.',
                 participants: gameSetup.defaultParticipantsFor(
                     game?.defaultCharacters,
-                    isTeamTower ? 8 : undefined
+                    isTeamGame ? 8 : undefined
                 ),
-                minParticipants: isTeamTower ? 4 : undefined,
-                teams: isTeamTower ? {
+                minParticipants: isTeamGame ? 4 : undefined,
+                teams: isTeamGame ? {
                     defaultNames: ['Ember', 'Tide'],
                     minimumPlayersPerTeam: 2,
                 } : null,
                 duration: { minutes: (game?.durationMs || 60_000) / 60_000 },
-                fields: isTeamTower ? [{
-                    id: 'planningSeconds',
-                    label: 'Team planning time before the clock starts (seconds)',
-                    min: 0,
-                    max: 300,
-                    step: 15,
-                    value: Math.round((game?.planningMs || 60_000) / 1000),
-                }] : [],
+                fields: teamFields,
                 validate: ({ fields }) => {
-                    if (!isTeamTower) return null;
-                    const seconds = Number(fields.planningSeconds);
-                    return Number.isFinite(seconds) && seconds >= 0 && seconds <= 300
-                        ? null
-                        : 'Planning time must be between 0 and 300 seconds';
+                    if (!isTeamGame) return null;
+                    const planningSeconds = Number(fields.planningSeconds);
+                    if (!(Number.isFinite(planningSeconds) && planningSeconds >= 0 && planningSeconds <= 300)) {
+                        return 'Planning time must be between 0 and 300 seconds';
+                    }
+                    if (isBaseSiege) {
+                        const buildSeconds = Number(fields.buildSeconds);
+                        if (!(Number.isFinite(buildSeconds) && buildSeconds >= 0 && buildSeconds <= 120)) {
+                            return 'Build phase must be between 0 and 120 seconds';
+                        }
+                    }
+                    return null;
                 },
                 buildRequest: ({ participants, systemPrompt, durationMs, teamNames, fields }) => {
-                    const planningMs = isTeamTower ? Number(fields.planningSeconds) * 1000 : 0;
+                    const planningMs = isTeamGame ? Number(fields.planningSeconds) * 1000 : 0;
+                    const buildPhaseMs = isBaseSiege ? Number(fields.buildSeconds) * 1000 : 0;
                     return {
                         event: 'contest-start-game',
-                        extraTimeoutMs: planningMs,
+                        extraTimeoutMs: planningMs + buildPhaseMs,
                         payload: {
                             gameId,
                             participants,
                             systemPrompt,
                             durationMs,
-                            ...(isTeamTower ? { teamNames, planningMs } : {}),
+                            ...(isTeamGame ? { teamNames, planningMs } : {}),
+                            ...(isBaseSiege ? { buildPhaseMs } : {}),
                         },
                     };
                 },

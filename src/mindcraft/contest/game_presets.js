@@ -1,8 +1,9 @@
 import { CONTEST_NARRATOR_CHARACTER } from './contest_announcer.js';
 
-// Every character runs on a different model family at a quick effort setting, so a
-// default match is a race between providers instead of seven GPT bots. Ids come from
-// model_profiles.js; test/contest_game_presets.test.js checks they still resolve.
+// Every character runs on a different model family, so a default match is a race
+// between providers instead of a pile of GPT bots. Every family but glm uses a quick
+// effort setting; glm ships no fast preset, so its default bot runs at thorough. Ids
+// come from model_profiles.js; test/contest_game_presets.test.js checks they resolve.
 export const CONTEST_BOT_CHARACTERS = Object.freeze([
     Object.freeze({
         name: 'Billy',
@@ -53,6 +54,59 @@ export const CONTEST_BOT_CHARACTERS = Object.freeze([
         systemPrompt:
             'You are Leviticus, an intense, devilish competitor who wins through charm, feints, tempting bargains, bluffs, and psychological pressure. Explain your real tactical reasoning to the audience while giving rivals selective or misleading information. Keep each trick novel; be smooth and witty rather than continually hostile.',
     }),
+    Object.freeze({
+        name: 'Carl',
+        voice: 'Nawlins',
+        profileId: 'glm-5-2-thorough',
+        systemPrompt:
+            'Just a homey, down south, open source model.',
+    }),
+]);
+
+// A Survivor season seats eleven, but only nine model families offer a quick
+// effort setting. Rather than seat a bot on a slow reasoning profile, the overflow
+// cast reuses luna and terra at their other quick preset, then falls through to
+// the two families nothing else uses. A smaller season takes the front of this
+// list, so the priciest family sits last and a ten-bot cast skips claude-opus.
+export const SURVIVOR_EXTRA_CHARACTERS = Object.freeze([
+    Object.freeze({
+        name: 'Grimble',
+        voice: 'Grimblewood',
+        profileId: 'gpt-5-6-luna-fast',
+        systemPrompt:
+            'You are Grimble, a grizzled old survivalist who trusts stockpiles over plans and expects every clever scheme to collapse. You win by outlasting people: gather more than you need, stay unremarkable, and let rivals burn themselves out. Grumble about a specific new risk rather than complaining in general, and admit it out loud when someone proves you wrong.',
+    }),
+    Object.freeze({
+        name: 'Cyrien',
+        voice: 'Cyrien',
+        profileId: 'gpt-5-6-terra-instant',
+        systemPrompt:
+            'You are Cyrien, a charming rogue who plays the social game first. You trade favors, flattery, and small secrets for information and votes, and you would rather be everyone\'s second choice than anyone\'s threat. Name the relationship you are working on and what you want from it, and vary your compliments instead of recycling one line.',
+    }),
+    Object.freeze({
+        name: 'Jessica',
+        voice: 'Jessica',
+        profileId: 'gpt-5-6-sol-instant',
+        systemPrompt:
+            'You are Jessica, a relentlessly upbeat optimist whose cheerfulness hides careful arithmetic. You count votes, track who is drifting, and deliver hard news warmly enough that nobody holds it against you. Stay genuinely positive without repeating the same encouragement, and let the numbers behind your good mood show.',
+    }),
+    Object.freeze({
+        name: 'Beauregard',
+        voice: 'Nawlins',
+        profileId: 'claude-opus-5-fast',
+        systemPrompt:
+            'You are Beauregard, a courtly southern gentleman who plays a patient long game. You make explicit deals, keep the ones that still serve you, and explain in unhurried terms why breaking one is now the honorable choice. Be gracious and formal without slipping into a catchphrase or the same toast twice.',
+    }),
+]);
+
+// The canonical eleven-bot season cast: the contest characters plus the overflow
+// four, so a full season is named personalities instead of anonymous model slots.
+// glm is dropped here: a season must fill every one of its eleven seats with a
+// quick-effort bot, and glm's cheapest preset (thorough) is too slow, so it stays
+// a contest-only character.
+export const SURVIVOR_SEASON_CAST = Object.freeze([
+    ...CONTEST_BOT_CHARACTERS.filter(character => character.profileId !== 'glm-5-2-thorough'),
+    ...SURVIVOR_EXTRA_CHARACTERS,
 ]);
 
 export const SURVIVOR_SEASON_PRESET = Object.freeze({
@@ -60,7 +114,7 @@ export const SURVIVOR_SEASON_PRESET = Object.freeze({
     scenarioId: 'classic',
     title: 'Survivor Bot Season',
     blurb: 'Two tribes face team challenges, secret votes, a merge, and a final-three jury.',
-    defaultCharacters: CONTEST_BOT_CHARACTERS,
+    defaultCharacters: SURVIVOR_SEASON_CAST,
     castSize: 11,
     minimumPlayers: 11,
     mergeAt: 10,
@@ -291,6 +345,33 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
             needsFreshWorld: false,
         }),
     }),
+    team_base_siege: Object.freeze({
+        id: 'team_base_siege',
+        title: 'Base Siege',
+        blurb: 'Plan, slap up a quick base, then fight. Hide too long and the arena shrinks.',
+        durationLabel: '3 min fight',
+        durationMs: 3 * 60_000,
+        prompt:
+            'CONTEST: Base Siege. This is a two-team PVP survival game. After a short planning phase and a short build phase, the fight clock starts. Death eliminates you for good — no respawns that count. The last team with anyone still alive wins. Friendly fire is disabled, so only attack enemies. A small base is useful cover, but camping forever is punished: if both teams are still alive when the fight timer ends, the arena walls slam inward and combat continues in a tighter space. Hide again and it shrinks again. Push out, hunt the other team, and finish them before the walls close.',
+        rules: Object.freeze({
+            type: 'team_base_siege',
+            pvp: true,
+            scoring: 'last-team-standing',
+            teamCount: 2,
+            minimumPlayersPerTeam: 2,
+            planningMs: 30_000,
+            buildPhaseMs: 30_000,
+            maxPressureRounds: 3,
+            shrinkStep: 8,
+            minHalfSize: 8,
+        }),
+        metadata: Object.freeze({
+            arena: 'simple-arena-v1',
+            pvp: true,
+            radicalReset: true,
+            needsFreshWorld: false,
+        }),
+    }),
     spleef: Object.freeze({
         id: 'spleef',
         title: 'Spleef',
@@ -366,6 +447,8 @@ export function listContestGamePresets() {
         durationLabel: preset.durationLabel,
         durationMs: preset.durationMs,
         planningMs: preset.rules?.planningMs ?? 0,
+        buildPhaseMs: preset.rules?.buildPhaseMs ?? 0,
+        teamCount: preset.rules?.teamCount ?? 0,
         pvp: Boolean(preset.metadata?.pvp),
         radicalReset: Boolean(preset.metadata?.radicalReset),
         needsFreshWorld: Boolean(preset.metadata?.needsFreshWorld),

@@ -522,9 +522,17 @@ export class SurvivorSessionManager {
         }
     }
 
+    // A finished season keeps its final standings on screen until something else
+    // needs the arena. That archive is not a lock, so the games dashboard can
+    // clear it the same way a new season does.
+    async archiveFinishedSeason(reason = 'Archived before starting a new game') {
+        if (this.active?.status !== 'completed') return null;
+        return await this.cancel(reason);
+    }
+
     async start(request = {}) {
         if (this.active?.status === 'completed') {
-            await this.cancel('Archived before starting a new season');
+            await this.archiveFinishedSeason('Archived before starting a new season');
         } else if (this.active) {
             throw new Error('A Survivor session is already active');
         }

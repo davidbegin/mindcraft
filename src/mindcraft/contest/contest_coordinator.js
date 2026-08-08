@@ -175,6 +175,7 @@ export class ContestCoordinator {
             clock = () => Date.now(),
             idFactory = randomUUID,
             judge = defaultJudge,
+            onDeadline = null,
             state,
         } = options;
 
@@ -184,6 +185,9 @@ export class ContestCoordinator {
             throw new TypeError('idFactory must be a function');
         }
         if (typeof judge !== 'function') throw new TypeError('judge must be a function');
+        if (onDeadline != null && typeof onDeadline !== 'function') {
+            throw new TypeError('onDeadline must be a function');
+        }
 
         this.root = path.resolve(root);
         this.statePath = path.join(this.root, 'state.json');
@@ -191,6 +195,7 @@ export class ContestCoordinator {
         this.clock = clock;
         this.idFactory = idFactory;
         this.judge = judge;
+        this.onDeadline = onDeadline;
         this.state = state ? clone(state) : defaultState();
         assertState(this.state);
         this._operation = Promise.resolve();
@@ -416,6 +421,38 @@ export class ContestCoordinator {
             const survivors = contest.participantIds.filter(
                 id => !contest.eliminations[id]
             );
+            if (contest.rules?.type === 'team_base_siege') {
+                const gameSession = contest.metadata?.gameSession || {};
+                const teamByParticipant = gameSession.teamByParticipant || {};
+                const teamNames = Array.isArray(gameSession.teamNames) ? gameSession.teamNames : [];
+                const livingTeams = teamNames.filter(teamName =>
+                    survivors.some(id => teamByParticipant[id] === teamName)
+                );
+                if (livingTeams.length === 1) {
+                    const winningTeam = livingTeams[0];
+                    const winnerIds = survivors.filter(id => teamByParticipant[id] === winningTeam);
+                    for (const winnerId of winnerIds) {
+                        contest.submissions[winnerId] = {
+                            participantId: winnerId,
+                            payload: {
+                                event: 'last_team_standing',
+                                teamName: winningTeam,
+                                elapsedMs: now - contest.startedAt,
+                            },
+                            submittedAt: now,
+                        };
+                    }
+                    await this._commit('winner.detected', {
+                        contestId,
+                        participantId: winnerIds[0] || null,
+                        payload: { event: 'last_team_standing', teamName: winningTeam },
+                    });
+                    await this._finalizeContest(contest, 'last-team-standing');
+                } else if (survivors.length === 0) {
+                    await this._finalizeContest(contest, 'all-eliminated');
+                }
+                return clone(contest);
+            }
             if (survivors.length === 1) {
                 const winnerId = survivors[0];
                 contest.submissions[winnerId] = {
@@ -480,6 +517,21 @@ export class ContestCoordinator {
             if (contest.status !== 'running' || this.clock() < contest.deadlineAt) {
                 return { changed: false, reason: 'waiting', contest: clone(contest) };
             }
+            if (typeof this.onDeadline === 'function') {
+                const deferred = await this.onDeadline(contest);
+                if (deferred) {
+                    await this._commit('contest.deadline_deferred', {
+                        contestId: contest.id,
+                        reason: deferred.reason || 'deadline-deferred',
+                        deadlineAt: contest.deadlineAt,
+                    });
+                    return {
+                        changed: true,
+                        reason: deferred.reason || 'deadline-deferred',
+                        contest: clone(contest),
+                    };
+                }
+            }
             await this._finalizeContest(contest, 'deadline');
             return { changed: true, reason: 'deadline', contest: clone(contest) };
         });
@@ -514,7 +566,10 @@ export class ContestCoordinator {
         const judged = await this.judge(clone(contest));
         if (!Array.isArray(judged)) throw new TypeError('judge must return an array');
         contest.results = rankResults(contest, judged);
-        if (contest.rules?.type === 'team_tower_battle') {
+        if (
+            contest.rules?.type === 'team_tower_battle'
+            || contest.rules?.type === 'team_base_siege'
+        ) {
             const teamScores = [...new Set(
                 contest.results
                     .filter(result => !result.disqualified && Number.isFinite(result.score))

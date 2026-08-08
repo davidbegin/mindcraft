@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
     CONTEST_BOT_CHARACTERS,
+    SURVIVOR_EXTRA_CHARACTERS,
+    SURVIVOR_SEASON_CAST,
     getContestGamePreset,
     getSurvivorSeasonPreset,
     listContestGamePresets,
@@ -23,6 +25,7 @@ test('lists the starter contest games for the UI', () => {
             'dog_race',
             'netherite_race',
             'spleef',
+            'team_base_siege',
             'team_tower_battle',
             'tower_battle',
         ]
@@ -38,7 +41,7 @@ test('lists the starter contest games for the UI', () => {
         tower.defaultCharacters,
         CONTEST_BOT_CHARACTERS.map(character => ({ ...character }))
     );
-    assert.equal(tower.defaultCharacters.length, 7);
+    assert.equal(tower.defaultCharacters.length, 8);
     assert.deepEqual(
         tower.defaultCharacters.map(({ name, profileId }) => ({ name, profileId })),
         [
@@ -49,12 +52,14 @@ test('lists the starter contest games for the UI', () => {
             { name: 'ChipChipperson', profileId: 'gpt-5-6-luna-instant' },
             { name: 'bridget', profileId: 'composer-2-5' },
             { name: 'Leviticus', profileId: 'gpt-5-6-terra-fast' },
+            { name: 'Carl', profileId: 'glm-5-2-thorough' },
         ]
     );
     assert.equal(tower.defaultCharacters[3].voice, 'Timmy');
     assert.equal(tower.defaultCharacters[4].voice, 'RadioClyde');
     assert.equal(tower.defaultCharacters[5].voice, 'Bridget');
     assert.equal(tower.defaultCharacters[6].voice, 'Inferno');
+    assert.equal(tower.defaultCharacters[7].voice, 'Nawlins');
     assert.equal(tower.defaultCharacters[2].voice, 'Sasquatch');
     assert.ok(tower.defaultCharacters.every(character => character.systemPrompt.length > 40));
     assert.match(tower.defaultCharacters[2].systemPrompt, /curious and open/i);
@@ -62,6 +67,7 @@ test('lists the starter contest games for the UI', () => {
     assert.match(tower.defaultCharacters[4].systemPrompt, /never rerun/i);
     assert.match(tower.defaultCharacters[5].systemPrompt, /do not keep insulting/i);
     assert.match(tower.defaultCharacters[6].systemPrompt, /bluffs/i);
+    assert.match(tower.defaultCharacters[7].systemPrompt, /down south, open source/i);
 });
 
 test('every default character runs on a different model family at a quick effort', () => {
@@ -78,22 +84,91 @@ test('every default character runs on a different model family at a quick effort
         families.add(profile.family);
 
         const effort = Object.values(profile.profile.model.params || {})[0] || null;
+        // glm ships no fast/low preset, so its cheapest option (thorough / high) is
+        // the quickest it offers and still counts as a quick default.
+        const quickEfforts = profile.family === 'glm'
+            ? [null, 'none', 'low', 'high']
+            : [null, 'none', 'low'];
         assert.ok(
-            [null, 'none', 'low'].includes(effort),
+            quickEfforts.includes(effort),
             `${character.name} runs ${profile.model}, which is too slow for a default chat bot`
         );
     }
 });
 
-test('Survivor uses the canonical contest characters by default', () => {
+test('Survivor seats a named character in every one of its eleven slots', () => {
     const survivor = getSurvivorSeasonPreset();
+    assert.equal(survivor.defaultCharacters.length, survivor.castSize);
     assert.deepEqual(
         survivor.defaultCharacters,
-        CONTEST_BOT_CHARACTERS.map(character => ({ ...character }))
+        SURVIVOR_SEASON_CAST.map(character => ({ ...character }))
     );
-    assert.equal(survivor.defaultCharacters.length, 7);
+    assert.deepEqual(
+        survivor.defaultCharacters.map(character => character.name),
+        [
+            'Billy',
+            'Kimmy',
+            'Marcus',
+            'Dario',
+            'ChipChipperson',
+            'bridget',
+            'Leviticus',
+            'Grimble',
+            'Cyrien',
+            'Jessica',
+            'Beauregard',
+        ]
+    );
+    // The contest characters lead, so a smaller season still opens with the cast
+    // the games dashboard uses -- minus glm, which has no quick-effort preset and
+    // never takes a Survivor seat.
+    const survivorContestCast = CONTEST_BOT_CHARACTERS.filter(
+        character => character.profileId !== 'glm-5-2-thorough'
+    );
+    assert.deepEqual(
+        survivor.defaultCharacters.slice(0, survivorContestCast.length),
+        survivorContestCast.map(character => ({ ...character }))
+    );
     survivor.defaultCharacters[0].name = 'Changed';
     assert.equal(getSurvivorSeasonPreset().defaultCharacters[0].name, 'Billy');
+});
+
+test('the overflow season characters are distinct, voiced, and quick', () => {
+    const profiles = new Map(getCursorProfiles().map(profile => [profile.id, profile]));
+    // glm never joins a Survivor season, so it can share a voice (Nawlins) with an
+    // overflow character; only the contest characters that actually take seats need
+    // to stay distinct from the overflow cast.
+    const survivorContestCast = CONTEST_BOT_CHARACTERS.filter(
+        character => character.profileId !== 'glm-5-2-thorough'
+    );
+    const names = new Set(survivorContestCast.map(character => character.name));
+    const voices = new Set(survivorContestCast.map(character => character.voice));
+    const profileIds = new Set(survivorContestCast.map(character => character.profileId));
+
+    for (const character of SURVIVOR_EXTRA_CHARACTERS) {
+        assert.ok(!names.has(character.name), `${character.name} is already cast`);
+        assert.ok(!voices.has(character.voice), `${character.voice} is already spoken for`);
+        assert.ok(
+            !profileIds.has(character.profileId),
+            `${character.name} reuses profile ${character.profileId}`
+        );
+        names.add(character.name);
+        voices.add(character.voice);
+        profileIds.add(character.profileId);
+
+        const profile = profiles.get(character.profileId);
+        assert.ok(profile, `${character.name} references unknown profile ${character.profileId}`);
+        const effort = Object.values(profile.profile.model.params || {})[0] || null;
+        assert.ok(
+            [null, 'none', 'low'].includes(effort),
+            `${character.name} runs ${profile.model}, which is too slow for a default chat bot`
+        );
+        assert.ok(character.systemPrompt.length > 40, `${character.name} needs a personality`);
+    }
+
+    // claude-opus is the most expensive family here, so it sits in the last seat
+    // and a ten-bot season never pays for it.
+    assert.equal(SURVIVOR_SEASON_CAST.at(-1).profileId, 'claude-opus-5-fast');
 });
 
 test('the four-player scenario casts four bots for a final two', () => {
@@ -172,6 +247,24 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(
         listContestGamePresets().find(game => game.id === 'tower_battle').planningMs,
         0
+    );
+
+    const baseSiege = getContestGamePreset('team_base_siege');
+    assert.equal(baseSiege.rules.type, 'team_base_siege');
+    assert.equal(baseSiege.rules.teamCount, 2);
+    assert.equal(baseSiege.rules.planningMs, 30_000);
+    assert.equal(baseSiege.rules.buildPhaseMs, 30_000);
+    assert.equal(baseSiege.rules.maxPressureRounds, 3);
+    assert.equal(baseSiege.metadata.pvp, true);
+    assert.match(baseSiege.prompt, /Death eliminates you for good/i);
+    assert.match(baseSiege.prompt, /arena walls slam inward/i);
+    assert.equal(
+        listContestGamePresets().find(game => game.id === 'team_base_siege').planningMs,
+        30_000
+    );
+    assert.equal(
+        listContestGamePresets().find(game => game.id === 'team_base_siege').buildPhaseMs,
+        30_000
     );
 
     const deathRace = getContestGamePreset('death_race');

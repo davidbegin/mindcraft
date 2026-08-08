@@ -11,13 +11,31 @@ export function buildContestStartAnnouncement(contest) {
 export function buildPlanningAnnouncement(contest, planningMs) {
     const title = String(contest?.title || 'Game').trim();
     const seconds = Math.max(1, Math.round(Number(planningMs) / 1000));
+    if (contest?.rules?.type === 'team_base_siege') {
+        return `${title}. Teams, you have ${seconds} seconds to plan. `
+            + 'Captain, call one quick base. Agree who builds and who hunts. '
+            + 'Hiding forever loses — the arena will shrink if both teams survive. No building until the build phase.';
+    }
     return `${title}. Teams, you have ${seconds} seconds to plan. `
         + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
         + 'All builders use only the captain\'s structure. No building until the countdown.';
 }
 
+export function buildBuildPhaseAnnouncement(contest, buildPhaseMs) {
+    const title = String(contest?.title || 'Game').trim();
+    const seconds = Math.max(1, Math.round(Number(buildPhaseMs) / 1000));
+    return `${title}. Build phase: ${seconds} seconds to raise a quick base. No attacking yet. Go!`;
+}
+
+export function buildPressureRoundAnnouncement(halfSize, pressureRound) {
+    const size = Math.max(1, Math.round(Number(halfSize) * 2 + 1));
+    const round = Math.max(1, Math.round(Number(pressureRound) || 1));
+    return `Both teams are still alive. Pressure round ${round}. `
+        + `The arena shrinks to ${size} by ${size}. No more hiding — fight!`;
+}
+
 export function buildContestResultAnnouncement(contest) {
-    if (contest?.rules?.type === 'team_tower_battle') {
+    if (contest?.rules?.type === 'team_tower_battle' || contest?.rules?.type === 'team_base_siege') {
         const winningTeams = [...new Set(
             (contest.results || [])
                 .filter(result => result.rank === 1)
@@ -73,6 +91,14 @@ export class ContestAnnouncer {
     // The manager owns the planning clock, so this only speaks the callout.
     async announcePlanning(contest, options = {}) {
         await this.speak(buildPlanningAnnouncement(contest, options.planningMs));
+    }
+
+    async announceBuildPhase(contest, options = {}) {
+        await this.speak(buildBuildPhaseAnnouncement(contest, options.buildPhaseMs));
+    }
+
+    async announcePressureRound(options = {}) {
+        await this.speak(buildPressureRoundAnnouncement(options.halfSize, options.pressureRound));
     }
 
     async announceStart(contest) {

@@ -107,6 +107,17 @@ const GAME_KITS = Object.freeze({
         'iron_pickaxe 1',
         'bread 16',
     ]),
+    team_base_siege: Object.freeze([
+        'cobblestone 128',
+        'oak_planks 64',
+        'dirt 64',
+        'iron_sword 1',
+        'shield 1',
+        'bow 1',
+        'arrow 32',
+        'bread 16',
+        'golden_apple 2',
+    ]),
     spleef: Object.freeze([
         'diamond_shovel 1',
         'bread 16',
@@ -114,6 +125,10 @@ const GAME_KITS = Object.freeze({
     deepest_2_5: DEPTH_RACE_KIT,
     deepest_5: DEPTH_RACE_KIT,
 });
+
+function isTeamArenaGame(gameId) {
+    return gameId === 'team_tower_battle' || gameId === 'team_base_siege';
+}
 
 function isDepthRaceGame(gameId) {
     return gameId === 'deepest_2_5' || gameId === 'deepest_5';
@@ -142,19 +157,80 @@ export function getArenaJoinInfo() {
                 z: ARENA.centerZ,
             },
             size: ARENA.halfSize * 2 + 1,
+            halfSize: ARENA.halfSize,
         },
         teleportCommand:
             `/tp @s ${ARENA.centerX} ${ARENA.spectatorY} ${ARENA.centerZ}`,
     };
 }
 
-/** Parse `rcon-cli list`, stripping scoreboard team suffixes like `bot [model]`. */
+/**
+ * Slam barrier walls inward so campers cannot hide at the far edges.
+ * Outer blocks stay; the new walls simply cut the playable footprint.
+ */
+export function buildArenaShrinkCommands(halfSize = ARENA.halfSize) {
+    const clamped = Math.max(4, Math.min(ARENA.halfSize, Math.floor(halfSize)));
+    const minX = ARENA.centerX - clamped;
+    const maxX = ARENA.centerX + clamped;
+    const minZ = ARENA.centerZ - clamped;
+    const maxZ = ARENA.centerZ + clamped;
+    return [
+        `fill ${minX} ${ARENA.floorY + 1} ${minZ} `
+        + `${minX} ${ARENA.clearTopY} ${maxZ} barrier`,
+        `fill ${maxX} ${ARENA.floorY + 1} ${minZ} `
+        + `${maxX} ${ARENA.clearTopY} ${maxZ} barrier`,
+        `fill ${minX} ${ARENA.floorY + 1} ${minZ} `
+        + `${maxX} ${ARENA.clearTopY} ${minZ} barrier`,
+        `fill ${minX} ${ARENA.floorY + 1} ${maxZ} `
+        + `${maxX} ${ARENA.clearTopY} ${maxZ} barrier`,
+    ];
+}
+
+export function buildPressureRoundCommands({
+    survivors = [],
+    teamNames = [],
+    teamByParticipant = {},
+    halfSize = ARENA.halfSize,
+    kit = GAME_KITS.team_base_siege,
+} = {}) {
+    const commands = [...buildArenaShrinkCommands(halfSize)];
+    const positions = teamSpawnPositions(survivors, teamNames, teamByParticipant, halfSize);
+    for (const name of survivors) {
+        assertPlayerName(name);
+        const position = positions.get(name) || {
+            x: ARENA.centerX,
+            z: ARENA.centerZ,
+        };
+        commands.push(
+            `clear ${name}`,
+            `effect clear ${name}`,
+            `gamemode survival ${name}`,
+            `tp ${name} ${position.x} ${ARENA.floorY + 1} ${position.z}`,
+            `spawnpoint ${name} ${position.x} ${ARENA.floorY + 1} ${position.z}`,
+            `effect give ${name} saturation 2 10 true`,
+            `effect give ${name} instant_health 1 1 true`
+        );
+        for (const item of kit || []) {
+            commands.push(`give ${name} ${item}`);
+        }
+    }
+    return commands;
+}
+
+/**
+ * Parse `rcon-cli list`, stripping scoreboard team decorations like
+ * `bot [Team] [model]`. `list` prints display names, so every bracketed
+ * prefix and suffix we attach to a nametag comes back with the name; an entry
+ * that still has loose text after the brackets are removed is not a name we
+ * can target safely, so it is dropped rather than guessed at.
+ */
 export function parseOnlinePlayers(listOutput) {
     const namesSection = String(listOutput).split(':').slice(1).join(':').trim();
     if (!namesSection) return [];
     const names = [];
-    for (const match of namesSection.matchAll(/([A-Za-z0-9_]{1,16})(?:\s*\[[^\]]*\])?/g)) {
-        names.push(match[1]);
+    for (const entry of namesSection.split(',')) {
+        const name = entry.replace(/\[[^\]]*\]/g, ' ').trim();
+        if (/^[A-Za-z0-9_]{1,16}$/.test(name)) names.push(name);
     }
     return [...new Set(names)];
 }
@@ -540,7 +616,7 @@ function buildWorldResetCommands(gameId, options = {}) {
     return commands;
 }
 
-function teamSpawnPositions(participants, teamNames, teamByParticipant) {
+function teamSpawnPositions(participants, teamNames, teamByParticipant, halfSize = ARENA.halfSize) {
     const positions = new Map();
     const sharedBaseOffsets = [
         { x: 0, z: 0 },
@@ -553,12 +629,14 @@ function teamSpawnPositions(participants, teamNames, teamByParticipant) {
         { x: 1, z: -1 },
         { x: -1, z: 1 },
     ];
+    const playableHalf = Number.isFinite(halfSize) ? halfSize : ARENA.halfSize;
+    const sideOffset = Math.max(3, Math.min(18, playableHalf - 6));
     teamNames.forEach((teamName, teamIndex) => {
         const members = participants.filter(name => teamByParticipant[name] === teamName);
         members.forEach((name, index) => {
             const offset = sharedBaseOffsets[index % sharedBaseOffsets.length];
             positions.set(name, {
-                x: ARENA.centerX + (teamIndex === 0 ? -18 : 18) + offset.x,
+                x: ARENA.centerX + (teamIndex === 0 ? -sideOffset : sideOffset) + offset.x,
                 z: ARENA.centerZ + offset.z,
             });
         });
@@ -647,8 +725,8 @@ function buildParticipantCommands(gameId, participants, options = {}) {
         participants.length,
         gameId === 'dog_race' ? DOG_ARENA.plainRadius - 3 : undefined
     );
-    const teamPositions = gameId === 'team_tower_battle'
-        ? teamSpawnPositions(participants, options.teamNames || [], options.teamByParticipant || {})
+    const teamPositions = isTeamArenaGame(gameId)
+        ? teamSpawnPositions(participants, options.teamNames || [], options.teamByParticipant || {}, options.halfSize)
         : null;
     participants.forEach((name, index) => {
         assertPlayerName(name);
@@ -892,7 +970,7 @@ export class ContestArenaManager {
         for (const command of participantCommands) {
             await this.runCommand(command);
         }
-        const teamCommands = preset.id === 'team_tower_battle'
+        const teamCommands = isTeamArenaGame(preset.id)
             ? buildContestTeamCommands(participants, options)
             : [];
         for (const command of teamCommands) {
@@ -914,11 +992,19 @@ export class ContestArenaManager {
             }
         }
 
+        // Seating the audience is cosmetic, so a spectator who logs out between
+        // `list` and `gamemode` is skipped instead of failing the whole launch.
         const warpedSpectators = [];
-        for (const command of spectatorWarpCommands(spectators)) {
-            await this.runCommand(command);
+        for (const name of spectators) {
+            try {
+                for (const command of spectatorWarpCommands([name])) {
+                    await this.runCommand(command);
+                }
+                warpedSpectators.push(name);
+            } catch (error) {
+                console.warn(`Could not warp spectator ${name}: ${error.message}`);
+            }
         }
-        warpedSpectators.push(...spectators);
 
         const join = getArenaJoinInfo();
         return {

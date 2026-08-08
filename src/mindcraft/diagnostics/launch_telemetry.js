@@ -1,6 +1,14 @@
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
 const MAX_EVENTS = 200;
 const MAX_LOG_LINES_IN_REPORT = 80;
 const SENSITIVE_KEY = /(?:api[_-]?key|secret|token|password|authorization|credential)/i;
+
+const DEFAULT_FAILURE_REPORT_DIR = './contests/launch-failures';
+// Old reports are worth keeping — a launch that fails the same way twice a week
+// apart is the interesting case — but not forever.
+const MAX_SAVED_REPORTS = 50;
 
 const events = [];
 let lastFailureReport = null;
@@ -103,6 +111,57 @@ export function getLastFailureMeta() {
     return lastFailureMeta;
 }
 
+/** Where saved reports live. Overridable so tests never touch the real folder. */
+export function failureReportDir() {
+    return path.resolve(process.env.MINDCRAFT_LAUNCH_FAILURE_DIR || DEFAULT_FAILURE_REPORT_DIR);
+}
+
+function reportFileName(at, gameId) {
+    const stamp = at.replaceAll(':', '-').replaceAll('.', '-');
+    const slug = String(gameId || 'unknown')
+        .toLowerCase()
+        .replaceAll(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'unknown';
+    return `${stamp}-${slug}.md`;
+}
+
+/** Saved reports, oldest first. Names start with an ISO stamp, so they sort by age. */
+export function listSavedFailureReports() {
+    try {
+        return readdirSync(failureReportDir())
+            .filter(name => name.endsWith('.md'))
+            .sort();
+    } catch {
+        return [];
+    }
+}
+
+function pruneSavedReports() {
+    const saved = listSavedFailureReports();
+    const dir = failureReportDir();
+    for (const name of saved.slice(0, Math.max(0, saved.length - MAX_SAVED_REPORTS))) {
+        rmSync(path.join(dir, name), { force: true });
+    }
+}
+
+/**
+ * Writes a report to disk so a failed launch can still be diagnosed after the
+ * browser tab is gone. Written synchronously: this runs on the failure path, and
+ * a crash right after the failure is exactly when the report matters most.
+ * Diagnostics must never mask the original error, so problems here only warn.
+ */
+export function saveFailureReport(report, filePath) {
+    try {
+        mkdirSync(path.dirname(filePath), { recursive: true });
+        writeFileSync(filePath, report.endsWith('\n') ? report : `${report}\n`);
+        pruneSavedReports();
+        return filePath;
+    } catch (error) {
+        console.warn(`Could not save launch failure report: ${error.message}`);
+        return null;
+    }
+}
+
 function formatAgentLine(agent) {
     if (!agent || typeof agent !== 'object') return '- (unknown)';
     const name = agent.name || agent.id || 'unknown';
@@ -135,6 +194,8 @@ export function buildCursorReport({
     agents = [],
     env = {},
     events: eventOverride = null,
+    at = null,
+    reportPath = null,
 } = {}) {
     const timeline = (eventOverride || events).slice(-MAX_LOG_LINES_IN_REPORT);
     const session = gameSession || {};
@@ -153,10 +214,11 @@ export function buildCursorReport({
         '## Summary',
         `- **Stage:** ${stage}`,
         `- **Error:** ${summaryError}`,
-        `- **Time:** ${nowIso()}`,
+        `- **Time:** ${at || nowIso()}`,
         `- **Game:** ${session.title || session.gameId || 'unknown'}`,
         `- **Contest ID:** ${session.contestId || activeContest?.id || 'none'}`,
         `- **Session ID:** ${session.sessionId || 'none'}`,
+        ...(reportPath ? [`- **Saved to:** ${reportPath}`] : []),
         '',
         '## Progress',
         `- Status: ${session.status || 'n/a'}`,
@@ -188,12 +250,20 @@ export function buildCursorReport({
 }
 
 export function captureFailureReport(options = {}) {
-    const report = buildCursorReport(options);
+    const at = nowIso();
+    // The destination is chosen before the report is built so the report can name
+    // the file it lives in: a pasted report says where its copy on disk is.
+    const filePath = path.join(
+        failureReportDir(),
+        reportFileName(at, options.gameSession?.gameId)
+    );
+    const report = buildCursorReport({ ...options, at, reportPath: filePath });
     setLastFailureReport(report, {
-        at: nowIso(),
+        at,
         error: options.error?.message || options.error || options.gameSession?.error || null,
         stage: options.gameSession?.progress?.stage || options.gameSession?.status || null,
         contestId: options.gameSession?.contestId || null,
+        path: saveFailureReport(report, filePath),
     });
     return report;
 }

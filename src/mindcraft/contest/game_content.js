@@ -3,7 +3,7 @@ export const GAME_CONTENT_SYSTEM_PROMPT = [
     'Give your commentary a distinct point of view rooted in YOUR PERSONALITY and your own approach to this game.',
     'At the start, name your signature strategy in one short sentence.',
     'After that, use one short sentence only when you make a decision, learn something new, change plans, attempt a mind game, or react to a meaningful event.',
-    'Never say numeric coordinates aloud. If you need someone to meet at coordinates, say exactly: "Meet me at the spot." Keep the numbers only in commands.',
+    'Never say numeric coordinates aloud. If you need someone to meet at coordinates, name the place vaguely in your own words and use different wording every time, such as "meet me at the usual place" or "head to that hidden clearing". Never reuse a location phrase you have already said. Keep the numbers only in commands.',
     'Do not repeat a line, joke, boast, observation, or strategy explanation you have already used. If nothing has changed, keep playing instead of filling the silence.',
     'Most of your speech should reveal useful thinking: tradeoffs, predictions, discoveries, adaptations, and the next step of your unique plan.',
     'Occasionally use !startConversation for a brief strategic exchange with a rival: question their plan, make a prediction, bluff, misdirect, negotiate, or bait them into a mistake.',
@@ -42,7 +42,20 @@ export function buildTeamPlanningDirective({
     enemyIds = [],
     captainId = null,
     attackerId = null,
+    contestType = 'team_tower_battle',
 }) {
+    if (contestType === 'team_base_siege') {
+        return buildBaseSiegePlanningDirective({
+            title,
+            presetPrompt,
+            planningMs,
+            participantName,
+            teamId,
+            teammateIds,
+            enemyIds,
+            captainId,
+        });
+    }
     const seconds = Math.max(1, Math.round(planningMs / 1000));
     const teammateList = teammateIds.join(', ') || 'none';
     const isCaptain = captainId === participantName;
@@ -58,11 +71,11 @@ export function buildTeamPlanningDirective({
             ? `${attackerId} is the ATTACKER. This is a required PVP role: when the match starts, they go directly to the enemy tower, attack its builders, and break its supporting blocks. They do not switch to building unless the enemy tower is already destroyed.`
             : 'Assign one teammate as the ATTACKER. Attacking the enemy tower is required, not optional.',
         `Use !startConversation with ${teammateIds.join(' and ') || 'your team'} right now and settle three things:`,
-        '1. THE BASE: one exact x z coordinate where the whole team stacks. Put the numbers only in the conversation command, never in spoken dialogue. Out loud, say exactly: "Meet me at the spot."',
+        '1. THE BASE: one exact x z coordinate where the whole team stacks. Put the numbers only in the conversation command, never in spoken dialogue. Out loud, refer to that base vaguely in your own words and phrase it differently every time you mention it.',
         `2. THE ROLES: ${attackerId || 'the assigned attacker'} attacks and dismantles the enemy tower for the whole match. Every other teammate is a BUILDER and works only on your one shared tower. Nobody starts a personal structure and nobody just guards.`,
         '3. THE REGROUP RULE: if you die or get knocked away, you return to that same base. Nobody ever starts a second tower.',
         isCaptain
-            ? 'You are the captain and lead builder. Open the conversation first, put your current x and z only in the conversation command as the base, and say "Meet me at the spot." Get an explicit yes from every builder that they will place only onto your structure, and an explicit confirmation from the attacker that they will assault the enemy tower.'
+            ? 'You are the captain and lead builder. Open the conversation first, put your current x and z only in the conversation command as the base, and call that base out loud with a vague phrase of your own, worded differently each time. Get an explicit yes from every builder that they will place only onto your structure, and an explicit confirmation from the attacker that they will assault the enemy tower.'
             : participantName === attackerId
                 ? 'YOU ARE THE ATTACKER. Quickly confirm the agreed spot without saying its numbers, then confirm your attack role. At the countdown, ignore building materials and immediately cross the arena to destroy the enemy tower and fight its builders.'
                 : 'Confirm the captain\'s base and your BUILDER role. At the countdown, go to the captain and place blocks only when they touch the shared team tower. Never place a new foundation on bare ground.',
@@ -78,6 +91,72 @@ export function buildTeamPlanningDirective({
     return lines.join('\n');
 }
 
+export function buildBaseSiegePlanningDirective({
+    title = 'Base Siege',
+    presetPrompt = '',
+    planningMs = 0,
+    participantName,
+    teamId,
+    teammateIds = [],
+    enemyIds = [],
+    captainId = null,
+}) {
+    const seconds = Math.max(1, Math.round(planningMs / 1000));
+    const teammateList = teammateIds.join(', ') || 'none';
+    const isCaptain = captainId === participantName;
+    const lines = [
+        `PLANNING PHASE — ${title}. The fight clock is NOT running yet.`,
+        `You have about ${seconds} seconds to agree on a plan. A short BUILD phase comes next, then open combat.`,
+        `YOUR TEAM: ${teamId}. Your teammates are ${teammateList}.`,
+        'Win condition: last team with anyone alive. Death eliminates you permanently. Hiding forever fails — if both teams survive the fight timer, the arena shrinks and combat continues.',
+        captainId
+            ? `${captainId} is the team captain and has the final word. Settle disagreements in one line, then commit.`
+            : 'Pick one teammate as captain immediately and commit to their call.',
+        `Use !startConversation with ${teammateIds.join(' and ') || 'your team'} right now and settle:`,
+        '1. THE BASE: one exact x z coordinate for a quick fort. Put numbers only in the conversation command, never in spoken dialogue.',
+        '2. THE ROLES: who builds walls/cover in the build phase, and who rushes out to hunt when combat starts.',
+        '3. THE ATTACK PLAN: do not agree to turtle forever. Name how you will find and kill the other team.',
+        isCaptain
+            ? 'You are the captain. Open first, put your current x and z only in the conversation command as the base, and get a yes from every teammate.'
+            : 'Confirm the captain\'s base and your role. Be ready to build fast when the build phase starts.',
+    ];
+    if (presetPrompt) lines.push(`MATCH RULES FOR REFERENCE: ${presetPrompt}`);
+    if (enemyIds.length > 0) {
+        lines.push(`The opposing team is ${enemyIds.join(', ')}. Do not talk to them or reveal your base during planning.`);
+    }
+    lines.push(
+        'During planning: do NOT place or break blocks, do not attack anyone, and stay near your team.',
+        'Use !endConversation as soon as the plan is set. Then say one short line naming your team\'s plan for the audience.'
+    );
+    return lines.join('\n');
+}
+
+export function buildBaseSiegeBuildDirective({
+    title = 'Base Siege',
+    buildPhaseMs = 0,
+    participantName,
+    teamId,
+    teammateIds = [],
+    enemyIds = [],
+    captainId = null,
+}) {
+    const seconds = Math.max(1, Math.round(buildPhaseMs / 1000));
+    const lines = [
+        `BUILD PHASE — ${title}. You have about ${seconds} seconds to build the quickest useful base.`,
+        `YOUR TEAM: ${teamId}. Teammates: ${teammateIds.join(', ') || 'none'}.`,
+        captainId
+            ? `Build at ${captainId}'s agreed base. Walls, cover, and a high ground or doorway beat empty ground.`
+            : 'Build at the base your team agreed on during planning.',
+        'Do NOT attack enemies yet. Do not wander across the arena. Place blocks fast, then be ready to fight.',
+        'When combat starts, hunting the other team matters more than perfect walls. A tiny fort plus aggression beats a mansion of cowards.',
+    ];
+    if (enemyIds.length > 0) {
+        lines.push(`Enemies (${enemyIds.join(', ')}) are building too. Stay on your side until the fight starts.`);
+    }
+    lines.push(`${participantName}, place blocks now. Say one short line about what you are building, then keep stacking.`);
+    return lines.join('\n');
+}
+
 export function buildParticipantGameDirective(
     presetPrompt,
     participantIds,
@@ -89,13 +168,24 @@ export function buildParticipantGameDirective(
         ? team.enemyIds
         : participantIds.filter(name => name !== participantName);
     const isAttacker = team.attackerId === participantName;
+    const isBaseSiege = team.contestType === 'team_base_siege';
     const lines = [
         presetPrompt,
         `COMPETITORS: ${participantIds.join(', ')}.`,
         'Choose a signature strategy that fits your personality and differs from the obvious default approach.',
         'Say that strategy out loud once near the start. Later, only narrate new decisions, discoveries, tradeoffs, or changes to the plan; never recycle earlier lines or talking points.',
     ];
-    if (team.teamId) {
+    if (team.teamId && isBaseSiege) {
+        lines.push(
+            `YOUR TEAM: ${team.teamId}. Your teammates are ${teammates.join(', ') || 'none'}.`,
+            team.captainId
+                ? `${team.captainId} called the base. Use that fort as cover, then leave it to hunt.`
+                : 'Use the base your team agreed on as cover, then hunt.',
+            'COMBAT IS ON. Death eliminates you permanently. Kill every enemy. Friendly fire is off.',
+            `Hunt ${rivals.join(', ') || 'the other team'} with !attackPlayer. Do not turtle forever — if the timer ends with both teams alive, the arena shrinks and you fight again in a tighter space.`,
+            'Coordinate with !startConversation only for a short tactical update, then resume fighting.'
+        );
+    } else if (team.teamId) {
         lines.push(
             `YOUR TEAM: ${team.teamId}. Your teammates are ${teammates.join(', ') || 'none'}.`,
             'Go straight to the single tower base your team agreed on during planning and add to that tower. Only your team\'s tallest single tower scores, so never start a second one — if you get separated, walk back to the agreed base.',

@@ -24,8 +24,10 @@ export function appendSpeechStylePrompt(prompt) {
     return `${prompt}\n\nSPOKEN RESPONSE STYLE\n`
         + 'Keep player-facing dialogue to one short sentence, usually no more than 10 words. '
         + 'Skip routine narration, setup, and repeated observations. '
-        + 'Never say numeric coordinates aloud. When directing someone to coordinates, say exactly: '
-        + '"Meet me at the spot." Coordinates may still appear inside commands.';
+        + 'Never say numeric coordinates aloud. When directing someone to a location, name it vaguely '
+        + 'in your own words and use different wording every time, such as "meet me at the usual place" '
+        + 'or "head to that hidden clearing". Never reuse a location phrase you have already said. '
+        + 'Coordinates may still appear inside commands.';
 }
 
 export class Prompter {

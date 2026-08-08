@@ -122,6 +122,9 @@
         let busy = false;
         let lastReport = '';
         let teamNames = [];
+        // Bumped per launch so a late ack from an abandoned launch cannot
+        // overwrite the state of whatever the roster is doing now.
+        let launchId = 0;
 
         function configuredProfiles() {
             return getProfiles().filter(profile => profile?.id && profile.configured !== false);
@@ -409,7 +412,7 @@
         function fetchLastReport() {
             socket.timeout(8000).emit('diagnostics-report', (err, res) => {
                 if (err || !res?.success || !res.report) return;
-                showReport(res.report, Boolean(config));
+                showReport(res.report, isVisible());
             });
         }
 
@@ -500,17 +503,24 @@
             el('debug').hidden = true;
             onStatus('Provisioning temporary contest bots…');
             el('footer').textContent = 'Starting… creating temporary contest bots.';
+            // A launch takes minutes, and the page behind reports its progress, so
+            // step out of the way instead of freezing the roster on screen. The
+            // roster stays in memory in case the launch fails and has to come back.
+            hide();
 
             // Phases the server runs before it answers (a team planning window,
             // for instance) are added on top of the provisioning budget.
             const timeoutMs = START_TIMEOUT_MS + Math.max(0, Number(request.extraTimeoutMs) || 0);
+            const launchToken = ++launchId;
             socket.timeout(timeoutMs).emit(request.event, request.payload, (err, result) => {
+                if (launchToken !== launchId) return;
                 setBusy(false);
                 if (err) {
                     const message = 'Start game timed out or MindServer did not respond. Copy the debug report for Cursor if one is available.';
                     setError(message);
                     onStatus(message, true);
                     el('footer').textContent = 'Timed out waiting for MindServer.';
+                    reopenAfterFailure();
                     fetchLastReport();
                     return;
                 }
@@ -519,6 +529,7 @@
                     setError(message);
                     onStatus(message, true);
                     el('footer').textContent = 'Fix the error and try again.';
+                    reopenAfterFailure();
                     if (result?.report) showReport(result.report);
                     else fetchLastReport();
                     return;
@@ -528,15 +539,28 @@
             });
         }
 
-        function close() {
+        function isVisible() {
+            return Boolean(config) && backdrop.style.display !== 'none';
+        }
+
+        function hide() {
             backdrop.style.display = 'none';
+            if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+        }
+
+        function reopenAfterFailure() {
+            if (!config) return;
+            backdrop.style.display = 'flex';
+        }
+
+        function close() {
+            hide();
             config = null;
             participants = [];
             teamNames = [];
             setError('');
             setVoiceStatus('');
             el('debug').hidden = true;
-            if (previewAudio) { previewAudio.pause(); previewAudio = null; }
         }
 
         function open(nextConfig) {
@@ -616,7 +640,17 @@
         return {
             open,
             close,
-            isOpen: () => Boolean(config),
+            // The page can learn a launch died before its ack arrives — a dropped
+            // MindServer connection, say — and bring the roster back rather than
+            // leaving it locked until the ack timeout expires.
+            abortLaunch(message) {
+                if (!busy) return;
+                launchId++;
+                setBusy(false);
+                if (message) setError(message);
+                reopenAfterFailure();
+            },
+            isOpen: isVisible,
             isBusy: () => busy,
             setFooter: text => { el('footer').textContent = text; },
             setStatusMessage: setError,

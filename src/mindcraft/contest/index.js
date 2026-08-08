@@ -16,9 +16,11 @@ export { ContestLoop } from './contest_loop.js';
 export {
     CONTEST_NARRATOR_CHARACTER,
     ContestAnnouncer,
+    buildBuildPhaseAnnouncement,
     buildContestResultAnnouncement,
     buildContestStartAnnouncement,
     buildPlanningAnnouncement,
+    buildPressureRoundAnnouncement,
     buildSurvivorAnnouncement,
 } from './contest_announcer.js';
 export {
@@ -32,8 +34,10 @@ export {
     CONTEST_BOT_CHARACTERS,
     CONTEST_GAME_PRESETS,
     DEFAULT_SURVIVOR_SCENARIO_ID,
+    SURVIVOR_EXTRA_CHARACTERS,
     SURVIVOR_FOUR_PLAYER_PRESET,
     SURVIVOR_SCENARIOS,
+    SURVIVOR_SEASON_CAST,
     SURVIVOR_SEASON_PRESET,
     getContestGamePreset,
     getSurvivorSeasonPreset,
@@ -52,12 +56,28 @@ export {
     scoreSpleef,
 } from './spleef.js';
 export {
+    bothSiegeTeamsAlive,
+    canDeferSiegeDeadline,
+    nextSiegeHalfSize,
+    remainingTeamSiegeSurvivors,
+    scoreTeamBaseSiege,
+    survivingTeamsForSiege,
+} from './team_base_siege.js';
+export {
+    isTeamContestType,
+    isTeamEliminationContest,
+    isTeamTowerContest,
+    TEAM_CONTEST_TYPES,
+} from './team_games.js';
+export {
     buildDepthProbeCommand,
     parsePlayerY,
     scoreDepthRace,
 } from './depth_race.js';
 export {
     ContestArenaManager,
+    buildArenaShrinkCommands,
+    buildPressureRoundCommands,
     buildSurvivorEliminationCommands,
     getArenaJoinInfo,
     parseOnlinePlayers,
@@ -67,6 +87,7 @@ export { ContestRecordingManager } from './contest_recording.js';
 export { SpectatorDirector } from './spectator_director.js';
 export {
     GameSessionManager,
+    resolveBuildPhaseMs,
     resolvePlanningMs,
     validateGameParticipants,
     validateTeamSetup,
@@ -85,6 +106,8 @@ export {
 } from './highlight_reel.js';
 export {
     GAME_CONTENT_SYSTEM_PROMPT,
+    buildBaseSiegeBuildDirective,
+    buildBaseSiegePlanningDirective,
     buildParticipantGameDirective,
     buildTeamPlanningDirective,
     buildGameSystemPrompt,

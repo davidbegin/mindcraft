@@ -11,6 +11,7 @@ import {
 import { ContestCoordinator } from '../src/mindcraft/contest/contest_coordinator.js';
 import {
     GameSessionManager,
+    resolveBuildPhaseMs,
     resolvePlanningMs,
     validateGameParticipants,
     validateTeamSetup,
@@ -108,6 +109,14 @@ async function withManager(run, overrides = {}, coordinatorOverrides = {}) {
             },
             announcePlanning: (contest, options) => {
                 calls.push(['announce-planning', contest.id, options?.planningMs]);
+                return Promise.resolve();
+            },
+            announceBuildPhase: (contest, options) => {
+                calls.push(['announce-build', contest.id, options?.buildPhaseMs]);
+                return Promise.resolve();
+            },
+            announcePressureRound: options => {
+                calls.push(['announce-pressure', options?.halfSize, options?.pressureRound]);
                 return Promise.resolve();
             },
             announceResult: contest => {
@@ -278,6 +287,47 @@ test('an explicit next-game start ends the podium ceremony early', async () => {
         );
         assert.ok(oldDestroyIndex >= 0, 'the podium competitor is cleaned up');
         assert.ok(newCreateIndex > oldDestroyIndex, 'the next game provisions after cleanup');
+
+        await coordinator.cancelContest('game-2', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        clock: () => now,
+    }, {
+        idFactory: () => `game-${++nextId}`,
+    });
+});
+
+test('releasing the podium hold frees the arena for a different game mode', async () => {
+    const now = 1_000;
+    let nextId = 0;
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'tower',
+            participants: [{ profileId: 'fast', name: 'speedy' }],
+        });
+        await coordinator.submit('game-1', 'speedy', {});
+        await manager.syncWithContestView(coordinator.view());
+        assert.equal(manager.view().status, 'awaiting-next-game');
+
+        // Nothing ends the ceremony on a timer, so a Survivor season would see a
+        // finished game as still active forever unless it can clear the hold.
+        const released = await manager.releasePodiumHold();
+        assert.equal(released.contestId, 'game-1');
+        assert.equal(manager.view(), null);
+        assert.deepEqual(
+            calls.filter(([type]) => type === 'destroy').map(([, name]) => name),
+            ['speedy#1']
+        );
+
+        // A hold that is already gone is not an error, and a running game is
+        // never torn down by mistake.
+        assert.equal(await manager.releasePodiumHold(), null);
+        await manager.start({
+            gameId: 'tower',
+            participants: [{ profileId: 'fast', name: 'speedy' }],
+        });
+        assert.equal(await manager.releasePodiumHold(), null);
+        assert.equal(manager.view().status, 'running');
 
         await coordinator.cancelContest('game-2', 'test complete');
         await manager.syncWithContestView(coordinator.view());
@@ -544,6 +594,71 @@ test('team tower plans before the clock starts and points every teammate at one 
     });
 });
 
+test('Base Siege runs planning, then build, then combat directives', async () => {
+    const siegePreset = {
+        ...preset,
+        id: 'team_base_siege',
+        title: 'Base Siege',
+        prompt: 'Last team standing wins. Arena shrinks if both hide.',
+        rules: {
+            type: 'team_base_siege',
+            minimumPlayersPerTeam: 2,
+            planningMs: 30_000,
+            buildPhaseMs: 30_000,
+            maxPressureRounds: 3,
+        },
+    };
+    assert.equal(resolveBuildPhaseMs(undefined, siegePreset), 30_000);
+    assert.equal(resolveBuildPhaseMs(15_000, siegePreset), 15_000);
+    assert.throws(() => resolveBuildPhaseMs(-1, siegePreset), /cannot be negative/);
+
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'team_base_siege',
+            teamNames: ['Ember', 'Tide'],
+            planningMs: 20_000,
+            buildPhaseMs: 25_000,
+            participants: [
+                { profileId: 'fast', name: 'alice', team: 'Ember' },
+                { profileId: 'smart', name: 'amy', team: 'Ember' },
+                { profileId: 'fast', name: 'bob', team: 'Tide' },
+                { profileId: 'smart', name: 'ben', team: 'Tide' },
+            ],
+        });
+
+        const types = calls.map(([type]) => type);
+        const planningIndex = types.indexOf('announce-planning');
+        const buildIndex = types.indexOf('announce-build');
+        const startIndex = types.indexOf('announce-start');
+        assert.ok(planningIndex >= 0);
+        assert.ok(buildIndex > planningIndex);
+        assert.ok(startIndex > buildIndex);
+        assert.equal(calls[planningIndex][2], 20_000);
+        assert.equal(calls[buildIndex][2], 25_000);
+
+        const sleeps = calls.filter(([type]) => type === 'sleep').map(([, ms]) => ms);
+        assert.deepEqual(sleeps.filter(ms => ms === 20_000 || ms === 25_000), [20_000, 25_000]);
+
+        const directives = calls.filter(([type]) => type === 'directive').map(([, name, prompt]) => ({ name, prompt }));
+        assert.ok(directives.some(({ prompt }) => /PLANNING PHASE/.test(prompt) && /arena shrinks/i.test(prompt)));
+        assert.ok(directives.some(({ prompt }) => /BUILD PHASE/.test(prompt) && /Do NOT attack enemies yet/i.test(prompt)));
+        assert.ok(directives.some(({ prompt }) => /COMBAT IS ON/.test(prompt) && /Death eliminates you permanently/i.test(prompt)));
+        assert.equal(
+            coordinator.snapshot().contests['game-1'].metadata.gameSession.buildPhaseMs,
+            25_000
+        );
+        assert.equal(
+            coordinator.snapshot().contests['game-1'].metadata.gameSession.attackerByTeam,
+            null
+        );
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        getPreset: () => siegePreset,
+    });
+});
+
 test('planning time falls back to the preset and can be turned off', async () => {
     const teamPreset = {
         ...preset,
@@ -599,7 +714,8 @@ test('a planning brief tells a non-captain who to follow and who to stay quiet a
     assert.match(directive, /!startConversation with alice/);
     assert.match(directive, /The opposing team is bob, ben/);
     assert.match(directive, /!endConversation/);
-    assert.match(directive, /Meet me at the spot/);
+    assert.match(directive, /refer to that base vaguely in your own words/);
+    assert.doesNotMatch(directive, /say exactly/i);
     assert.doesNotMatch(directive, /Say the numbers out loud/);
     assert.doesNotMatch(directive, /You are the captain/);
     assert.match(directive, /YOU ARE THE ATTACKER/);
@@ -750,7 +866,8 @@ test('speech style prompt requires concise coordinate-free dialogue', () => {
     assert.match(prompt, /one short sentence/);
     assert.match(prompt, /no more than 10 words/);
     assert.match(prompt, /Never say numeric coordinates aloud/);
-    assert.match(prompt, /Meet me at the spot/);
+    assert.match(prompt, /use different wording every time/);
+    assert.doesNotMatch(prompt, /say exactly/i);
 });
 
 test('game content prompt prioritizes unique strategy talk over repetitive roasting', () => {

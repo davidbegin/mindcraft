@@ -44,6 +44,7 @@ code/.env
 .env
 
 # contest runtime state (generated while games run)
+contests/launch-failures/
 contests/journal.jsonl
 contests/state.json
 contests/tower_high_scores.json

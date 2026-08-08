@@ -1,13 +1,25 @@
 import {
+    buildBaseSiegeBuildDirective,
     buildParticipantGameDirective,
     buildTeamPlanningDirective,
     pickTeamAttacker,
     pickTeamCaptain,
 } from './game_content.js';
+import {
+    buildPressureRoundCommands,
+    getArenaJoinInfo,
+} from './arena_manager.js';
+import {
+    canDeferSiegeDeadline,
+    nextSiegeHalfSize,
+    remainingTeamSiegeSurvivors,
+} from './team_base_siege.js';
+import { isTeamContestType, isTeamTowerContest } from './team_games.js';
 
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 const TEAM_NAME_PATTERN = /^[A-Za-z0-9_ ]{1,16}$/;
 const MAX_PLANNING_MS = 10 * 60 * 1000;
+const MAX_BUILD_PHASE_MS = 5 * 60 * 1000;
 const DEFAULT_PODIUM_HOLD_MS = 5 * 60 * 1000;
 const DEFAULT_WINNER_REVEAL_MS = 6_000;
 const PODIUM_WAIT_DIRECTIVE = [
@@ -21,7 +33,7 @@ export function buildWinnerReactionDirective(contest, participantId) {
     const teamResult = (contest?.results || []).find(result => result.participantId === participantId);
     const winningTeam = (contest?.results || []).find(result => result.rank === 1)
         ?.details?.teamName;
-    if (contest?.rules?.type === 'team_tower_battle' && winningTeam) {
+    if (isTeamContestType(contest?.rules?.type) && winningTeam) {
         const participantTeam = teamResult?.details?.teamName;
         return [
             'The game is over.',
@@ -102,7 +114,7 @@ export function validateGameParticipants(participants, profiles, existingNames =
 
 export function validateTeamSetup(participants, teamNames, minimumPlayersPerTeam = 2) {
     if (!Array.isArray(teamNames) || teamNames.length !== 2) {
-        throw new Error('Team Tower Battle requires exactly two teams');
+        throw new Error('Team games require exactly two teams');
     }
     const names = teamNames.map(name => String(name || '').trim());
     if (names.some(name => !TEAM_NAME_PATTERN.test(name))) {
@@ -137,6 +149,18 @@ export function resolvePlanningMs(requested, preset) {
     }
     if (value > MAX_PLANNING_MS) {
         throw new Error(`Planning time must be ${MAX_PLANNING_MS / 60_000} minutes or less`);
+    }
+    return Math.round(value);
+}
+
+export function resolveBuildPhaseMs(requested, preset) {
+    const fallback = Number.isFinite(preset?.rules?.buildPhaseMs) ? preset.rules.buildPhaseMs : 0;
+    const value = Number.isFinite(requested) ? requested : fallback;
+    if (value < 0) {
+        throw new Error('Build phase time cannot be negative');
+    }
+    if (value > MAX_BUILD_PHASE_MS) {
+        throw new Error(`Build phase must be ${MAX_BUILD_PHASE_MS / 60_000} minutes or less`);
     }
     return Math.round(value);
 }
@@ -180,10 +204,13 @@ export class GameSessionManager {
         this.onUpdate = options.onUpdate || (() => {});
         this.announceStart = options.announceStart || (() => {});
         this.announcePlanning = options.announcePlanning || (() => {});
+        this.announceBuildPhase = options.announceBuildPhase || (() => {});
+        this.announcePressureRound = options.announcePressureRound || (() => {});
         this.announceResult = options.announceResult || (() => {});
         this.announceVisualResult = options.announceVisualResult || (() => {});
         this.presentWinner = options.presentWinner || (() => {});
         this.clearQueuedVoice = options.clearQueuedVoice || (() => {});
+        this.runArenaCommands = options.runArenaCommands || null;
         this.onAnnouncementError = options.onAnnouncementError
             || (error => console.warn(`Contest announcement failed: ${error.message}`));
         this.onPresentationError = options.onPresentationError
@@ -229,15 +256,22 @@ export class GameSessionManager {
         this._emit();
     }
 
+    // The podium hold is a courtesy ceremony, not a lock, and nothing ends it on
+    // a timer: the medalists stand on their podiums until an operator starts
+    // something else. Anything that needs the arena — the next contest game, a
+    // Survivor season — releases the hold instead of treating a finished game as
+    // still running.
+    async releasePodiumHold() {
+        if (this.active?.status !== 'awaiting-next-game') return null;
+        return await this.finish(this.active.contestId);
+    }
+
     async start(request = {}) {
         if (this.active) {
             if (this.active.status !== 'awaiting-next-game') {
                 throw new Error(`Game session ${this.active.contestId} is already active`);
             }
-            // The podium hold is a courtesy ceremony, not a lock. An explicit
-            // operator start ends it early and cleans up the medalists so the
-            // next game can begin right away.
-            await this.finish(this.active.contestId);
+            await this.releasePodiumHold();
         }
         if (this.coordinator.snapshot().activeContestId) {
             throw new Error('A game is already running. Cancel it first.');
@@ -262,7 +296,7 @@ export class GameSessionManager {
             team: String(request.participants?.[index]?.team || '').trim() || null,
             voice: this.resolveParticipantVoice(participant.name, participant.voice),
         }));
-        const teamSetup = preset.rules?.type === 'team_tower_battle'
+        const teamSetup = isTeamContestType(preset.rules?.type)
             ? validateTeamSetup(
                 participants,
                 request.teamNames,
@@ -277,12 +311,15 @@ export class GameSessionManager {
             ? request.durationMs
             : preset.durationMs;
         const planningMs = teamSetup ? resolvePlanningMs(request.planningMs, preset) : 0;
+        const buildPhaseMs = teamSetup && preset.rules?.type === 'team_base_siege'
+            ? resolveBuildPhaseMs(request.buildPhaseMs, preset)
+            : 0;
         const captainByTeam = teamSetup
             ? Object.fromEntries(
                 teamSetup.teamNames.map(name => [name, pickTeamCaptain(teamSetup.teams[name])])
             )
             : null;
-        const attackerByTeam = teamSetup
+        const attackerByTeam = teamSetup && isTeamTowerContest(preset.rules?.type)
             ? Object.fromEntries(
                 teamSetup.teamNames.map(name => [
                     name,
@@ -310,6 +347,9 @@ export class GameSessionManager {
                     temporary: true,
                     systemPrompt,
                     planningMs,
+                    buildPhaseMs,
+                    pressureRound: 0,
+                    arenaHalfSize: getArenaJoinInfo().arena.halfSize ?? 32,
                     teamNames: teamSetup?.teamNames ?? null,
                     teamByParticipant: teamSetup?.teamByParticipant ?? null,
                     teams: teamSetup?.teams ?? null,
@@ -336,6 +376,7 @@ export class GameSessionManager {
             status: 'provisioning',
             participantIds,
             planningMs,
+            buildPhaseMs,
             teamNames: teamSetup?.teamNames ?? null,
             teamByParticipant: teamSetup?.teamByParticipant ?? null,
             teams: teamSetup?.teams ?? null,
@@ -478,6 +519,17 @@ export class GameSessionManager {
                 });
             }
 
+            if (teamSetup && buildPhaseMs > 0) {
+                await this._runBuildPhase({
+                    contest,
+                    preset,
+                    teamSetup,
+                    captainByTeam,
+                    participantIds,
+                    buildPhaseMs,
+                });
+            }
+
             this._setStatus('announcing-start', 'announce', 'Announcing match start…');
             await this._announce(this.announceStart, contest);
             this._record({ stage: 'start_contest', message: `Starting contest ${contest.id}` });
@@ -486,6 +538,7 @@ export class GameSessionManager {
                 this.sendDirective(
                     name,
                     buildParticipantGameDirective(preset.prompt, participantIds, name, {
+                        contestType: preset.rules?.type ?? null,
                         teamId: teamSetup?.teamByParticipant[name] ?? null,
                         teammateIds: teamSetup
                             ? teamSetup.teams[teamSetup.teamByParticipant[name]]
@@ -560,10 +613,13 @@ export class GameSessionManager {
     }) {
         const seconds = Math.round(planningMs / 1000);
         const planningEndsAt = this.clock() + planningMs;
+        const planningLabel = preset.rules?.type === 'team_base_siege'
+            ? `Team planning: ${seconds}s to agree on a base and hunt plan…`
+            : `Team planning: ${seconds}s to agree on one tower…`;
         this._setStatus(
             'planning',
             'team_planning',
-            `Team planning: ${seconds}s to agree on one tower…`,
+            planningLabel,
             { planningMs, planningEndsAt }
         );
         await this._announce(
@@ -586,10 +642,56 @@ export class GameSessionManager {
                     ),
                     captainId: captainByTeam?.[teamId] ?? null,
                     attackerId: attackerByTeam?.[teamId] ?? null,
+                    contestType: preset.rules?.type ?? 'team_tower_battle',
                 })
             );
         }));
         await this.sleep(planningMs);
+        if (!this.active || this.active.contestId !== contest.id) {
+            throw new Error('Game session was cancelled during startup');
+        }
+    }
+
+    // Build phase still runs before startContest(), so fights cannot begin early.
+    async _runBuildPhase({
+        contest,
+        preset,
+        teamSetup,
+        captainByTeam,
+        participantIds,
+        buildPhaseMs,
+    }) {
+        const seconds = Math.round(buildPhaseMs / 1000);
+        const buildEndsAt = this.clock() + buildPhaseMs;
+        this._setStatus(
+            'building',
+            'team_build',
+            `Build phase: ${seconds}s to raise a quick base…`,
+            { buildPhaseMs, buildEndsAt }
+        );
+        await this._announce(
+            current => this.announceBuildPhase(current, { buildPhaseMs }),
+            contest
+        );
+        await Promise.all(participantIds.map(name => {
+            const teamId = teamSetup.teamByParticipant[name];
+            return this.sendDirective(
+                name,
+                buildBaseSiegeBuildDirective({
+                    title: preset.title,
+                    buildPhaseMs,
+                    participantName: name,
+                    teamId,
+                    teammateIds: teamSetup.teams[teamId].filter(id => id !== name),
+                    enemyIds: participantIds.filter(id =>
+                        teamSetup.teamByParticipant[id] !== teamId
+                    ),
+                    captainId: captainByTeam?.[teamId] ?? null,
+                }),
+                { endConversations: true }
+            );
+        }));
+        await this.sleep(buildPhaseMs);
         if (!this.active || this.active.contestId !== contest.id) {
             throw new Error('Game session was cancelled during startup');
         }
@@ -618,6 +720,69 @@ export class GameSessionManager {
         this.active = null;
         this._emit();
         return session;
+    }
+
+    /**
+     * Called inside ContestCoordinator.tick while the contest is still running.
+     * Mutates contest metadata/deadline in place when both teams are still alive.
+     */
+    async applyPressureRound(contest) {
+        if (contest?.rules?.type !== 'team_base_siege') return null;
+        if (!canDeferSiegeDeadline(contest)) return null;
+        if (typeof this.runArenaCommands !== 'function') return null;
+
+        const gameSession = contest.metadata.gameSession || (contest.metadata.gameSession = {});
+        const currentHalf = Number.isFinite(gameSession.arenaHalfSize)
+            ? gameSession.arenaHalfSize
+            : (getArenaJoinInfo().arena.halfSize ?? 32);
+        const nextHalf = nextSiegeHalfSize(
+            currentHalf,
+            contest.rules?.shrinkStep,
+            contest.rules?.minHalfSize
+        );
+        const pressureRound = (Number(gameSession.pressureRound) || 0) + 1;
+        const survivors = remainingTeamSiegeSurvivors(contest);
+        const commands = buildPressureRoundCommands({
+            survivors,
+            teamNames: gameSession.teamNames || [],
+            teamByParticipant: gameSession.teamByParticipant || {},
+            halfSize: nextHalf,
+        });
+        for (const command of commands) {
+            await this.runArenaCommands(command);
+        }
+
+        gameSession.pressureRound = pressureRound;
+        gameSession.arenaHalfSize = nextHalf;
+        contest.deadlineAt = this.clock() + contest.durationMs;
+
+        await this._announce(
+            () => this.announcePressureRound({
+                halfSize: nextHalf,
+                pressureRound,
+            }),
+            contest
+        );
+        await Promise.all(survivors.map(name =>
+            this.sendDirective(
+                name,
+                [
+                    `PRESSURE ROUND ${pressureRound}. The arena just shrank.`,
+                    'Both teams were still alive, so hiding failed. Hunt and eliminate the other team now.',
+                    'Death still eliminates you permanently. Friendly fire is still off.',
+                ].join(' '),
+                { endConversations: true }
+            )
+        ));
+        if (this.active?.contestId === contest.id) {
+            this._setStatus(
+                'running',
+                'pressure_round',
+                `Pressure round ${pressureRound}: arena half-size ${nextHalf}`,
+                { pressureRound, arenaHalfSize: nextHalf }
+            );
+        }
+        return { reason: 'pressure-round', halfSize: nextHalf, pressureRound };
     }
 
     async syncWithContestView(view) {

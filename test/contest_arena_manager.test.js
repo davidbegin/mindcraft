@@ -608,6 +608,41 @@ test('parses online players and strips team suffixes from list output', async ()
     );
 });
 
+test('does not read team and model nametag tags as extra players', async () => {
+    assert.deepEqual(
+        parseOnlinePlayers(
+            'There are 3 of a max of 20 players online: beginbot, '
+            + 'Billy [Tide] [grok-4.5], glm_thorough [Surf] [glm-4.7]'
+        ),
+        ['beginbot', 'Billy', 'glm_thorough']
+    );
+});
+
+test('skips a spectator who logs out between the player list and the warp', async () => {
+    const commands = [];
+    const manager = new ContestArenaManager({
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') {
+                return 'There are 3 of a max of 20 players online: beginbot, ghost, alice';
+            }
+            if (command.includes('ghost')) {
+                throw new Error(`Minecraft rejected "${command}": No player was found`);
+            }
+            return 'ok';
+        },
+    });
+
+    const result = await manager.prepare(
+        getContestGamePreset('tower_battle'),
+        ['alice'],
+        { spectators: ['beginbot', 'ghost'] }
+    );
+
+    assert.deepEqual(result.spectators, ['beginbot']);
+    assert.ok(commands.includes('gamemode spectator beginbot'));
+});
+
 test('warps human spectators above the same arena without changing the join server', async () => {
     const commands = [];
     const manager = new ContestArenaManager({
