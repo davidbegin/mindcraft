@@ -1556,6 +1556,13 @@
 
         .contest-live-main { min-width: 0; }
 
+        .contest-live-side {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-width: 0;
+        }
+
         .tower-atlas {
             min-width: 0;
             padding: 12px;
@@ -1656,6 +1663,104 @@
             flex-direction: column;
             gap: 5px;
             margin-top: 9px;
+        }
+
+        .cake-atlas {
+            min-width: 0;
+            padding: 12px;
+            border-radius: 11px;
+            border: 1px solid rgba(206, 147, 216, 0.38);
+            background:
+                radial-gradient(circle at 50% 0%, rgba(206, 147, 216, 0.14), transparent 55%),
+                var(--bg-inset);
+        }
+
+        .cake-atlas[hidden] { display: none; }
+
+        .cake-atlas-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .cake-atlas-head strong {
+            color: #ce93d8;
+            font-size: 0.78rem;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+        }
+
+        .cake-atlas-head span {
+            color: var(--text-mute);
+            font-family: var(--mono);
+            font-size: 0.66rem;
+        }
+
+        .cake-team {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+            padding: 9px 8px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: rgba(0, 0, 0, 0.16);
+        }
+
+        .cake-team + .cake-team { margin-top: 8px; }
+        .cake-team.leader { border-color: rgba(206, 147, 216, 0.55); }
+        .cake-team.done {
+            border-color: rgba(159, 232, 112, 0.55);
+            box-shadow: 0 0 12px rgba(159, 232, 112, 0.12);
+        }
+
+        .cake-team-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            font: 0.74rem var(--mono);
+        }
+
+        .cake-team-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--text);
+            font-weight: 700;
+        }
+
+        .cake-team-score { color: var(--text-dim); }
+        .cake-team.done .cake-team-score { color: var(--lime); }
+
+        .cake-ingredient-row {
+            display: grid;
+            grid-template-columns: 52px minmax(0, 1fr) 36px;
+            gap: 6px;
+            align-items: center;
+            color: var(--text-dim);
+            font: 0.68rem var(--mono);
+        }
+
+        .cake-ingredient-row.ready { color: var(--lime); }
+
+        .cake-ingredient-bar {
+            height: 7px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .cake-ingredient-fill {
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #ce93d8, #f8bbd0);
+            transition: width 350ms ease;
+        }
+
+        .cake-ingredient-row.ready .cake-ingredient-fill {
+            background: linear-gradient(90deg, #9fe870, #5ec8c0);
         }
 
         .tower-standing {
@@ -2024,6 +2129,89 @@
             font-size: 0.74rem;
         }
 
+        .game-player-said {
+            color: var(--text-dim);
+            font-size: 0.78rem;
+            line-height: 1.35;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            min-height: 2.1em;
+        }
+
+        .game-player-said.empty { color: var(--text-mute); font-style: italic; }
+
+        .live-transcript {
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 11px;
+            border: 1px solid rgba(240, 180, 41, 0.28);
+            background:
+                radial-gradient(circle at 0% 0%, rgba(240, 180, 41, 0.1), transparent 55%),
+                var(--bg-inset);
+        }
+
+        .live-transcript[hidden] { display: none; }
+
+        .live-transcript-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .live-transcript-head strong {
+            color: var(--amber);
+            font-size: 0.78rem;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+        }
+
+        .live-transcript-head span {
+            color: var(--text-mute);
+            font-family: var(--mono);
+            font-size: 0.66rem;
+        }
+
+        .live-transcript-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 280px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .live-transcript-line {
+            display: grid;
+            grid-template-columns: 88px minmax(0, 1fr);
+            gap: 8px;
+            align-items: start;
+            font-size: 0.78rem;
+            line-height: 1.35;
+        }
+
+        .live-transcript-who {
+            color: var(--lime);
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .live-transcript-text { color: var(--text-dim); word-break: break-word; }
+
+        .live-transcript-empty {
+            color: var(--text-mute);
+            font-size: 0.78rem;
+            font-style: italic;
+            padding: 6px 0;
+        }
+
         .contest-watch-link {
             display: inline-flex;
             align-items: center;
@@ -2034,6 +2222,7 @@
         @media (max-width: 900px) {
             .contest-live-layout { grid-template-columns: 1fr; }
             .tower-atlas { max-width: none; }
+            .cake-atlas { max-width: none; }
         }
 
         @media (max-width: 720px) {
@@ -2157,6 +2346,15 @@
                         </div>
                         <div id="contestParticipantChips" class="contest-participant-chips" hidden></div>
                         <div id="gamePlayers" class="game-players" hidden></div>
+                        <div id="liveTranscript" class="live-transcript" aria-label="Live game transcript" aria-live="polite" hidden>
+                            <div class="live-transcript-head">
+                                <strong>Live Transcript</strong>
+                                <span id="liveTranscriptCount">0 lines</span>
+                            </div>
+                            <div id="liveTranscriptList" class="live-transcript-list">
+                                <div class="live-transcript-empty">Waiting for the cast to speak…</div>
+                            </div>
+                        </div>
                         <div id="contestResults" class="contest-results" hidden></div>
                         <div id="highlightReelPanel" class="highlight-reel" hidden>
                             <div class="highlight-reel-head">
@@ -2174,6 +2372,7 @@
                             <button id="warpSpectatorsBtn" class="btn btn-ghost" hidden>Warp me to arena</button>
                             <button id="spectatorDirectorBtn" class="btn btn-amber" hidden>Start auto camera</button>
                             <a id="watchLiveBtn" class="btn btn-primary contest-watch-link" hidden href="/live.html" target="_blank" rel="noopener">Watch Live</a>
+                            <a id="openGameArchiveBtn" class="btn btn-ghost contest-watch-link" hidden href="/games/archive" target="_blank" rel="noopener">Open archive</a>
                             <button id="exportGameSessionBtn" class="btn btn-ghost" hidden>Export session</button>
                             <button id="copyLaunchReportBtn" class="btn btn-ghost" hidden type="button">Copy last launch report</button>
                         </div>
@@ -2189,6 +2388,7 @@
                             <textarea id="contestLaunchDebugText" readonly spellcheck="false" aria-label="Launch failure debug report"></textarea>
                         </div>
                     </div>
+                    <div class="contest-live-side">
                     <aside id="towerAtlas" class="tower-atlas" aria-label="Live tower heights" aria-live="polite" hidden>
                         <div class="tower-atlas-head">
                             <strong>Tower Atlas</strong>
@@ -2197,6 +2397,14 @@
                         <div id="towerSkyline" class="tower-skyline"></div>
                         <div id="towerAtlasList" class="tower-atlas-list"></div>
                     </aside>
+                    <aside id="cakeAtlas" class="cake-atlas" aria-label="Live cake ingredients" aria-live="polite" hidden>
+                        <div class="cake-atlas-head">
+                            <strong>Cake Pantry</strong>
+                            <span id="cakeAtlasUpdated">Live</span>
+                        </div>
+                        <div id="cakeAtlasList"></div>
+                    </aside>
+                    </div>
                 </div>
             </div>
         </section>
@@ -2387,6 +2595,9 @@
         let launchElapsedTimer = null;
         let latestLaunch = null;
         const MAX_LAUNCH_LOG_LINES = 200;
+        const MAX_LIVE_TRANSCRIPT = 200;
+        let liveTranscriptLines = [];
+        let liveTranscriptContestId = null;
         let highlightReelTimer = null;
         let highlightContestId = null;
         let focusedAgent = null;
@@ -2975,6 +3186,17 @@
                 || null;
             renderTowerAtlas(active, atlas);
         });
+        socket.on('cake-atlas-update', atlas => {
+            if (contestState) contestState.cakeAtlas = atlas;
+            const active = contestState?.activeContest
+                || (contestState?.contests || []).find(contest =>
+                    contest.status === 'running'
+                    || contest.status === 'judging'
+                    || contest.status === 'completed'
+                )
+                || null;
+            renderCakeAtlas(active, atlas);
+        });
 
         function viewFromPath(pathname) {
             const path = (pathname || '/').replace(/\/+$/, '') || '/';
@@ -3164,10 +3386,32 @@
             if (status === 'recording') return 'Starting synchronized recording…';
             if (status === 'planning') return 'Teams are planning their tower…';
             if (status === 'announcing-start') return 'Announcing match start…';
-            if (status === 'running') return 'Contest running';
+            if (status === 'between-matches') {
+                return gameSession.series
+                    ? `Between series matches · ${formatSeriesStatus(gameSession.series)}`
+                    : 'Between series matches…';
+            }
+            if (status === 'running') {
+                return gameSession.series
+                    ? formatSeriesStatus(gameSession.series)
+                    : 'Contest running';
+            }
             if (status === 'failed') return 'Launch failed';
             if (status === 'cleaning-up') return 'Cleaning up temporary bots…';
             return status ? `Status: ${status}` : '';
+        }
+
+        function formatSeriesStatus(series) {
+            if (!series || !(series.bestOf > 1)) return '';
+            const scores = series.scores || {};
+            const entries = Object.entries(scores)
+                .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+            const score = entries.length === 2
+                ? `${entries[0][0]} ${entries[0][1]}–${entries[1][1]} ${entries[1][0]}`
+                : entries.map(([name, wins]) => `${name} ${wins}`).join(', ');
+            return score
+                ? `Match ${series.matchIndex || 1} · Bo${series.bestOf} · ${score}`
+                : `Match ${series.matchIndex || 1} · Bo${series.bestOf}`;
         }
 
         const LAUNCHING_STATUSES = [
@@ -3177,6 +3421,7 @@
             'planning',
             'building',
             'announcing-start',
+            'between-matches',
         ];
 
         function isLaunchingSession(gameSession) {
@@ -3495,9 +3740,15 @@
                             ? `${result.details?.survivors ?? '?'} alive`
                             : `out at ${fmtElapsed(result.details?.survivedMs || 0)}`)
                     : contest?.rules?.type === 'cake_race' && result.details?.teamName
-                        ? (Number.isFinite(result.details?.elapsedMs)
-                            ? fmtElapsed(result.details.elapsedMs)
-                            : (result.score > 0 ? 'cake crafted' : 'outpaced'))
+                        ? (
+                            result.score > 0 || result.details.hasCake
+                                ? (Number.isFinite(result.details?.elapsedMs)
+                                    ? `${fmtElapsed(result.details.elapsedMs)} · cake`
+                                    : 'cake crafted')
+                                : Array.isArray(result.details?.ingredients)
+                                    ? `${result.details.gathered || 0}/${result.details.needed || 0} ingredients`
+                                    : 'outpaced'
+                        )
                     : Number.isFinite(height)
                         ? `${result.score} blocks tall`
                         : Number.isFinite(elapsedMs)
@@ -3565,6 +3816,70 @@
             document.getElementById('towerAtlasUpdated').textContent = standings.some(item => item.reporting)
                 ? '● live'
                 : 'scanning…';
+            panel.hidden = false;
+        }
+
+        function renderCakeAtlas(activeContest, atlas) {
+            const panel = document.getElementById('cakeAtlas');
+            const list = document.getElementById('cakeAtlasList');
+            if (!panel || !list) return;
+            const finishedMatch = !activeContest
+                && atlas?.contestId
+                && (contestState?.contests || []).find(contest =>
+                    contest.id === atlas.contestId
+                    && contest.rules?.type === 'cake_race'
+                    && ['completed', 'judging', 'cancelled'].includes(contest.status)
+                );
+            const liveMatch = activeContest
+                && ['running', 'judging', 'completed'].includes(activeContest.status)
+                && activeContest.rules?.type === 'cake_race'
+                && atlas?.contestId === activeContest.id;
+            if (!liveMatch && !finishedMatch) {
+                panel.hidden = true;
+                list.replaceChildren();
+                return;
+            }
+
+            const standings = Array.isArray(atlas.standings) ? atlas.standings : [];
+            list.innerHTML = standings.map(team => {
+                const gathered = Number(team.gathered) || 0;
+                const needed = Number(team.needed) || 0;
+                const scoreLabel = team.hasCake
+                    ? 'CAKE!'
+                    : `${gathered}/${needed}`;
+                const ingredients = (team.ingredients || []).map(slot => {
+                    const have = Math.max(0, Number(slot.have) || 0);
+                    const need = Math.max(1, Number(slot.need) || 1);
+                    const pct = Math.min(100, (have / need) * 100);
+                    const ready = have >= need || slot.ready;
+                    return `
+                        <div class="cake-ingredient-row${ready ? ' ready' : ''}"
+                            title="${esc(slot.label || slot.item)} ${have}/${need}">
+                            <span>${esc(slot.label || slot.item)}</span>
+                            <div class="cake-ingredient-bar">
+                                <div class="cake-ingredient-fill" style="width:${pct.toFixed(1)}%"></div>
+                            </div>
+                            <span>${esc(String(Math.min(have, need)))}/${esc(String(need))}</span>
+                        </div>
+                    `;
+                }).join('');
+                return `
+                    <div class="cake-team${team.rank === 1 ? ' leader' : ''}${team.hasCake || team.complete ? ' done' : ''}">
+                        <div class="cake-team-head">
+                            <span class="cake-team-name">
+                                <i class="tower-report-dot${team.reporting ? ' live' : ''}"></i>#${esc(String(team.rank || '—'))} ${esc(team.teamName || team.participantId)}
+                            </span>
+                            <span class="cake-team-score">${esc(scoreLabel)}</span>
+                        </div>
+                        ${ingredients}
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('cakeAtlasUpdated').textContent = finishedMatch
+                ? 'final'
+                : standings.some(item => item.reporting)
+                    ? '● live'
+                    : 'scanning…';
             panel.hidden = false;
         }
 
@@ -3651,6 +3966,9 @@
                                 <span id="gameCoords-${name}">${esc(coordinates)}</span>
                                 <span id="gamePlace-${name}">${esc([gp.biome, gp.dimension].filter(Boolean).join(' · ') || 'World data pending')}</span>
                             </div>
+                            <div class="game-player-said${agentLastMessage[name] ? '' : ' empty'}" id="gameSaid-${name}">
+                                ${agentLastMessage[name] ? esc(agentLastMessage[name]) : 'No lines yet'}
+                            </div>
                         </div>
                     </article>
                 `;
@@ -3699,6 +4017,107 @@
             }
             btn.hidden = false;
             btn.href = `/live.html?session=${encodeURIComponent(sessionKey)}`;
+        }
+
+        function updateGameArchiveButton(contestId, { tab = 'transcript' } = {}) {
+            const btn = document.getElementById('openGameArchiveBtn');
+            if (!btn) return;
+            if (!contestId) {
+                btn.hidden = true;
+                btn.href = '/games/archive';
+                return;
+            }
+            const params = new URLSearchParams({ game: contestId });
+            if (tab) params.set('tab', tab);
+            btn.hidden = false;
+            btn.href = `/games/archive?${params.toString()}`;
+        }
+
+        function currentGameCastNames() {
+            const gameSession = contestState?.gameSession;
+            const active = contestState?.activeContest
+                || (contestState?.contests || []).find(contest =>
+                    ['draft', 'running', 'judging'].includes(contest.status)
+                )
+                || null;
+            const names = new Set();
+            for (const name of gameSession?.participantIds || []) names.add(name);
+            for (const participant of gameSession?.participants || []) {
+                if (participant?.name) names.add(participant.name);
+            }
+            for (const name of active?.participantIds || []) names.add(name);
+            for (const participant of active?.metadata?.gameSession?.participants || []) {
+                if (participant?.name) names.add(participant.name);
+            }
+            return names;
+        }
+
+        function currentLiveContestId() {
+            return contestState?.gameSession?.contestId
+                || contestState?.activeContest?.id
+                || (contestState?.contests || []).find(contest =>
+                    ['draft', 'running', 'judging'].includes(contest.status)
+                    && contest.metadata?.gameId
+                )?.id
+                || null;
+        }
+
+        function resetLiveTranscript(contestId = null) {
+            liveTranscriptContestId = contestId;
+            liveTranscriptLines = [];
+            renderLiveTranscript({ visible: Boolean(contestId) });
+        }
+
+        function appendLiveTranscript(entry) {
+            if (!entry?.participantId || typeof entry.text !== 'string' || !entry.text.trim()) {
+                return;
+            }
+            const contestId = entry.contestId || currentLiveContestId();
+            if (!contestId) return;
+            if (liveTranscriptContestId && liveTranscriptContestId !== contestId) {
+                liveTranscriptLines = [];
+            }
+            liveTranscriptContestId = contestId;
+            liveTranscriptLines.push({
+                at: entry.at || Date.now(),
+                participantId: entry.participantId,
+                text: entry.text,
+            });
+            if (liveTranscriptLines.length > MAX_LIVE_TRANSCRIPT) {
+                liveTranscriptLines = liveTranscriptLines.slice(-MAX_LIVE_TRANSCRIPT);
+            }
+            agentLastMessage[entry.participantId] = entry.text;
+            const said = document.getElementById(`gameSaid-${entry.participantId}`);
+            if (said) {
+                said.classList.remove('empty');
+                said.textContent = entry.text;
+            }
+            renderLiveTranscript({ visible: true });
+        }
+
+        function renderLiveTranscript({ visible = true } = {}) {
+            const panel = document.getElementById('liveTranscript');
+            const list = document.getElementById('liveTranscriptList');
+            const count = document.getElementById('liveTranscriptCount');
+            if (!panel || !list || !count) return;
+            if (!visible) {
+                panel.hidden = true;
+                return;
+            }
+            panel.hidden = false;
+            count.textContent = `${liveTranscriptLines.length} line${liveTranscriptLines.length === 1 ? '' : 's'}`;
+            if (!liveTranscriptLines.length) {
+                list.innerHTML = '<div class="live-transcript-empty">Waiting for the cast to speak…</div>';
+                return;
+            }
+            const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+            list.innerHTML = liveTranscriptLines.map(line => `
+                <div class="live-transcript-line">
+                    <span class="live-transcript-who" title="${esc(line.participantId)}">${esc(line.participantId)}</span>
+                    <span class="live-transcript-text">${esc(line.text)}</span>
+                </div>
+            `).join('');
+            if (nearBottom) list.scrollTop = list.scrollHeight;
         }
 
         function updateGameSessionExport(sessionKey) {
@@ -4004,8 +4423,42 @@
                 updateGameSessionExport(null);
                 renderContestResults(null);
             }
+
+            const liveContestId = gameSession?.contestId
+                || active?.id
+                || latestDone?.id
+                || null;
+            const showLiveTranscript = Boolean(
+                (provisioning || active)
+                && liveContestId
+            );
+            if (showLiveTranscript) {
+                if (liveTranscriptContestId !== liveContestId) {
+                    resetLiveTranscript(liveContestId);
+                } else {
+                    renderLiveTranscript({ visible: true });
+                }
+                updateGameArchiveButton(liveContestId, { tab: 'transcript' });
+            } else if (latestDone?.id) {
+                renderLiveTranscript({ visible: false });
+                updateGameArchiveButton(latestDone.id, { tab: 'transcript' });
+            } else {
+                if (liveTranscriptContestId) resetLiveTranscript(null);
+                else renderLiveTranscript({ visible: false });
+                updateGameArchiveButton(null);
+            }
+
             renderGamePlayers(provisioning || active ? sessionParticipants : null);
             renderTowerAtlas(active, state?.towerAtlas);
+            renderCakeAtlas(
+                active || (
+                    (state?.contests || []).find(contest =>
+                        contest.id === state?.cakeAtlas?.contestId
+                        && ['completed', 'judging', 'cancelled'].includes(contest.status)
+                    ) || null
+                ),
+                state?.cakeAtlas
+            );
             renderGameCards();
             resolveLaunchAfterReconnect(gameSession);
             if (contestBusy && gameSession) updateLaunchProgressFromSession(gameSession);
@@ -4046,6 +4499,7 @@
             const isTeamGame = (game?.teamCount || 0) > 0;
             const hasPlanning = isTeamGame && (game?.planningMs || 0) > 0;
             const isBaseSiege = gameId === 'team_base_siege';
+            const isSpleef = gameId === 'spleef';
             const minimumPlayersPerTeam = game?.minimumPlayersPerTeam || 2;
             const defaultCount = game?.defaultParticipantCount
                 || (isTeamGame ? minimumPlayersPerTeam * 2 : undefined);
@@ -4070,6 +4524,20 @@
                     value: Math.round((game?.buildPhaseMs || 30_000) / 1000),
                 });
             }
+            if (isSpleef) {
+                teamFields.push({
+                    id: 'bestOf',
+                    type: 'select',
+                    label: 'Best of (play until someone wins the majority)',
+                    value: 1,
+                    options: [
+                        { value: 1, label: '1 — single match' },
+                        { value: 3, label: '3 — first to 2' },
+                        { value: 5, label: '5 — first to 3' },
+                        { value: 7, label: '7 — first to 4' },
+                    ],
+                });
+            }
             gameSetup.open({
                 gameId,
                 title: `Set up ${game?.title || gameId}`,
@@ -4086,7 +4554,7 @@
                 duration: { minutes: (game?.durationMs || 60_000) / 60_000 },
                 fields: teamFields,
                 validate: ({ fields }) => {
-                    if (!hasPlanning && !isBaseSiege) return null;
+                    if (!hasPlanning && !isBaseSiege && !isSpleef) return null;
                     if (hasPlanning) {
                         const planningSeconds = Number(fields.planningSeconds);
                         if (!(Number.isFinite(planningSeconds) && planningSeconds >= 0 && planningSeconds <= 300)) {
@@ -4097,6 +4565,12 @@
                         const buildSeconds = Number(fields.buildSeconds);
                         if (!(Number.isFinite(buildSeconds) && buildSeconds >= 0 && buildSeconds <= 120)) {
                             return 'Build phase must be between 0 and 120 seconds';
+                        }
+                    }
+                    if (isSpleef) {
+                        const bestOf = Number(fields.bestOf);
+                        if (![1, 3, 5, 7].includes(bestOf)) {
+                            return 'Best of must be 1, 3, 5, or 7';
                         }
                     }
                     return null;
@@ -4112,6 +4586,7 @@
                 }) => {
                     const planningMs = hasPlanning ? Number(fields.planningSeconds) * 1000 : 0;
                     const buildPhaseMs = isBaseSiege ? Number(fields.buildSeconds) * 1000 : 0;
+                    const bestOf = isSpleef ? Number(fields.bestOf) : undefined;
                     return {
                         event: 'contest-start-game',
                         extraTimeoutMs: planningMs + buildPhaseMs,
@@ -4124,6 +4599,7 @@
                             autoRecordingEnabled,
                             ...(isTeamGame ? { teamNames, ...(hasPlanning ? { planningMs } : {}) } : {}),
                             ...(isBaseSiege ? { buildPhaseMs } : {}),
+                            ...(isSpleef ? { bestOf } : {}),
                         },
                     };
                 },
@@ -4530,6 +5006,17 @@
             if (hist && agentMessageHistory[agentName].length > 1) {
                 hist.textContent = agentMessageHistory[agentName].slice(1, 4).join(' · ');
             }
+            if (currentGameCastNames().has(agentName)) {
+                const said = document.getElementById(`gameSaid-${agentName}`);
+                if (said) {
+                    said.classList.remove('empty');
+                    said.textContent = message;
+                }
+            }
+        });
+        socket.on('contest-message', payload => {
+            if (!payload?.participantId || typeof payload.text !== 'string') return;
+            appendLiveTranscript(payload);
         });
 
         function updateWorldMeta(states) {

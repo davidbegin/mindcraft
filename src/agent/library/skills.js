@@ -3,6 +3,7 @@ import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
+import agentSettings from "../settings.js";
 import { findAgentSpatialEntry, formatPosition } from '../../utils/spatial.js';
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
@@ -762,6 +763,78 @@ export async function playSpleef(bot, floorY = 100) {
     return true;
 }
 
+export async function playHotButton(bot) {
+    /**
+     * Hot Button: path to an unused stone button and press it once. Stations
+     * are one-shot; most explode. Returns after a successful press attempt.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @returns {Promise<boolean>} true if a button was activated.
+     * @example
+     * await skills.playHotButton(bot);
+     **/
+    const movements = new pf.Movements(bot);
+    movements.canDig = false;
+    movements.canPlaceOn = false;
+    movements.allow1by1towers = false;
+    bot.pathfinder.setMovements(movements);
+    bot.modes.pause('self_defense');
+    bot.modes.pause('cowardice');
+    bot.modes.pause('elbow_room');
+
+    try {
+        const positions = bot.findBlocks({
+            matching: block => block.name === 'stone_button',
+            maxDistance: 48,
+            count: 24,
+        });
+        if (!positions.length) {
+            log(bot, 'Could not find any stone button to press.');
+            return false;
+        }
+        // Spread bots across stations: hash the username into the list order.
+        let hash = 0;
+        for (const ch of String(bot.username || '')) {
+            hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
+        }
+        const ordered = positions
+            .map((pos, index) => ({ pos, index }))
+            .sort((left, right) => {
+                const leftKey = (left.index + Math.abs(hash)) % positions.length;
+                const rightKey = (right.index + Math.abs(hash)) % positions.length;
+                return leftKey - rightKey;
+            });
+        for (const { pos } of ordered) {
+            if (bot.interrupt_code) return false;
+            const block = bot.blockAt(pos);
+            if (!block || block.name !== 'stone_button') continue;
+            if (bot.entity.position.distanceTo(block.position) > 4.5) {
+                bot.pathfinder.setMovements(movements);
+                await goToGoal(
+                    bot,
+                    new pf.goals.GoalNear(block.position.x, block.position.y, block.position.z, 3)
+                );
+            }
+            const stillThere = bot.blockAt(block.position);
+            if (!stillThere || stillThere.name !== 'stone_button') continue;
+            await bot.activateBlock(stillThere);
+            log(
+                bot,
+                `Pressed stone_button at x:${stillThere.position.x.toFixed(1)}, `
+                + `y:${stillThere.position.y.toFixed(1)}, z:${stillThere.position.z.toFixed(1)}.`
+            );
+            return true;
+        }
+        log(bot, 'Every nearby button was already claimed.');
+        return false;
+    } finally {
+        bot.pathfinder.setGoal(null);
+        bot.clearControlStates();
+        bot.modes.unpause('self_defense');
+        bot.modes.unpause('cowardice');
+        bot.modes.unpause('elbow_room');
+    }
+}
+
 
 export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dontCheat=false) {
     /**
@@ -1235,6 +1308,17 @@ export async function goToGoal(bot, goal) {
      * @param {pf.goals.Goal} goal, the goal to navigate to.
      **/
 
+    // Self-destruct race: pathfinder must be willing to walk into lava and
+    // drop off the plateau. Default movements refuse both.
+    function applyDeathRaceMovements(movements) {
+        if (agentSettings.game_session?.contestType !== 'death_race') return;
+        const lavaId = mc.getBlockId('lava');
+        if (lavaId != null) movements.blocksToAvoid.delete(lavaId);
+        movements.maxDropDown = 64;
+        movements.infiniteLiquidDropdownDistance = true;
+        movements.canDig = false;
+    }
+
     const nonDestructiveMovements = new pf.Movements(bot);
     const dontBreakBlocks = ['glass', 'glass_pane'];
     for (let block of dontBreakBlocks) {
@@ -1244,6 +1328,8 @@ export async function goToGoal(bot, goal) {
     nonDestructiveMovements.digCost = 10;
 
     const destructiveMovements = new pf.Movements(bot);
+    applyDeathRaceMovements(nonDestructiveMovements);
+    applyDeathRaceMovements(destructiveMovements);
 
     let final_movements = destructiveMovements;
 

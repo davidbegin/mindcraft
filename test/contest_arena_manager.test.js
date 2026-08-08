@@ -407,7 +407,7 @@ test('contest teams from an earlier match are removed before the next one', () =
     assert.ok(commands.includes('team join mcgame_1_grok45 alice'));
 });
 
-test('builds a blank self-destruct plain with no hazards, mobs, or kit', async () => {
+test('builds a self-destruct arena with outer-edge drop, no pool, and no kit or mobs', async () => {
     const commands = [];
     const manager = new ContestArenaManager({
         runCommand: async command => {
@@ -423,18 +423,18 @@ test('builds a blank self-destruct plain with no hazards, mobs, or kit', async (
         { spectators: [] }
     );
 
-    for (const hazard of ['lava', 'water', 'cactus', 'gravel', 'sand', 'ladder[', 'stone']) {
-        assert.equal(
-            commands.some(command => command.includes(` ${hazard}`)),
-            false,
-            `self-destruct arena must not place ${hazard}`
-        );
-    }
+    assert.ok(commands.some(command => command.endsWith(' lava')));
+    assert.equal(
+        commands.some(command => command.endsWith(' water')),
+        false,
+        'opening plain must not include a free drowning pool'
+    );
+    assert.equal(commands.some(command => command.includes(' cactus')), false);
     assert.equal(commands.some(command => command.startsWith('summon ')), false);
     assert.equal(
         commands.filter(command => command.startsWith('gamerule doMobSpawning ')).at(-1),
         'gamerule doMobSpawning false',
-        'mob spawning must end up disabled so creepers never spawn'
+        'mob spawning must stay off — deaths come from the terrain, not creepers'
     );
     assert.ok(commands.includes('difficulty normal'));
     assert.equal(commands.includes('time set midnight'), false);
@@ -448,7 +448,10 @@ test('builds a blank self-destruct plain with no hazards, mobs, or kit', async (
             .filter(command => !/command_block|redstone_block/.test(command))
             .map(command => command.split(' ').at(-1))
     );
-    assert.deepEqual([...blocksPlaced].sort(), ['air', 'barrier', 'bedrock', 'dirt', 'grass_block']);
+    assert.deepEqual(
+        [...blocksPlaced].sort(),
+        ['air', 'barrier', 'grass_block', 'lava', 'stone']
+    );
 
     for (const name of ['alice', 'bob']) {
         assert.ok(commands.includes(`clear ${name}`));

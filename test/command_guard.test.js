@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
     ALLOWED_WHILE_DEAD,
     CommandGuard,
+    hotButtonCommandRejection,
     looksLikeFailure,
     spleefCommandRejection,
 } from '../src/agent/commands/command_guard.js';
@@ -87,6 +88,15 @@ test('Spleef refuses the commands that break a bot out from under itself', () =>
     for (const command of ['!playSpleef', '!goToPlayer', '!goToCoordinates', '!moveAway', '!stop']) {
         assert.equal(spleefCommandRejection(command), null);
     }
+});
+
+test('Hot Button refuses dig, build, and fight commands', () => {
+    for (const command of ['!digDown', '!clearArea', '!placeHere', '!attackPlayer', '!newAction']) {
+        assert.match(hotButtonCommandRejection(command), /banned during Hot Button/);
+        assert.match(hotButtonCommandRejection(command), /!playHotButton/);
+    }
+    assert.equal(hotButtonCommandRejection('!playHotButton'), null);
+    assert.equal(hotButtonCommandRejection('!goToCoordinates'), null);
 });
 
 test('stop and restart stay usable while dead', () => {

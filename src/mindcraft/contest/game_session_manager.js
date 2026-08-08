@@ -17,6 +17,14 @@ import {
     remainingTeamSiegeSurvivors,
 } from './team_base_siege.js';
 import { isTeamContestType, isTeamTowerContest } from './team_games.js';
+import {
+    buildSeriesIntermissionAnnouncement,
+    buildSeriesResultAnnouncement,
+    createSeries,
+    formatSeriesLabel,
+    normalizeBestOf,
+    recordMatchResult,
+} from './series.js';
 
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 const TEAM_NAME_PATTERN = /^[A-Za-z0-9_ ]{1,16}$/;
@@ -253,6 +261,9 @@ export class GameSessionManager {
         // Frees the requested names from bots left over by earlier matches, so
         // the same roster can be started again and again.
         this.reclaimNames = options.reclaimNames || (() => Promise.resolve());
+        // Optional: re-seats the cast on its starting marks just before the bell.
+        // A launch without it still runs, it just trusts the arena setup to hold.
+        this.enforceStartingMarks = options.enforceStartingMarks || (() => []);
         this.readyTimeoutMs = options.readyTimeoutMs ?? 90000;
         this.readyPollMs = options.readyPollMs ?? 500;
         this.onUpdate = options.onUpdate || (() => {});
@@ -262,6 +273,8 @@ export class GameSessionManager {
         this.announcePressureRound = options.announcePressureRound || (() => {});
         this.announceResult = options.announceResult || (() => {});
         this.announceVisualResult = options.announceVisualResult || (() => {});
+        this.announceSeriesIntermission = options.announceSeriesIntermission || (() => {});
+        this.announceSeriesResult = options.announceSeriesResult || (() => {});
         this.presentWinner = options.presentWinner || (() => {});
         this.clearQueuedVoice = options.clearQueuedVoice || (() => {});
         this.runArenaCommands = options.runArenaCommands || null;
@@ -295,6 +308,29 @@ export class GameSessionManager {
 
     // Every launch milestone goes to the terminal as well as the telemetry
     // timeline, so a launch can be followed without a browser open.
+    /**
+     * Best-effort re-seat onto the starting marks. A launch is never failed over
+     * this: an unreachable bot is worth a line in the log, not a dead match.
+     */
+    async _restoreStartingMarks(preset, participantIds) {
+        try {
+            const audits = await this.enforceStartingMarks(preset, participantIds, {});
+            const moved = (audits || []).filter(audit => audit?.repaired);
+            if (moved.length) {
+                this._log(
+                    `Returned ${moved.length} bot(s) to their starting marks: `
+                    + moved.map(audit => audit.participantId).join(', '),
+                    { stage: 'start_contest' }
+                );
+            }
+        } catch (error) {
+            this._log(
+                `Could not re-check the starting marks: ${error.message}`,
+                { level: 'warn', stage: 'start_contest' }
+            );
+        }
+    }
+
     _log(message, { level = 'info', stage = null, agent = null, detail = null } = {}) {
         const line = `[contest] ${message}`;
         if (level === 'error') console.error(line);
@@ -452,6 +488,15 @@ export class GameSessionManager {
             : 0;
         const recordingEnabled = request.recordingEnabled === true;
         const autoRecordingEnabled = !recordingEnabled && request.autoRecordingEnabled === true;
+        const bestOf = preset.rules?.type === 'spleef'
+            ? normalizeBestOf(request.bestOf)
+            : 1;
+        const series = bestOf > 1
+            ? createSeries({
+                bestOf,
+                participantIds: participants.map(participant => participant.name),
+            })
+            : null;
         const captainByTeam = teamSetup
             ? Object.fromEntries(
                 teamSetup.teamNames.map(name => [name, pickTeamCaptain(teamSetup.teams[name])])
@@ -498,6 +543,10 @@ export class GameSessionManager {
                 ...preset.metadata,
                 gameId: preset.id,
                 startedFrom: 'game-session-ui',
+                ...(preset.rules?.type === 'hot_button'
+                    ? { pressedIds: [] }
+                    : {}),
+                ...(series ? { series: clone(series) } : {}),
                 gameSession: {
                     temporary: true,
                     systemPrompt,
@@ -532,10 +581,13 @@ export class GameSessionManager {
             title: preset.title,
             status: 'provisioning',
             participantIds,
+            durationMs,
+            systemPrompt,
             planningMs,
             buildPhaseMs,
             recordingEnabled,
             autoRecordingEnabled,
+            series: series ? clone(series) : null,
             arenaHalfSize: getArenaJoinInfo().arena.halfSize ?? 32,
             teamNames: teamSetup?.teamNames ?? null,
             teamByParticipant: teamSetup?.teamByParticipant ?? null,
@@ -677,6 +729,16 @@ export class GameSessionManager {
                 );
             }
 
+            if (
+                preset.rules?.type === 'hot_button'
+                && Number.isInteger(arenaReset?.hotButtonSafeIndex)
+            ) {
+                await this.coordinator.noteHotButtonLayout(contest.id, {
+                    safeIndex: arenaReset.hotButtonSafeIndex,
+                    seed: arenaReset.seed,
+                });
+            }
+
             let recording = null;
             if (recordingEnabled) {
                 this._setStatus('recording', 'start_recording', 'Starting synchronized recording…');
@@ -730,6 +792,10 @@ export class GameSessionManager {
                 }),
                 contest
             );
+            // Everything since the arena was built — camera setup, the spoken
+            // intro — gave the cast time to wander off the marks it was placed on.
+            // Re-seat them so the match opens on the formation it was set up with.
+            await this._restoreStartingMarks(preset, participantIds);
             this._log(`Starting contest ${contest.id}`, { stage: 'start_contest' });
             const started = await this.coordinator.startContest(contest.id);
             // The clock is running now, so this last fan-out is the most
@@ -767,7 +833,9 @@ export class GameSessionManager {
                         gameStarted: true,
                         automaticAction: preset.rules?.type === 'spleef'
                             ? 'play-spleef'
-                            : null,
+                            : preset.rules?.type === 'hot_button'
+                                ? 'play-hot-button'
+                                : null,
                         floorY: preset.rules?.floorY,
                     }
                 ).then(result => {
@@ -780,7 +848,10 @@ export class GameSessionManager {
                 })
             ));
             this.active.arenaReset = arenaReset;
-            this._setStatus('running', 'running', 'Contest running');
+            const runningLabel = this.active.series
+                ? (formatSeriesLabel(this.active.series) || 'Contest running')
+                : 'Contest running';
+            this._setStatus('running', 'running', runningLabel);
             this._log(`Game ${preset.id} is running`, { stage: 'running' });
             return {
                 contest: started,
@@ -1025,8 +1096,26 @@ export class GameSessionManager {
                 'announcing-result',
                 'awaiting-next-game',
                 'cleaning-up',
+                'between-matches',
             ].includes(this.active.status)) return null;
             if (contest.status === 'completed') {
+                if (this.active.series && this.active.series.bestOf > 1) {
+                    const { series, decided } = recordMatchResult(this.active.series, {
+                        contestId: contest.id,
+                        winnerIds: contest.winnerIds,
+                        completedAt: contest.completedAt || this.clock(),
+                    });
+                    this.active.series = series;
+                    try {
+                        await this.coordinator.noteSeries(contest.id, series);
+                    } catch (error) {
+                        this._log(`Could not persist series score: ${error.message}`, { level: 'warn' });
+                    }
+                    if (!decided) {
+                        await this._continueSeriesMatch(contest);
+                        return this.view();
+                    }
+                }
                 this.active.status = 'revealing-winner';
                 this._setProgress('reveal_winner', 'Gathering everyone at the winning location…');
                 this._emit();
@@ -1040,6 +1129,12 @@ export class GameSessionManager {
                 await this._announce(this.announceVisualResult, contest);
                 await this._clearQueuedVoice(contest);
                 await this._announce(this.announceResult, contest);
+                if (this.active.series?.seriesWinnerIds?.length) {
+                    await this._announce(
+                        () => this.announceSeriesResult(this.active.series, contest),
+                        contest
+                    );
+                }
                 await Promise.allSettled(this.active.participantIds.map(name =>
                     this.sendDirective(
                         name,
@@ -1067,6 +1162,165 @@ export class GameSessionManager {
             return this.finish(contest.id, contest);
         }
         return null;
+    }
+
+    /**
+     * Series incomplete: announce the match result, rebuild the arena, and open
+     * the next contest with the same bots still online.
+     */
+    async _continueSeriesMatch(completedContest) {
+        const series = this.active?.series;
+        if (!this.active || !series) return null;
+        const preset = this.getPreset(this.active.gameId);
+        const participantIds = this.active.participantIds;
+        const previousContestId = this.active.contestId;
+
+        this.active.status = 'between-matches';
+        this._setProgress(
+            'between_matches',
+            formatSeriesLabel(series) || 'Preparing the next series match…'
+        );
+        this._emit();
+        this._log(
+            `Series continues after ${previousContestId}: ${formatSeriesLabel(series)}`,
+            { stage: 'between_matches' }
+        );
+
+        await this._clearQueuedVoice(completedContest);
+        await this._announce(
+            () => this.announceSeriesIntermission(series, completedContest),
+            completedContest
+        );
+
+        // Freeze elimination reporting while the platform is rebuilt.
+        await Promise.allSettled(participantIds.map(name =>
+            this.sendDirective(
+                name,
+                'Match over. Stay still while the arena resets for the next series match.',
+                { pause: true, gameStarted: false }
+            )
+        ));
+
+        const contest = await this.coordinator.createContest({
+            title: preset.title,
+            prompt: preset.prompt,
+            durationMs: this.active.durationMs || completedContest.durationMs || preset.durationMs,
+            participantIds,
+            rules: { ...preset.rules },
+            metadata: {
+                ...preset.metadata,
+                gameId: preset.id,
+                startedFrom: 'game-session-ui',
+                series: clone(series),
+                gameSession: {
+                    temporary: true,
+                    systemPrompt: this.active.systemPrompt || '',
+                    planningMs: 0,
+                    buildPhaseMs: 0,
+                    pressureRound: 0,
+                    recordingEnabled: this.active.recordingEnabled,
+                    autoRecordingEnabled: this.active.autoRecordingEnabled,
+                    arenaHalfSize: this.active.arenaHalfSize
+                        ?? getArenaJoinInfo().arena.halfSize
+                        ?? 32,
+                    teamNames: null,
+                    teamByParticipant: null,
+                    teams: null,
+                    captainByTeam: null,
+                    attackerByTeam: null,
+                    participants: (this.active.participants || []).map(participant => ({
+                        ...participant,
+                    })),
+                },
+            },
+        });
+
+        this.active.contestId = contest.id;
+        this.active.sessionId = this.active.sessionId || `contest-${contest.id}`;
+        this._setStatus(
+            'preparing',
+            'prepare_arena',
+            `Rebuilding the arena for match ${series.matchIndex}…`
+        );
+
+        const arenaReset = await this.prepareArena(preset, participantIds, {
+            onProgress: detail => this._setStageDetail('prepare_arena', detail),
+            teamNames: null,
+            teamByParticipant: null,
+            teams: null,
+            modelByParticipant: Object.fromEntries(
+                (this.active.participants || []).map(participant => [
+                    participant.name,
+                    participant.model,
+                ])
+            ),
+        });
+        this.active.arenaReset = arenaReset;
+
+        for (const audit of arenaReset?.inventoryAudits || []) {
+            await this.coordinator.recordGameEvent?.('inventory.audit', {
+                contestId: contest.id,
+                ...audit,
+            }).catch?.(error =>
+                this._log(`Could not journal inventory audit: ${error.message}`, { level: 'warn' })
+            );
+        }
+
+        this._setStatus(
+            'announcing-start',
+            'announce',
+            `Announcing match ${series.matchIndex}…`
+        );
+        await this._announce(
+            current => this.announceStart(current, {
+                onProgress: detail => this._setStageDetail('announce', detail),
+            }),
+            contest
+        );
+        await this._restoreStartingMarks(preset, participantIds);
+        this._log(`Starting series match ${series.matchIndex} as ${contest.id}`, {
+            stage: 'start_contest',
+        });
+        const started = await this.coordinator.startContest(contest.id);
+
+        this._setStatus(
+            'announcing-start',
+            'send_goals',
+            `Sending match ${series.matchIndex} goals (0/${participantIds.length})…`
+        );
+        let goalsSent = 0;
+        await Promise.all(participantIds.map(name =>
+            this.sendDirective(
+                name,
+                buildParticipantGameDirective(preset.prompt, participantIds, name, {
+                    contestType: preset.rules?.type ?? null,
+                    teamId: null,
+                    teammateIds: [],
+                    enemyIds: [],
+                    captainId: null,
+                    attackerId: null,
+                }),
+                {
+                    endConversations: true,
+                    gameStarted: true,
+                    automaticAction: 'play-spleef',
+                    floorY: preset.rules?.floorY,
+                }
+            ).then(result => {
+                goalsSent += 1;
+                this._setStageDetail(
+                    'send_goals',
+                    `${name} has its goal (${goalsSent}/${participantIds.length})`
+                );
+                return result;
+            })
+        ));
+
+        const runningLabel = formatSeriesLabel(this.active.series) || 'Contest running';
+        this._setStatus('running', 'running', runningLabel);
+        this._log(`Series match ${series.matchIndex} is running`, { stage: 'running' });
+        this._emit();
+        return started;
     }
 
     _describeAgentStatus(name) {

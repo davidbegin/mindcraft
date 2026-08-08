@@ -151,9 +151,14 @@ export function buildGameRecord({ id, events = [], snapshot = null, codeFindings
         };
     });
 
-    const startedAt = snapshot?.startedAt ?? ordered[0]?.at ?? null;
+    const startedAt = snapshot?.startedAt
+        ?? snapshot?.createdAt
+        ?? ordered[0]?.at
+        ?? null;
     const endedAt = snapshot?.completedAt ?? snapshot?.cancelledAt
-        ?? (ordered.length ? ordered.at(-1)?.at : null);
+        ?? (isInProgressGameStatus(snapshot?.status)
+            ? null
+            : (ordered.length ? ordered.at(-1)?.at : null));
 
     return {
         id,
@@ -181,17 +186,24 @@ export function buildGameRecord({ id, events = [], snapshot = null, codeFindings
         integrity,
         timeline: ordered,
         hasMessages: messages.length > 0,
+        series: snapshot?.metadata?.series ?? null,
     };
 }
 
 // The list screen never needs a game's transcript or its round-by-round detail,
 // so summaries drop the heavy fields.
+export function isInProgressGameStatus(status) {
+    return status === 'draft' || status === 'running' || status === 'judging';
+}
+
 export function summarizeGame(game) {
+    const inProgress = isInProgressGameStatus(game.status);
     return {
         id: game.id,
         gameId: game.gameId,
         title: game.title,
         status: game.status,
+        inProgress,
         startedAt: game.startedAt,
         endedAt: game.endedAt,
         durationMs: game.durationMs,
@@ -202,7 +214,24 @@ export function summarizeGame(game) {
         allInventoriesClean: game.allInventoriesClean,
         integrityClean: game.integrity.clean,
         integrityFlagCount: game.integrity.flags.length,
+        series: game.series
+            ? {
+                bestOf: game.series.bestOf,
+                matchIndex: game.series.matchIndex,
+                scores: game.series.scores,
+                seriesWinnerIds: game.series.seriesWinnerIds,
+            }
+            : null,
     };
+}
+
+export function compareGamesByRecency(left, right) {
+    const leftLive = isInProgressGameStatus(left.status) || left.inProgress;
+    const rightLive = isInProgressGameStatus(right.status) || right.inProgress;
+    if (leftLive !== rightLive) return leftLive ? -1 : 1;
+    const leftAt = left.startedAt ?? left.endedAt ?? 0;
+    const rightAt = right.startedAt ?? right.endedAt ?? 0;
+    return rightAt - leftAt;
 }
 
 export class ContestArchive {
@@ -326,7 +355,7 @@ export class ContestArchive {
                 snapshot,
             }));
         }
-        games.sort((left, right) => (right.startedAt ?? 0) - (left.startedAt ?? 0));
+        games.sort(compareGamesByRecency);
         this._cache = games;
         this._signature = signature;
         return games;

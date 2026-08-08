@@ -223,16 +223,30 @@ export function buildParticipantGameDirective(
     const isBaseSiege = team.contestType === 'team_base_siege';
     const isCakeRace = team.contestType === 'cake_race';
     const isSpleef = team.contestType === 'spleef';
+    const isHotButton = team.contestType === 'hot_button';
+    const isDeathRace = team.contestType === 'death_race';
     const lines = [
         presetPrompt,
         `COMPETITORS: ${participantIds.join(', ')}.`,
         'Choose a signature strategy that fits your personality and differs from the obvious default approach.',
         'Say that strategy out loud once near the start. Later, only narrate new decisions, discoveries, tradeoffs, or changes to the plan; never recycle earlier lines or talking points.',
     ];
+    if (isDeathRace) {
+        lines.push(
+            'Speed wins. Sprint to the outer rim and run off the edge now.',
+            'Use !goToCoordinates toward the barrier wall with closeness 0, or !searchForBlock("lava") to drop into the rim. Do not place or spawn anything.'
+        );
+    }
     if (isSpleef) {
         lines.push(
             `ACTIVE RIVALS: ${rivals.join(', ') || 'none'}.`,
             'The server starts !playSpleef(100) for you automatically. Keep that action running until you fall or win.'
+        );
+    } else if (isHotButton) {
+        lines.push(
+            `ACTIVE RIVALS: ${rivals.join(', ') || 'none'}.`,
+            'Walk to an unused stone button and press it. All but one station explode. Refusing to press loses at the buzzer.',
+            'The server starts !playHotButton for you automatically. Keep that action running until you explode, win, or time runs out.'
         );
     } else if (team.teamId && isCakeRace) {
         lines.push(
@@ -270,7 +284,7 @@ export function buildParticipantGameDirective(
                 : 'Never attack a teammate. Build onto the same team structure, make room for each other, and keep paths and standing room open.'
         );
     }
-    if (rivals.length > 0 && !isSpleef && !isCakeRace) {
+    if (rivals.length > 0 && !isSpleef && !isHotButton && !isCakeRace && !isDeathRace) {
         lines.push(
             `Your rivals are ${rivals.join(', ')}. Occasionally use !startConversation for a brief mind game with one of them when there is a strategic reason.`,
             'Probe, predict, bluff, misdirect, bargain, or challenge their strategy. A playful jab is fine sometimes, but do not turn every conversation into a roast.',

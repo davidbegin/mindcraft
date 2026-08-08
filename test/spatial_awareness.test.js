@@ -152,6 +152,13 @@ test('arena knowledge exposes exact boundaries and server-placed resources', () 
 
     const netherite = getArenaWorldKnowledge('netherite_race');
     assert.equal(netherite.landmarks.length, 56);
+
+    const death = getArenaWorldKnowledge('death_race');
+    assert.equal(death.zones.length, 2);
+    assert.match(death.zones[0].description, /flat grass/i);
+    assert.match(death.zones[0].description, /stone/i);
+    assert.match(death.zones[1].description, /lava/i);
+    assert.equal(death.landmarks.length, 0);
 });
 
 test('bot position context distinguishes distance, dimension, and unavailable state', () => {

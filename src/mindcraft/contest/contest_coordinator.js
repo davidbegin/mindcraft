@@ -453,6 +453,21 @@ export class ContestCoordinator {
                 }
                 return clone(contest);
             }
+            if (contest.rules?.type === 'hot_button') {
+                this._ensurePressedIds(contest);
+                if (!contest.metadata.pressedIds.includes(participantId)) {
+                    contest.metadata.pressedIds.push(participantId);
+                }
+                if (survivors.length === 1) {
+                    const winnerId = survivors[0];
+                    if (contest.metadata.pressedIds.includes(winnerId)) {
+                        await this._finalizeHotButtonWinner(contest, winnerId, now);
+                    }
+                } else if (survivors.length === 0) {
+                    await this._finalizeContest(contest, 'all-eliminated');
+                }
+                return clone(contest);
+            }
             if (survivors.length === 1) {
                 const winnerId = survivors[0];
                 contest.submissions[winnerId] = {
@@ -474,6 +489,111 @@ export class ContestCoordinator {
             }
             return clone(contest);
         });
+    }
+
+    /**
+     * Record that a Hot Button competitor pressed a station. Crowns them early
+     * when they are already the sole survivor (safe button after everyone else
+     * exploded); a lone chicken is never crowned here.
+     */
+    async markPressed(contestId, participantId, payload = {}) {
+        assertNonEmptyString(participantId, 'participantId');
+        return this._enqueue(async () => {
+            const contest = this._requireContest(contestId);
+            if (contest.status !== 'running') {
+                throw new Error('Contest is not accepting presses');
+            }
+            if (!contest.participantIds.includes(participantId)) {
+                throw new Error(`Participant is not registered: ${participantId}`);
+            }
+            if (contest.eliminations?.[participantId]) {
+                return clone(contest);
+            }
+            const now = this.clock();
+            if (now >= contest.deadlineAt) {
+                await this._finalizeContest(contest, 'deadline');
+                throw new Error('Contest deadline has passed');
+            }
+            this._ensurePressedIds(contest);
+            if (!contest.metadata.pressedIds.includes(participantId)) {
+                contest.metadata.pressedIds.push(participantId);
+                await this._commit('participant.pressed', {
+                    contestId,
+                    participantId,
+                    payload: clone(payload),
+                });
+            }
+            const survivors = contest.participantIds.filter(
+                id => !contest.eliminations?.[id]
+            );
+            if (survivors.length === 1 && survivors[0] === participantId) {
+                await this._finalizeHotButtonWinner(contest, participantId, now);
+            }
+            return clone(contest);
+        });
+    }
+
+    async noteHotButtonLayout(contestId, layout = {}) {
+        return this._enqueue(async () => {
+            const contest = this._requireContest(contestId);
+            if (!contest.metadata || typeof contest.metadata !== 'object') {
+                contest.metadata = {};
+            }
+            if (Number.isInteger(layout.safeIndex)) {
+                contest.metadata.hotButtonSafeIndex = layout.safeIndex;
+            }
+            this._ensurePressedIds(contest);
+            if (layout.seed != null) {
+                contest.metadata.hotButtonSeed = layout.seed;
+            }
+            await this._commit('hot_button.layout', {
+                contestId,
+                safeIndex: contest.metadata.hotButtonSafeIndex ?? null,
+                seed: contest.metadata.hotButtonSeed ?? null,
+            });
+            return clone(contest);
+        });
+    }
+
+    async noteSeries(contestId, series) {
+        return this._enqueue(async () => {
+            const contest = this._requireContest(contestId);
+            if (!contest.metadata || typeof contest.metadata !== 'object') {
+                contest.metadata = {};
+            }
+            contest.metadata.series = clone(series);
+            await this._commit('contest.series_updated', {
+                contestId,
+                series: clone(series),
+            });
+            return clone(contest);
+        });
+    }
+
+    _ensurePressedIds(contest) {
+        if (!contest.metadata || typeof contest.metadata !== 'object') {
+            contest.metadata = {};
+        }
+        if (!Array.isArray(contest.metadata.pressedIds)) {
+            contest.metadata.pressedIds = [];
+        }
+    }
+
+    async _finalizeHotButtonWinner(contest, winnerId, now) {
+        contest.submissions[winnerId] = {
+            participantId: winnerId,
+            payload: {
+                event: 'last_standing',
+                elapsedMs: now - contest.startedAt,
+            },
+            submittedAt: now,
+        };
+        await this._commit('winner.detected', {
+            contestId: contest.id,
+            participantId: winnerId,
+            payload: clone(contest.submissions[winnerId].payload),
+        });
+        await this._finalizeContest(contest, 'last-standing');
     }
 
     async recordDeath(contestId, participantId, payload = {}) {

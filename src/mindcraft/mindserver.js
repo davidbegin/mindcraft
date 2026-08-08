@@ -42,14 +42,22 @@ import {
     getContestGamePreset,
     getSurvivorSeasonPreset,
     launchRefusedError,
+    listBotModelLineups,
     listContestGamePresets,
     listSurvivorScenarios,
+    ALL_BOT_PERSONAS,
+    DEFAULT_BOT_MODEL_LINEUP_ID,
     safeHighlightSessionId,
     contestHasTeamSession,
+    formatCakeRaceBossbarSummary,
+    measureCakeRaceProgress,
+    resolveContestMessageTarget,
     scoreDepthRace,
     scoreSpleef,
     scoreTeamBaseSiege,
     scoreTeamFirstFinish,
+    scoreHotButton,
+    HOT_BUTTON_PRESSED_TAG,
     measureTeamTowerBattle,
     scoreTeamTowerBattle,
     scoreTowerBattle,
@@ -136,6 +144,7 @@ let survivorRooms = null;
 let survivorConversations = null;
 let towerHighScores = null;
 let liveTowerAtlas = null;
+let liveCakeAtlas = null;
 const contestArenaManager = new ContestArenaManager();
 const spectatorDirector = new SpectatorDirector({
     isContestActive: contestId => {
@@ -305,6 +314,7 @@ function emitContestUpdate(socket = io) {
             spectatorDirector: spectatorDirector.view(),
             towerHighScores: towerHighScores?.list() ?? [],
             towerAtlas: liveTowerAtlas,
+            cakeAtlas: liveCakeAtlas,
         });
     }
 }
@@ -528,6 +538,8 @@ async function ensureContest(options) {
                 },
                 prepareArena: (preset, participants, options) =>
                     contestArenaManager.prepare(preset, participants, options),
+                enforceStartingMarks: (preset, participants, options) =>
+                    contestArenaManager.enforceStartingMarks(preset, participants, options),
                 presentWinner: contest => contestArenaManager.presentWinner(contest),
                 presentResults: contest => contestArenaManager.presentResults(contest),
                 startRecording: options => contestRecordingManager.start(options),
@@ -545,6 +557,9 @@ async function ensureContest(options) {
                 announcePressureRound: options =>
                     contestAnnouncer.announcePressureRound(options),
                 announceResult: contest => contestAnnouncer.announceResult(contest),
+                announceSeriesIntermission: (series, contest) =>
+                    contestAnnouncer.announceSeriesIntermission(series, contest),
+                announceSeriesResult: series => contestAnnouncer.announceSeriesResult(series),
                 announceVisualResult: () => contestHud.sync(contestCoordinator.view()),
                 onUpdate: () => emitContestUpdate(),
                 telemetry: {
@@ -667,8 +682,10 @@ async function ensureContest(options) {
                         await Promise.all([
                             gameSessionOwnsResult ? Promise.resolve() : contestHud.sync(view),
                             refreshLiveTowerAtlas(view),
+                            refreshLiveCakeAtlas(view),
                         ]);
                         io?.emit('tower-atlas-update', liveTowerAtlas);
+                        io?.emit('cake-atlas-update', liveCakeAtlas);
                     }
                 },
                 onUpdate: async view => {
@@ -834,8 +851,14 @@ function sendGameDirective(agentRef, prompt, options = {}) {
                 react: options.react === true,
                 endConversations: options.endConversations === true,
                 // The clock is running: from here a fall or a death puts this bot
-                // out. Planning and build directives leave it false.
-                gameStarted: options.gameStarted === true,
+                // out. Planning and build directives leave it false. Series
+                // rematch prep explicitly passes false so arena rebuild falls
+                // do not eliminate anyone.
+                gameStarted: options.gameStarted === true
+                    ? true
+                    : options.gameStarted === false
+                        ? false
+                        : undefined,
                 automaticAction: options.automaticAction ?? null,
                 floorY: Number.isFinite(options.floorY) ? options.floorY : null,
                 worldKnowledge,
@@ -1092,6 +1115,97 @@ async function refreshLiveTowerAtlas(view) {
     return liveTowerAtlas;
 }
 
+async function collectCakeInventories(participantIds, { timeoutMs = 750 } = {}) {
+    const inventories = {};
+    const reporting = new Set();
+    await Promise.all(participantIds.map(async participantId => {
+        const connection = getConnection(participantId);
+        if (!connection?.socket?.connected) return;
+        const state = await new Promise(resolve => {
+            const timeout = setTimeout(() => resolve(null), timeoutMs);
+            connection.socket.emit('get-full-state', result => {
+                clearTimeout(timeout);
+                resolve(result);
+            });
+        });
+        if (!state?.inventory?.counts) return;
+        inventories[participantId] = state.inventory.counts;
+        reporting.add(participantId);
+        connection.full_state = state;
+        connection.full_state_at = Date.now();
+    }));
+    return { inventories, reporting };
+}
+
+async function refreshLiveCakeAtlas(view) {
+    const contest = view?.activeContest;
+    const isCakeRace = contest?.rules?.type === 'cake_race' && contestHasTeamSession(contest);
+    if (!contest || !isCakeRace) {
+        // Keep the last snapshot while the finished First Cake result is still
+        // the active board so operators can see how close the losing team got.
+        if (
+            liveCakeAtlas
+            && !view?.activeContest
+            && (view?.contests || []).some(item =>
+                item.id === liveCakeAtlas.contestId
+                && ['completed', 'judging', 'cancelled'].includes(item.status)
+            )
+        ) {
+            return liveCakeAtlas;
+        }
+        liveCakeAtlas = null;
+        return null;
+    }
+
+    if (!['running', 'judging', 'completed'].includes(contest.status)) {
+        liveCakeAtlas = null;
+        return null;
+    }
+
+    const gameSession = contest.metadata?.gameSession || {};
+    const { inventories, reporting } = contest.status === 'running'
+        ? await collectCakeInventories(contest.participantIds || [], { timeoutMs: 750 })
+        : {
+            inventories: liveCakeAtlas?.inventories || {},
+            reporting: new Set(),
+        };
+
+    const measured = measureCakeRaceProgress({
+        inventories,
+        teamNames: gameSession.teamNames || [],
+        teamByParticipant: gameSession.teamByParticipant || {},
+        participantIds: contest.participantIds || [],
+        ingredients: contest.rules?.ingredients,
+        winItem: contest.rules?.winItem || 'cake',
+        reportingParticipants: reporting,
+    });
+
+    liveCakeAtlas = {
+        contestId: contest.id,
+        updatedAt: Date.now(),
+        ingredients: measured.ingredients,
+        neededTotal: measured.neededTotal,
+        inventories,
+        standings: measured.teamResults.map(result => ({
+            teamName: result.teamName,
+            participantId: result.teamName,
+            rank: result.rank,
+            gathered: result.gathered,
+            needed: result.needed,
+            score: result.score,
+            hasCake: result.hasCake,
+            complete: result.complete,
+            cakes: result.cakes,
+            have: result.have,
+            ingredients: result.ingredients,
+            members: result.members,
+            reporting: result.reporting,
+        })),
+        summary: formatCakeRaceBossbarSummary(measured.teamResults),
+    };
+    return liveCakeAtlas;
+}
+
 async function getContestLeader(contest) {
     let results;
     if (contest.rules?.type === 'tower_battle') {
@@ -1116,6 +1230,8 @@ async function getContestLeader(contest) {
             .filter(result => !result.disqualified);
     } else if (contest.rules?.type === 'spleef') {
         results = scoreSpleef(contest).filter(result => !result.disqualified);
+    } else if (contest.rules?.type === 'hot_button') {
+        results = scoreHotButton(contest).filter(result => !result.disqualified);
     } else if (contest.rules?.type === 'team_base_siege') {
         const scored = scoreTeamBaseSiege(contest).filter(result => !result.disqualified);
         const byTeam = new Map();
@@ -1131,19 +1247,14 @@ async function getContestLeader(contest) {
         }
         results = [...byTeam.values()];
     } else if (contest.rules?.type === 'cake_race' && contestHasTeamSession(contest)) {
-        const scored = scoreTeamFirstFinish(contest).filter(result => !result.disqualified);
-        const byTeam = new Map();
-        for (const result of scored) {
-            const teamName = result.details?.teamName;
-            if (teamName && !byTeam.has(teamName)) {
-                byTeam.set(teamName, {
-                    participantId: teamName,
-                    score: result.score,
-                    details: result.details,
-                });
-            }
-        }
-        results = [...byTeam.values()];
+        const atlas = liveCakeAtlas?.contestId === contest.id
+            ? liveCakeAtlas
+            : await refreshLiveCakeAtlas({ activeContest: contest });
+        results = (atlas?.standings || []).map(result => ({
+            participantId: result.teamName,
+            score: result.gathered,
+            details: result,
+        }));
     } else {
         results = defaultJudge(contest).filter(result => !result.disqualified);
     }
@@ -1152,10 +1263,18 @@ async function getContestLeader(contest) {
         right.score - left.score || left.participantId.localeCompare(right.participantId)
     );
     const leaders = results.filter(result => result.score === results[0].score);
-    return {
+    const leader = {
         ...results[0],
         participantId: leaders.map(result => result.participantId).join(' & '),
     };
+    if (contest.rules?.type === 'cake_race' && liveCakeAtlas?.contestId === contest.id) {
+        leader.details = {
+            ...(leader.details || {}),
+            summary: liveCakeAtlas.summary,
+            standings: liveCakeAtlas.standings,
+        };
+    }
+    return leader;
 }
 
 async function detectDogRaceWinner(view) {
@@ -1189,6 +1308,22 @@ async function detectDogRaceWinner(view) {
  * Timed spatial games are measured from the world when the clock runs out, so
  * bots do not need to stop playing to submit a result.
  */
+async function collectHotButtonPressedTags(participantIds = []) {
+    const pressed = [];
+    for (const name of participantIds) {
+        try {
+            const output = await runMinecraftCommand(`tag ${name} list`);
+            if (String(output || '').includes(HOT_BUTTON_PRESSED_TAG)) {
+                pressed.push(name);
+            }
+        } catch {
+            // Offline or missing players just skip; scoring still uses
+            // eliminations and agent-reported presses.
+        }
+    }
+    return pressed;
+}
+
 async function judgeContest(contest) {
     if (contest.rules?.type === 'depth_race') {
         return measureDepthRace(contest);
@@ -1209,11 +1344,37 @@ async function judgeContest(contest) {
     if (contest.rules?.type === 'spleef') {
         return scoreSpleef(contest);
     }
+    if (contest.rules?.type === 'hot_button') {
+        const pressedIds = await collectHotButtonPressedTags(contest.participantIds);
+        return scoreHotButton(contest, { pressedIds });
+    }
     if (contest.rules?.type === 'team_base_siege') {
         return scoreTeamBaseSiege(contest);
     }
     if (contest.rules?.type === 'cake_race' && contestHasTeamSession(contest)) {
-        return scoreTeamFirstFinish(contest);
+        // One last pantry scan so the final standings show how close each team got.
+        await refreshLiveCakeAtlas({
+            activeContest: { ...contest, status: 'running' },
+        });
+        const progressByTeam = new Map(
+            (liveCakeAtlas?.standings || []).map(standing => [standing.teamName, standing])
+        );
+        return scoreTeamFirstFinish(contest).map(result => {
+            const progress = progressByTeam.get(result.details?.teamName);
+            if (!progress) return result;
+            return {
+                ...result,
+                details: {
+                    ...result.details,
+                    gathered: progress.gathered,
+                    needed: progress.needed,
+                    hasCake: progress.hasCake || result.score > 0,
+                    complete: progress.complete || result.score > 0,
+                    ingredients: progress.ingredients,
+                    have: progress.have,
+                },
+            };
+        });
     }
     return defaultJudge(contest);
 }
@@ -1389,6 +1550,7 @@ async function startContestGame(gameId, options = {}) {
             teamNames: options.teamNames,
             recordingEnabled: options.recordingEnabled,
             autoRecordingEnabled: options.autoRecordingEnabled,
+            bestOf: options.bestOf,
         });
         await contestHud.sync(contestCoordinator.view());
         return {
@@ -2453,8 +2615,12 @@ export function createMindServer(host_public = false, port = 8080) {
                         gameSession: gameSessionManager?.view() ?? null,
                         spectatorDirector: spectatorDirector.view(),
                         towerAtlas: liveTowerAtlas,
+                        cakeAtlas: liveCakeAtlas,
                     } : null,
                     games: listContestGamePresets(),
+                    botModelLineups: listBotModelLineups(),
+                    botPersonas: ALL_BOT_PERSONAS.map(persona => ({ ...persona })),
+                    defaultBotModelLineupId: DEFAULT_BOT_MODEL_LINEUP_ID,
                     join: getMinecraftJoinInfo(),
                     error: contestCoordinator
                         ? null
@@ -2467,7 +2633,13 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('contest-games', (callback) => {
             try {
-                callback({ success: true, games: listContestGamePresets() });
+                callback({
+                    success: true,
+                    games: listContestGamePresets(),
+                    botModelLineups: listBotModelLineups(),
+                    botPersonas: ALL_BOT_PERSONAS.map(persona => ({ ...persona })),
+                    defaultBotModelLineupId: DEFAULT_BOT_MODEL_LINEUP_ID,
+                });
             } catch (error) {
                 callback({ success: false, error: error.message });
             }
@@ -2482,6 +2654,9 @@ export function createMindServer(host_public = false, port = 8080) {
                     preset: getSurvivorSeasonPreset(),
                     scenarios: listSurvivorScenarios(),
                     games: listContestGamePresets(),
+                    botModelLineups: listBotModelLineups(),
+                    botPersonas: ALL_BOT_PERSONAS.map(persona => ({ ...persona })),
+                    defaultBotModelLineupId: DEFAULT_BOT_MODEL_LINEUP_ID,
                     join: getMinecraftJoinInfo(),
                     // Backfill for the operator feed: survivor-secret-event only
                     // reaches sockets that were connected when it happened.
@@ -2680,6 +2855,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     teamNames: request?.teamNames,
                     recordingEnabled: request?.recordingEnabled === true,
                     autoRecordingEnabled: request?.autoRecordingEnabled === true,
+                    bestOf: request?.bestOf,
                 });
                 callback({ success: true, data });
             } catch (error) {
@@ -2915,7 +3091,11 @@ export function createMindServer(host_public = false, port = 8080) {
                 if (connection.settings.game_session.contestId !== active.id) {
                     throw new Error('Game participant is not in the active contest');
                 }
-                if (active.rules?.type !== 'spleef' && active.rules?.type !== 'team_base_siege') {
+                if (
+                    active.rules?.type !== 'spleef'
+                    && active.rules?.type !== 'team_base_siege'
+                    && active.rules?.type !== 'hot_button'
+                ) {
                     throw new Error('The active contest does not support eliminations');
                 }
                 const data = await contestCoordinator.eliminate(
@@ -2954,6 +3134,51 @@ export function createMindServer(host_public = false, port = 8080) {
                 } else if (contestHud) {
                     contestHud.sync(view).catch(error => {
                         console.warn(`Could not sync Spleef HUD: ${error.message}`);
+                    });
+                }
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-button-pressed', async (request, callback) => {
+            try {
+                const connection = curAgent();
+                const active = contestCoordinator?.view()?.activeContest;
+                if (!connection?.settings?.game_session || !active) {
+                    throw new Error('Only an active game participant can report a button press');
+                }
+                if (connection.settings.game_session.contestId !== active.id) {
+                    throw new Error('Game participant is not in the active contest');
+                }
+                if (active.rules?.type !== 'hot_button') {
+                    throw new Error('The active contest does not track button presses');
+                }
+                const data = await contestCoordinator.markPressed(
+                    active.id,
+                    connection.name,
+                    {
+                        event: request?.event || 'button_pressed',
+                        position: request?.position || null,
+                        elapsedMs: Date.now() - active.startedAt,
+                    }
+                );
+                const view = contestCoordinator.view();
+                emitContestUpdate();
+                callback?.({ success: true, data });
+
+                if (!view.activeContest) {
+                    const cleanup = survivorSessionManager?.view()?.challengeContestId === active.id
+                        ? survivorSessionManager.syncContestView(view)
+                        : gameSessionManager?.view()?.contestId === active.id
+                            ? gameSessionManager.syncWithContestView(view)
+                            : contestHud.sync(view).then(() => contestRecordingManager.stop(active.id));
+                    cleanup.catch(error => {
+                        console.error(`Could not clean up completed contest ${active.id}:`, error);
+                    });
+                } else if (contestHud) {
+                    contestHud.sync(view).catch(error => {
+                        console.warn(`Could not sync Hot Button HUD: ${error.message}`);
                     });
                 }
             } catch (error) {
@@ -3304,24 +3529,35 @@ export function createMindServer(host_public = false, port = 8080) {
 
         socket.on('bot-output', (agentName, message, position = null) => {
             io.emit('bot-output', agentName, message, position);
-            // Persist every line a contestant says while a game is running, so
-            // the archive can replay who said what, when, and where they stood.
+            // Persist every line a contestant says during a game session (including
+            // draft planning) so the archive can replay who said what, when, and
+            // where they stood.
             try {
-                const activeContestId = contestCoordinator?.snapshot()?.activeContestId;
-                if (!activeContestId || typeof message !== 'string' || message.trim() === '') {
-                    return;
-                }
-                const participants = contestCoordinator
-                    .snapshot().contests[activeContestId]?.participantIds || [];
-                if (!participants.includes(agentName)) return;
-                contestCoordinator.recordGameEvent('message.said', {
-                    contestId: activeContestId,
-                    participantId: agentName,
+                if (typeof message !== 'string' || message.trim() === '') return;
+                const snapshot = contestCoordinator?.snapshot();
+                const target = resolveContestMessageTarget({
+                    agentName,
+                    activeContestId: snapshot?.activeContestId ?? null,
+                    contests: snapshot?.contests || {},
+                    gameSession: gameSessionManager?.view() ?? null,
+                });
+                if (!target) return;
+                const payload = {
+                    contestId: target.contestId,
+                    participantId: target.participantId,
                     text: message,
                     position: position || null,
+                    at: Date.now(),
+                };
+                contestCoordinator.recordGameEvent('message.said', {
+                    contestId: payload.contestId,
+                    participantId: payload.participantId,
+                    text: payload.text,
+                    position: payload.position,
                 }).catch(error => {
                     console.warn('Could not journal contest message:', error.message);
                 });
+                io.emit('contest-message', payload);
             } catch (error) {
                 console.warn('Could not journal contest message:', error.message);
             }

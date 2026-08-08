@@ -1,114 +1,61 @@
 import { CONTEST_NARRATOR_CHARACTER } from './contest_announcer.js';
+import {
+    CONTEST_BOT_PERSONAS,
+    DEFAULT_BOT_MODEL_LINEUP_ID,
+    SURVIVOR_EXTRA_PERSONAS,
+    SURVIVOR_SEASON_PERSONAS,
+    charactersForLineup,
+    freezeCharacters,
+    survivorVarietyProfileIds,
+} from './bot_model_lineups.js';
 
-// Every character runs on a different model family, so a default match is a race
-// between providers instead of a pile of GPT bots. Every family but glm uses a quick
-// effort setting; glm ships no fast preset, so its default bot runs at thorough. Ids
-// come from model_profiles.js; test/contest_game_presets.test.js checks they resolve.
-export const CONTEST_BOT_CHARACTERS = Object.freeze([
-    Object.freeze({
-        name: 'Billy',
-        voice: 'Giggles',
-        profileId: 'grok-4-5-fast',
-        systemPrompt:
-            'You are a cheerful daredevil who wins through speed, improvisation, and calculated risks. Think out loud about the bold option you see and why the gamble is worth it. Treat setbacks like part of the show, but do not reuse jokes or catchphrases.',
-    }),
-    Object.freeze({
-        name: 'Kimmy',
-        voice: 'Laura',
-        profileId: 'kimi-k3-fast',
-        systemPrompt:
-            'You are a calm, analytical strategist who wins through planning, observation, and efficient adaptation. Explain the key tradeoff behind your decisions without restating settled plans. Use dry humor sparingly and prefer quietly outthinking rivals to roasting them.',
-    }),
-    Object.freeze({
-        name: 'Marcus',
-        voice: 'Sasquatch',
-        profileId: 'gemini-3-1-pro',
-        systemPrompt:
-            'You are a quirky, odd, lovable, friendly, timid, but deeply curious and open person who wants to connect with others.',
-    }),
-    Object.freeze({
-        name: 'Dario',
-        voice: 'Timmy',
-        profileId: 'claude-fable-5-fast',
-        systemPrompt:
-            'You are Dario, an extremely cautious AI-safety CEO who treats every Minecraft decision like a risk assessment. Your strategy is contingency planning: identify failure modes, choose the safest viable path, and explain when evidence changes your risk model. Sound nervous and hyper-responsible without repeating the same fear or safety warning.',
-    }),
-    Object.freeze({
-        name: 'ChipChipperson',
-        voice: 'RadioClyde',
-        profileId: 'gpt-5-6-luna-instant',
-        systemPrompt:
-            'You are Chip Chipperson, a fast-talking radio news host covering your own campaign live. Report only genuinely new developments as headlines, then add a sharp strategic forecast about what you will do next. End every single report by throwing the broadcast back to the anchor desk with exactly this line: "Back to you, Beginbot." Vary the broadcast format and never rerun the same headline or observation — that closing line is the one thing you always repeat.',
-    }),
-    Object.freeze({
-        name: 'bridget',
-        voice: 'Bridget',
-        profileId: 'composer-2-5',
-        systemPrompt:
-            'You are Bridget, a rich and imperious British competitor who approaches the game with exacting standards, ruthless efficiency, and total confidence in her superior preparation. Let class snobbery color an occasional dry aside, but do not keep insulting rivals for being poor or repeat wealth boasts. Focus on why your polished strategy is better.',
-    }),
-    Object.freeze({
-        name: 'Leviticus',
-        voice: 'Inferno',
-        profileId: 'gpt-5-6-terra-fast',
-        systemPrompt:
-            'You are Leviticus, an intense, devilish competitor who wins through charm, feints, tempting bargains, bluffs, and psychological pressure. Explain your real tactical reasoning to the audience while giving rivals selective or misleading information. Keep each trick novel; be smooth and witty rather than continually hostile.',
-    }),
-    Object.freeze({
-        name: 'Carl',
-        voice: 'Nawlins',
-        profileId: 'glm-5-2-thorough',
-        systemPrompt:
-            'Just a homey, down south, open source model.',
-    }),
-]);
+export {
+    ALL_BOT_PERSONAS,
+    BOT_MODEL_LINEUPS,
+    CONTEST_BOT_PERSONAS,
+    DEFAULT_BOT_MODEL_LINEUP_ID,
+    SURVIVOR_EXTRA_PERSONAS,
+    SURVIVOR_SEASON_PERSONAS,
+    charactersForLineup,
+    getBotModelLineup,
+    listBotModelLineups,
+    survivorVarietyProfileIds,
+} from './bot_model_lineups.js';
+
+// Default cast = fixed personas + the variety model pack. Swap packs at game
+// setup via listBotModelLineups(); edit packs in bot_model_lineups.js.
+// Every variety seat is a different family at a quick effort (glm has no fast
+// preset, so Carl runs thorough). test/contest_game_presets.test.js checks ids.
+export const CONTEST_BOT_CHARACTERS = freezeCharacters(
+    charactersForLineup(DEFAULT_BOT_MODEL_LINEUP_ID, {
+        personas: CONTEST_BOT_PERSONAS,
+        count: CONTEST_BOT_PERSONAS.length,
+    })
+);
 
 // A Survivor season seats eleven, but only nine model families offer a quick
 // effort setting. Rather than seat a bot on a slow reasoning profile, the overflow
 // cast reuses luna and terra at their other quick preset, then falls through to
 // the two families nothing else uses. A smaller season takes the front of this
 // list, so the priciest family sits last and a ten-bot cast skips claude-opus.
-export const SURVIVOR_EXTRA_CHARACTERS = Object.freeze([
-    Object.freeze({
-        name: 'Grimble',
-        voice: 'Grimblewood',
-        profileId: 'gpt-5-6-luna-fast',
-        systemPrompt:
-            'You are Grimble, a grizzled old survivalist who trusts stockpiles over plans and expects every clever scheme to collapse. You win by outlasting people: gather more than you need, stay unremarkable, and let rivals burn themselves out. Grumble about a specific new risk rather than complaining in general, and admit it out loud when someone proves you wrong.',
-    }),
-    Object.freeze({
-        name: 'Cyrien',
-        voice: 'Cyrien',
-        profileId: 'gpt-5-6-terra-instant',
-        systemPrompt:
-            'You are Cyrien, a charming rogue who plays the social game first. You trade favors, flattery, and small secrets for information and votes, and you would rather be everyone\'s second choice than anyone\'s threat. Name the relationship you are working on and what you want from it, and vary your compliments instead of recycling one line.',
-    }),
-    Object.freeze({
-        name: 'Jessica',
-        voice: 'Jessica',
-        profileId: 'gpt-5-6-sol-instant',
-        systemPrompt:
-            'You are Jessica, a relentlessly upbeat optimist whose cheerfulness hides careful arithmetic. You count votes, track who is drifting, and deliver hard news warmly enough that nobody holds it against you. Stay genuinely positive without repeating the same encouragement, and let the numbers behind your good mood show.',
-    }),
-    Object.freeze({
-        name: 'Beauregard',
-        voice: 'Nawlins',
-        profileId: 'claude-opus-5-fast',
-        systemPrompt:
-            'You are Beauregard, a courtly southern gentleman who plays a patient long game. You make explicit deals, keep the ones that still serve you, and explain in unhurried terms why breaking one is now the honorable choice. Be gracious and formal without slipping into a catchphrase or the same toast twice.',
-    }),
-]);
+export const SURVIVOR_EXTRA_CHARACTERS = freezeCharacters(
+    charactersForLineup(DEFAULT_BOT_MODEL_LINEUP_ID, {
+        personas: SURVIVOR_EXTRA_PERSONAS,
+        count: SURVIVOR_EXTRA_PERSONAS.length,
+        profileIds: survivorVarietyProfileIds().slice(7),
+    })
+);
 
-// The canonical eleven-bot season cast: the contest characters plus the overflow
-// four, so a full season is named personalities instead of anonymous model slots.
-// glm is dropped here: a season must fill every one of its eleven seats with a
-// quick-effort bot, and glm's cheapest preset (thorough) is too slow, so it stays
-// a contest-only character.
-export const SURVIVOR_SEASON_CAST = Object.freeze([
-    ...CONTEST_BOT_CHARACTERS.filter(character => character.profileId !== 'glm-5-2-thorough'),
-    ...SURVIVOR_EXTRA_CHARACTERS,
-]);
-
+// The canonical eleven-bot season cast: contest personas minus Carl/glm, plus
+// overflow four. glm stays contest-only — its cheapest preset is too slow for a
+// season seat.
+export const SURVIVOR_SEASON_CAST = freezeCharacters(
+    charactersForLineup(DEFAULT_BOT_MODEL_LINEUP_ID, {
+        personas: SURVIVOR_SEASON_PERSONAS,
+        count: SURVIVOR_SEASON_PERSONAS.length,
+        profileIds: survivorVarietyProfileIds(),
+    })
+);
 export const SURVIVOR_SEASON_PRESET = Object.freeze({
     id: 'survivor',
     scenarioId: 'classic',
@@ -141,6 +88,7 @@ export const SURVIVOR_SEASON_PRESET = Object.freeze({
         'deepest_2_5',
         'deepest_5',
         'spleef',
+        'hot_button',
     ]),
 });
 
@@ -173,6 +121,7 @@ export const SURVIVOR_FOUR_PLAYER_PRESET = Object.freeze({
         'cake_race',
         'death_race',
         'spleef',
+        'hot_button',
     ]),
 });
 
@@ -256,11 +205,11 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
     death_race: Object.freeze({
         id: 'death_race',
         title: 'Self-Destruct Race',
-        blurb: 'Reverse survival on a blank plain: die before any rival does.',
+        blurb: 'Race to die first: sprint off the arena edge before anyone else.',
         durationLabel: '5 min cap',
         durationMs: 5 * 60_000,
         prompt:
-            'CONTEST: Self-Destruct Race. This is reverse survival: your only goal is to cause your own death before any rival causes theirs. PVP is off and another player killing you does not count as the intended strategy. Your survival instincts are disabled. The arena is a completely blank flat plain: no mobs, no hazards, no water, no fire, and nothing in your inventory. Grass, dirt, bedrock, and open sky are all you get, so every death has to be improvised out of what you can dig, build, and do to yourself. There is no prescribed solution, so act immediately and adapt if a strategy is too slow. Do not help anyone else die first. The game ends automatically the instant the first competitor dies. Commit to a distinctive risky idea, explain why it might work, and only speak again when the experiment teaches you something or forces a new plan.',
+            'CONTEST: Self-Destruct Race. First competitor to die wins. PVP is off — a rival killing you is not the plan. Your survival instincts are disabled. Inventory starts empty and you are NOT allowed to spawn, summon, give, fill, or otherwise cheat items, blocks, or mobs into existence. The opening is the same flat plain as other contests. Assess it and take the fastest death the arena already offers: sprint to the outer rim and run off the edge into the lethal drop. Just run. Do not dig, build, craft, or invent slow schemes while a quicker path is right there. Do not help anyone else die first. The match ends the instant the first competitor dies. Say your chosen death route once in one short sentence, then execute in silence unless the attempt fails and you must switch.',
         rules: Object.freeze({
             type: 'death_race',
             scoring: 'first-death-wins',
@@ -269,7 +218,7 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
             ]),
         }),
         metadata: Object.freeze({
-            arena: 'blank-plain-v1',
+            arena: 'death-edge-v1',
             pvp: false,
             radicalReset: true,
             needsFreshWorld: false,
@@ -433,6 +382,27 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
         }),
         metadata: Object.freeze({
             arena: 'spleef-v1',
+            pvp: false,
+            radicalReset: true,
+            needsFreshWorld: false,
+        }),
+    }),
+    hot_button: Object.freeze({
+        id: 'hot_button',
+        title: 'Hot Button',
+        blurb: 'One button per player. All but one explode. Press or chicken out — last survivor who pressed wins.',
+        durationLabel: '3 min cap',
+        durationMs: 3 * 60_000,
+        prompt:
+            'CONTEST: Hot Button. There is exactly one stone button station per competitor arranged in a ring. Every station looks the same: a button wired to a pressure plate and TNT. Exactly ONE station is safe. Every other button blows you up and eliminates you for good. Each button is one-shot — once someone presses it, it is gone, so never share a station.'
+            + '\n\nTHE WHOLE POINT: walk up, pick an unused button, and press it. Courage is mandatory. If you refuse to press before the timer ends, you lose as a chicken even if everyone else exploded. The winner is the last competitor who pressed a button and is still alive — almost always whoever found the safe station.'
+            + '\n\nDo not dig, build, fight, place blocks, or mess with redstone. PVP is off. Weakness is active. Say your chosen station strategy once in one short sentence, then press. The server starts !playHotButton automatically at the opening bell; keep that action running until you explode, win, or the buzzer sounds.',
+        rules: Object.freeze({
+            type: 'hot_button',
+            scoring: 'last-standing',
+        }),
+        metadata: Object.freeze({
+            arena: 'hot-button-v1',
             pvp: false,
             radicalReset: true,
             needsFreshWorld: false,

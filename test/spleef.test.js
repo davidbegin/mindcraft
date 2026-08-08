@@ -94,15 +94,59 @@ test('repairs the Spleef platform last and starts every player in a wide circle'
         .filter(command => command.startsWith('tp '));
     assert.equal(teleports.length, participants.length);
 
+    // The platform spans center ± 32 with a barrier wall on the perimeter, so the
+    // ring is pushed right out to the lip of the course: radius 30, two blocks off
+    // the wall, far wider than a timid huddle near the center.
     for (const command of teleports) {
         const [, , x, y, z] = command.split(' ');
         assert.equal(Number(y), 101);
         assert.ok(
-            Math.abs(Math.hypot(Number(x) - 100000, Number(z) - 100000) - 24) < 0.75,
+            Math.abs(Math.hypot(Number(x) - 100000, Number(z) - 100000) - 30) < 0.75,
             `Spleef spawn is not on the wide starting circle: ${command}`
+        );
+        assert.ok(
+            Math.abs(Number(x) - 100000) <= 30 && Math.abs(Number(z) - 100000) <= 30,
+            `Spleef spawn is off the snow course or in the wall: ${command}`
         );
     }
     assert.equal(new Set(teleports).size, participants.length);
+});
+
+test('the Spleef ring scales to the cast and spreads them as far as the course allows', () => {
+    const center = 100000;
+    // Points evenly spaced on a ring of radius R sit 2*R*sin(PI/N) apart, so the
+    // spacing has to change with the head count while the ring hugs the platform.
+    for (const count of [2, 3, 5, 8, 12]) {
+        const participants = Array.from({ length: count }, (_, index) => `bot${index}`);
+        const spots = participantSpawnPositions('spleef', participants);
+        assert.equal(spots.size, count);
+
+        const points = participants.map(name => spots.get(name));
+        for (const point of points) {
+            assert.equal(point.y, 101, 'a Spleef player did not start on the top snow layer');
+            assert.ok(
+                Math.abs(Math.hypot(point.x - center, point.z - center) - 30) < 0.75,
+                `count ${count}: a player is not on the course-edge ring`
+            );
+        }
+
+        // Every nearest-neighbour gap matches the ideal even spacing, so nobody is
+        // bunched up: the cast is spread as far apart as a radius-30 ring permits.
+        const expectedGap = 2 * 30 * Math.sin(Math.PI / count);
+        let closest = Infinity;
+        for (let i = 0; i < points.length; i += 1) {
+            for (let j = i + 1; j < points.length; j += 1) {
+                closest = Math.min(
+                    closest,
+                    Math.hypot(points[i].x - points[j].x, points[i].z - points[j].z)
+                );
+            }
+        }
+        assert.ok(
+            Math.abs(closest - expectedGap) < 2,
+            `count ${count}: closest pair ${closest.toFixed(1)} is not the even-spacing ideal ${expectedGap.toFixed(1)}`
+        );
+    }
 });
 
 test('every Spleef round rebuilds the arena before anyone is teleported onto it', async () => {
@@ -149,10 +193,68 @@ test('every Spleef round rebuilds the arena before anyone is teleported onto it'
     }
 });
 
+test('a cast the teleport rig never moved is still forced into the ring', async () => {
+    // The rig silently did nothing. Because the arena rebuild lays fresh snow
+    // under everyone, all four bots read as standing on the top layer at y=101 —
+    // they are simply scattered wherever the previous round left them. Altitude
+    // alone must not be mistaken for a starting ring.
+    const participants = ['alice', 'bob', 'chip', 'dana'];
+    const positions = new Map([
+        ['alice', { x: 100003, y: 101, z: 100001 }],
+        ['bob', { x: 100004, y: 101, z: 99998 }],
+        ['chip', { x: 99996, y: 101, z: 100002 }],
+        ['dana', { x: 100001, y: 101, z: 100005 }],
+    ]);
+    const teleported = [];
+    const audits = await verifyParticipantPlacement(
+        command => {
+            if (command.startsWith('tp ')) {
+                const [, name, x, y, z] = command.split(' ');
+                positions.set(name, { x: Number(x), y: Number(y), z: Number(z) });
+                teleported.push(name);
+                return 'ok';
+            }
+            const name = command.split(' ')[3];
+            const { x, y, z } = positions.get(name);
+            return `${name} has the following entity data: [${x}.0d, ${y}.0d, ${z}.0d]`;
+        },
+        'spleef',
+        participants
+    );
+
+    assert.deepEqual(teleported, participants, 'every unmoved bot should be put on its mark');
+    for (const audit of audits) {
+        assert.equal(audit.atAssignedSpot, true, `${audit.participantId} never reached its mark`);
+    }
+
+    const points = participants.map(name => positions.get(name));
+    for (const point of points) {
+        assert.equal(point.y, 101);
+        assert.ok(
+            Math.abs(Math.hypot(point.x - 100000, point.z - 100000) - 30) < 0.75,
+            'a recovered bot is not on the course-edge ring'
+        );
+    }
+    // Four bots on a radius-30 ring sit 2*30*sin(PI/4) apart, equally spaced.
+    let closest = Infinity;
+    for (let i = 0; i < points.length; i += 1) {
+        for (let j = i + 1; j < points.length; j += 1) {
+            closest = Math.min(
+                closest,
+                Math.hypot(points[i].x - points[j].x, points[i].z - points[j].z)
+            );
+        }
+    }
+    assert.ok(
+        Math.abs(closest - 2 * 30 * Math.sin(Math.PI / 4)) < 2,
+        `recovered cast is not evenly spaced: closest pair ${closest.toFixed(1)}`
+    );
+});
+
 test('a player the teleport rig missed is put back on the top layer', async () => {
     const commands = [];
     const positions = new Map([
-        ['alice', { x: 100024, y: 101, z: 100000 }],
+        ['alice', { x: 100030, y: 101, z: 100000 }],
         // The chain skipped bob, so he is still standing where he logged in.
         ['bob', { x: 99990, y: 71, z: 100010 }],
     ]);
@@ -181,7 +283,7 @@ test('a player the teleport rig missed is put back on the top layer', async () =
     assert.equal(bob.onTopLayer, true);
     assert.equal(bob.actual.y, 101);
     assert.ok(
-        Math.abs(Math.hypot(bob.actual.x - 100000, bob.actual.z - 100000) - 24) < 0.75,
+        Math.abs(Math.hypot(bob.actual.x - 100000, bob.actual.z - 100000) - 30) < 0.75,
         'the recovered bot was not returned to the wide starting circle'
     );
     assert.equal(

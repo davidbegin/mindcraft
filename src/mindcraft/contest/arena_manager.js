@@ -1,6 +1,7 @@
 import { runMinecraftCommand } from '../minecraft_server.js';
 import { modelInfo } from '../skins.js';
 import { buildDogRaceResetCommand } from './dog_race.js';
+import { HOT_BUTTON_PRESSED_TAG, pickHotButtonSafeIndex } from './hot_button.js';
 import { diffAgainstKit, parseInventory } from './inventory_audit.js';
 
 const ARENA = Object.freeze({
@@ -33,6 +34,21 @@ const DOG_ARENA = Object.freeze({
     moundExtent: 5,
     pondExtent: 4,
     treeExtent: 2,
+});
+
+// Same flat opening as other games. Only a thin outer rim drops into lava so
+// sprinting to the arena edge is lethal. No free water pool, no mobs, no kit.
+const DEATH_RACE = Object.freeze({
+    rimWidth: 2,
+    pitBottomY: ARENA.floorY - 28,
+});
+
+// Hot Button seats pedestals on an inner ring; bots spawn on a wider ring so
+// they walk inward toward an unused station.
+const HOT_BUTTON = Object.freeze({
+    stationRadius: 10,
+    spawnRadius: 18,
+    pressedTag: HOT_BUTTON_PRESSED_TAG,
 });
 
 const CAKE_FARM_STATIONS = Object.freeze([
@@ -93,6 +109,22 @@ const PROGRESS_COMMAND_INTERVAL = 25;
 // "did the teleport land?" and "is this bot still in the game?" are the same
 // question.
 const TOP_LAYER_Y = ARENA.floorY + 1;
+
+// Spleef seats its whole cast on one ring pushed out to the lip of the snow
+// course so nobody starts bunched up. This is the gap kept between that ring and
+// the barrier wall that encloses the platform, so no bot spawns inside the wall.
+const SPLEEF_RING_WALL_MARGIN = 2;
+
+/**
+ * The largest starting circle the Spleef course allows. N players spaced evenly
+ * on a ring of radius R sit `2 * R * sin(PI / N)` apart, so the only way to push
+ * them farther from each other is to push the ring outward — right up to the
+ * platform edge, minus a small margin off the wall. The player count sets the
+ * spacing; the course size sets how big that ring can be.
+ */
+function spleefStartRadius(halfSize = ARENA.halfSize) {
+    return Math.max(1, halfSize - SPLEEF_RING_WALL_MARGIN);
+}
 
 const DEPTH_RACE_KIT = Object.freeze([
     'diamond_pickaxe 1',
@@ -169,6 +201,7 @@ const GAME_KITS = Object.freeze({
         'diamond_shovel 1',
         'bread 16',
     ]),
+    hot_button: Object.freeze([]),
     deepest_2_5: DEPTH_RACE_KIT,
     deepest_5: DEPTH_RACE_KIT,
 });
@@ -272,6 +305,22 @@ export function getArenaWorldKnowledge(gameId, options = {}) {
             label: 'Spleef floor',
             description: `snow blocks at y ${ARENA.floorY}; water from y ${ARENA.floorY - 7} through ${ARENA.floorY - 1}`,
         }];
+    } else if (gameId === 'death_race') {
+        knowledge.zones = [
+            {
+                label: 'Opening plain',
+                description: `same flat grass floor as other contests, within ${ARENA.halfSize - DEATH_RACE.rimWidth} blocks of center; solid stone underneath`,
+            },
+            {
+                label: 'Lethal rim',
+                description: `the outer ${DEATH_RACE.rimWidth} blocks before the barrier wall — floor is gone, ~${ARENA.floorY - DEATH_RACE.pitBottomY}-block drop into lava`,
+            },
+        ];
+    } else if (gameId === 'hot_button') {
+        knowledge.zones = [{
+            label: 'Hot Button ring',
+            description: `${HOT_BUTTON.stationRadius}-block ring of button stations (one per competitor); exactly one is safe, the rest explode`,
+        }];
     }
     return knowledge;
 }
@@ -366,6 +415,45 @@ function flatFloorCommands({ minX, maxX, minZ, maxZ }) {
         `fill ${minX} ${ARENA.floorY} ${minZ} `
         + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`,
     ];
+}
+
+/**
+ * Carve a thin lava moat against the barrier walls. The opening plain stays
+ * the same full flat grass floor as every other contest — no free hazards
+ * planted in the middle.
+ */
+function addDeathRaceHazards(commands, bounds) {
+    const x = ARENA.centerX;
+    const z = ARENA.centerZ;
+    const p = ARENA.halfSize - DEATH_RACE.rimWidth;
+    const pitBottom = DEATH_RACE.pitBottomY;
+    const strips = [
+        {
+            minX: bounds.minX, maxX: bounds.maxX,
+            minZ: z + p + 1, maxZ: bounds.maxZ,
+        },
+        {
+            minX: bounds.minX, maxX: bounds.maxX,
+            minZ: bounds.minZ, maxZ: z - p - 1,
+        },
+        {
+            minX: x + p + 1, maxX: bounds.maxX,
+            minZ: z - p, maxZ: z + p,
+        },
+        {
+            minX: bounds.minX, maxX: x - p - 1,
+            minZ: z - p, maxZ: z + p,
+        },
+    ];
+    for (const strip of strips) {
+        if (strip.minX > strip.maxX || strip.minZ > strip.maxZ) continue;
+        commands.push(
+            `fill ${strip.minX} ${pitBottom} ${strip.minZ} `
+            + `${strip.maxX} ${ARENA.floorY} ${strip.maxZ} air`,
+            `fill ${strip.minX} ${pitBottom} ${strip.minZ} `
+            + `${strip.maxX} ${pitBottom} ${strip.maxZ} lava`
+        );
+    }
 }
 
 function spawnPositions(participantCount, maxRadius = 22, minRadius = 8) {
@@ -522,6 +610,98 @@ function addCakeFarm(commands) {
     }
 }
 
+function outwardFacing(dx, dz) {
+    if (Math.abs(dx) >= Math.abs(dz)) {
+        return dx >= 0 ? 'east' : 'west';
+    }
+    return dz >= 0 ? 'south' : 'north';
+}
+
+function facingOffset(facing) {
+    switch (facing) {
+        case 'east': return { x: 1, z: 0 };
+        case 'west': return { x: -1, z: 0 };
+        case 'south': return { x: 0, z: 1 };
+        case 'north': return { x: 0, z: -1 };
+        default: {
+            const _exhaustive = facing;
+            void _exhaustive;
+            return { x: 0, z: -1 };
+        }
+    }
+}
+
+/**
+ * Ring of one-shot button stations. Each has a visible button → redstone →
+ * pressure-plate gag; bad stations also show TNT. An impulse command block
+ * under the pedestal tags (and for bad stations explodes) the presser, then
+ * clears the button so the station cannot be reused.
+ */
+export function hotButtonStationLayout(participantCount, seed = 1) {
+    const count = Math.max(1, Math.floor(participantCount) || 1);
+    const safeIndex = pickHotButtonSafeIndex(count, seed);
+    const stations = [];
+    for (let index = 0; index < count; index += 1) {
+        const angle = (index / count) * Math.PI * 2;
+        const dx = Math.cos(angle);
+        const dz = Math.sin(angle);
+        const x = Math.round(ARENA.centerX + dx * HOT_BUTTON.stationRadius);
+        const z = Math.round(ARENA.centerZ + dz * HOT_BUTTON.stationRadius);
+        const facing = outwardFacing(dx, dz);
+        const out = facingOffset(facing);
+        stations.push({
+            index,
+            safe: index === safeIndex,
+            x,
+            z,
+            facing,
+            buttonX: x + out.x,
+            buttonY: ARENA.floorY + 1,
+            buttonZ: z + out.z,
+            plateX: x + out.x * 2,
+            plateZ: z + out.z * 2,
+            tntX: x + out.x * 2,
+            tntZ: z + out.z * 2,
+        });
+    }
+    return { safeIndex, stations };
+}
+
+export function addHotButtonStations(commands, participantCount, seed = 1) {
+    const { safeIndex, stations } = hotButtonStationLayout(participantCount, seed);
+    commands.push(`tag @a remove ${HOT_BUTTON.pressedTag}`);
+    for (const station of stations) {
+        const { x, z, facing, buttonX, buttonY, buttonZ, plateX, plateZ, tntX, tntZ, safe } = station;
+        const pedestalY = ARENA.floorY + 1;
+        const cbY = ARENA.floorY;
+        commands.push(
+            `setblock ${x} ${pedestalY} ${z} stone`,
+            `setblock ${buttonX} ${buttonY} ${buttonZ} stone_button[face=wall,facing=${facing}]`,
+            `setblock ${x + facingOffset(facing).x} ${ARENA.floorY} ${z + facingOffset(facing).z} redstone_wire`,
+            `setblock ${plateX} ${ARENA.floorY} ${plateZ} stone`,
+            `setblock ${plateX} ${pedestalY} ${plateZ} stone_pressure_plate`
+        );
+        if (!safe) {
+            commands.push(`setblock ${tntX} ${ARENA.floorY - 1} ${tntZ} tnt`);
+        }
+        const clearButton = `setblock ${buttonX} ${buttonY} ${buttonZ} air`;
+        const tagCommand = `execute as @p[x=${x},y=${ARENA.floorY},z=${z},distance=..5,limit=1,sort=nearest] run tag @s add ${HOT_BUTTON.pressedTag}`;
+        const boomCommand = `execute as @p[x=${x},y=${ARENA.floorY},z=${z},distance=..5,limit=1,sort=nearest] at @s run summon tnt ~ ~ ~ {Fuse:12}`;
+        // Impulse under the pedestal; button on the face powers the stone above,
+        // which powers this block. Chain blocks finish the one-shot + boom.
+        commands.push(
+            `setblock ${x} ${cbY} ${z} command_block{Command:${JSON.stringify(tagCommand)},auto:0b}`,
+            `setblock ${x} ${cbY - 1} ${z} chain_command_block[facing=down]{Command:${JSON.stringify(safe ? clearButton : boomCommand)},auto:1b}`
+        );
+        if (!safe) {
+            commands.push(
+                `setblock ${x} ${cbY - 2} ${z} chain_command_block[facing=down]{Command:${JSON.stringify(clearButton)},auto:1b}`
+            );
+        }
+    }
+    return { safeIndex, stations };
+}
+
 function buildWorldResetCommands(gameId, options = {}) {
     const minX = ARENA.centerX - ARENA.halfSize;
     const maxX = ARENA.centerX + ARENA.halfSize;
@@ -669,12 +849,24 @@ function buildWorldResetCommands(gameId, options = {}) {
             );
         }
     } else if (gameId === 'death_race') {
-        // Nothing but the plain itself: every death has to be improvised.
+        // Same grass opening as other contests, but solid stone underneath so a
+        // prior Spleef water pit cannot linger under the stage. No mobs, no kit.
         commands.push(
             'gamerule doMobSpawning false',
-            'difficulty normal',
-            ...flatFloorCommands(bounds)
+            'difficulty normal'
         );
+        fillLayers(
+            commands,
+            bounds,
+            DEATH_RACE.pitBottomY,
+            ARENA.floorY - 1,
+            'stone'
+        );
+        commands.push(
+            `fill ${minX} ${ARENA.floorY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
+        );
+        addDeathRaceHazards(commands, bounds);
     } else if (gameId === 'spleef') {
         const pitBottomY = ARENA.floorY - 8;
         commands.push(
@@ -685,6 +877,18 @@ function buildWorldResetCommands(gameId, options = {}) {
             `fill ${minX} ${pitBottomY + 1} ${minZ} `
             + `${maxX} ${ARENA.floorY - 1} ${maxZ} water`
         );
+    } else if (gameId === 'hot_button') {
+        const participantCount = Math.max(
+            1,
+            Math.floor(options.participantCount) || 1
+        );
+        const seed = options.seed ?? randomSeed();
+        commands.push(
+            'gamerule doMobSpawning false',
+            'difficulty peaceful',
+            ...flatFloorCommands(bounds)
+        );
+        addHotButtonStations(commands, participantCount, seed);
     } else {
         commands.push(...flatFloorCommands(bounds));
     }
@@ -820,18 +1024,21 @@ export function buildContestTeamCommands(participants, options = {}) {
  * from here, so a bot can never be graded against a spot it was never sent to.
  */
 export function participantSpawnPositions(gameId, participants, options = {}) {
-    // Dog racers start inside the wilderness ring. Spleef players always use
-    // a wide circle, even with a small cast, so nobody begins clustered at the
-    // center of the freshly repaired platform.
+    // Dog racers start inside the wilderness ring. Spleef seats the whole cast on
+    // the widest ring the course allows so they open as far from each other as
+    // possible — the count decides the spacing, the platform decides the radius.
+    // Hot Button spawns outside the station ring so bots walk inward to press.
     const spawnRadius = gameId === 'dog_race'
         ? DOG_ARENA.plainRadius - 3
         : gameId === 'spleef'
-            ? ARENA.halfSize - 8
-            : undefined;
+            ? spleefStartRadius(options.halfSize)
+            : gameId === 'hot_button'
+                ? HOT_BUTTON.spawnRadius
+                : undefined;
     const positions = spawnPositions(
         participants.length,
         spawnRadius,
-        gameId === 'spleef' ? spawnRadius : undefined
+        gameId === 'spleef' || gameId === 'hot_button' ? spawnRadius : undefined
     );
     const teamPositions = isTeamArenaGame(gameId)
         ? teamSpawnPositions(participants, options.teamNames || [], options.teamByParticipant || {}, options.halfSize)
@@ -867,6 +1074,9 @@ function buildParticipantCommands(gameId, participants, options = {}) {
             commands.push(`effect give ${name} weakness infinite 255 true`);
         }
         if (gameId === 'spleef') {
+            commands.push(`effect give ${name} weakness infinite 255 true`);
+        }
+        if (gameId === 'hot_button') {
             commands.push(`effect give ${name} weakness infinite 255 true`);
         }
         for (const item of GAME_KITS[gameId] || []) {
@@ -934,15 +1144,41 @@ function onTopLayer(position) {
     return position.y >= TOP_LAYER_Y - 0.1 && position.y < TOP_LAYER_Y + 1;
 }
 
+// How far a bot may sit from the spot it was sent to before the placement audit
+// drags it back. A teleport lands dead on its coordinates, so anything past a
+// couple of blocks means the bot was never moved rather than that it jittered.
+const SPAWN_DRIFT_TOLERANCE = 2;
+
 /**
- * Prove — and, if needed, repair — that every contestant is standing on the
- * arena's top layer before the opening bell. The starting teleport fires through
- * a command-block rig that is torn down on the same tick, so a dropped link in
- * that chain leaves a bot wherever it logged in with nothing to report it. In
- * Spleef that is the difference between starting on the snow and starting in the
- * water pit, which is an instant elimination. Reads every position back over
- * RCON, re-teleports anyone off the floor once, and re-reads. Returns one audit
- * per participant so a launch can journal that the whole cast started level.
+ * Grade one bot against the exact block it was assigned. Standing on the top
+ * layer is necessary but nowhere near sufficient: the arena rebuild lays fresh
+ * floor under everybody, so a cast that was never teleported still reads as
+ * "on the floor" while being scattered anywhere across the course. The starting
+ * ring only exists if each bot is also at its own coordinates.
+ */
+function gradePlacement(actual, expected) {
+    if (!actual) return { onTopLayer: false, atAssignedSpot: false, drift: null };
+    const layer = onTopLayer(actual);
+    const drift = Math.hypot(actual.x - expected.x, actual.z - expected.z);
+    return {
+        onTopLayer: layer,
+        atAssignedSpot: layer && drift <= SPAWN_DRIFT_TOLERANCE,
+        drift,
+    };
+}
+
+/**
+ * Prove — and, if needed, repair — that every contestant is standing on the exact
+ * block it was assigned before the opening bell, so the starting ring is real
+ * rather than assumed. The starting teleport fires through a command-block rig
+ * that is torn down on the same tick; if that rig does not run, nothing else
+ * reports it, and because the arena rebuild lays fresh floor under everyone the
+ * whole cast still looks like it is standing correctly while actually being
+ * scattered wherever the previous round left it. Reads every position back over
+ * RCON, teleports anyone off their mark directly (not through the rig, so it
+ * works even when the rig is the thing that failed), and re-reads to confirm.
+ * Returns one audit per participant so a launch can journal that the field
+ * really did start evenly spaced.
  */
 export async function verifyParticipantPlacement(runCommand, gameId, participants, options = {}) {
     const run = runCommand || runMinecraftCommand;
@@ -953,17 +1189,21 @@ export async function verifyParticipantPlacement(runCommand, gameId, participant
         assertPlayerName(name);
         const expected = assigned.get(name);
         let actual = parsePlayerPosition(await run(`data get entity ${name} Pos`));
+        let placement = gradePlacement(actual, expected);
         let repaired = false;
-        if (!onTopLayer(actual) && allowRepair) {
+        if (!placement.atAssignedSpot && allowRepair) {
             await run(`tp ${name} ${expected.x} ${expected.y} ${expected.z}`);
             repaired = true;
             actual = parsePlayerPosition(await run(`data get entity ${name} Pos`));
+            placement = gradePlacement(actual, expected);
         }
         audits.push({
             participantId: name,
             expected,
             actual,
-            onTopLayer: onTopLayer(actual),
+            onTopLayer: placement.onTopLayer,
+            atAssignedSpot: placement.atAssignedSpot,
+            drift: placement.drift,
             repaired,
         });
     }
@@ -1234,7 +1474,13 @@ export class ContestArenaManager {
         // a running count instead of one unchanging line.
         const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
         const seed = options.seed ?? randomSeed();
-        const worldCommands = buildWorldResetCommands(preset.id, { seed });
+        const worldCommands = buildWorldResetCommands(preset.id, {
+            seed,
+            participantCount: participants.length,
+        });
+        const hotButtonLayout = preset.id === 'hot_button'
+            ? hotButtonStationLayout(participants.length, seed)
+            : null;
         let done = 0;
         for (const command of worldCommands) {
             await this.runCommand(command);
@@ -1264,10 +1510,12 @@ export class ContestArenaManager {
             await this.runCommand(command);
         }
 
-        // The rig is fire-and-forget, so read every bot's position back and
-        // re-send anyone who is not standing on the arena floor. A Spleef player
-        // the chain skipped would otherwise open the match in the pit.
-        onProgress?.('Verifying every bot is standing on the arena floor');
+        // The rig is fire-and-forget, so read every bot's position back and re-send
+        // anyone who is not standing on its assigned mark. If the rig never ran,
+        // the cast is still sitting wherever the last round left it — on the fresh
+        // floor, which is why altitude alone proves nothing — and this is what
+        // actually puts the starting ring on the ground.
+        onProgress?.('Verifying every bot is on its starting mark');
         let placementAudits = [];
         let placementCommandCount = 0;
         try {
@@ -1280,10 +1528,10 @@ export class ContestArenaManager {
                 participants,
                 options
             );
-            const misplaced = placementAudits.filter(audit => !audit.onTopLayer);
+            const misplaced = placementAudits.filter(audit => !audit.atAssignedSpot);
             if (misplaced.length) {
                 console.warn(
-                    '[contest] Not standing on the arena floor after re-teleport: '
+                    '[contest] Not on the starting mark after re-teleport: '
                     + misplaced.map(audit => audit.participantId).join(', ')
                 );
             }
@@ -1364,6 +1612,7 @@ export class ContestArenaManager {
         return {
             ...join.arena,
             seed,
+            hotButtonSafeIndex: hotButtonLayout?.safeIndex ?? null,
             // Placement and inventory verification run their reads and any repair
             // through the same RCON channel, so those calls count toward the
             // reset total alongside the world/participant/team commands.
@@ -1374,6 +1623,25 @@ export class ContestArenaManager {
             teleportCommand: join.teleportCommand,
             sameServer: true,
         };
+    }
+
+    /**
+     * Put the cast back on its starting marks immediately before the opening
+     * bell. `prepare()` builds the ring, but recording setup and the spoken start
+     * announcement can run for tens of seconds afterwards, and the bots are
+     * already standing in the arena in survival mode for all of it. One bot that
+     * wanders in that window takes the ring apart before the match is even live.
+     * Idempotent and cheap: anyone already on their mark is left alone.
+     */
+    enforceStartingMarks(preset, participants, options = {}) {
+        if (!preset?.id) throw new Error('Starting marks require a game preset');
+        if (!Array.isArray(participants) || participants.length === 0) return [];
+        return verifyParticipantPlacement(
+            command => this.runCommand(command),
+            preset.id,
+            participants,
+            options
+        );
     }
 
     async warpSpectators(participantIds = []) {
@@ -1441,6 +1709,7 @@ export {
     buildParticipantCommands,
     spectatorWarpCommands,
     ARENA,
+    HOT_BUTTON,
     TOP_LAYER_Y,
     GAME_KITS,
     DIAMOND_RACE_ORES,

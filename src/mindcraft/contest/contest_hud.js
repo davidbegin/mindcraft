@@ -1,4 +1,9 @@
 import { runMinecraftCommand } from '../minecraft_server.js';
+import {
+    formatCakeRaceBossbarSummary,
+    formatCakeTeamProgress,
+} from './cake_progress.js';
+import { formatSeriesLabel } from './series.js';
 
 const BOSSBAR_ID = 'mindcraft:contest';
 const ALL_PLAYERS = '@a';
@@ -32,6 +37,11 @@ const ITEM_RACE_PRESENTATIONS = Object.freeze({
         score: 'last standing',
         winnerLabel: 'LAST STANDING!',
         titleColor: 'aqua',
+    }),
+    hot_button: Object.freeze({
+        score: 'last standing',
+        winnerLabel: 'LAST STANDING!',
+        titleColor: 'gold',
     }),
 });
 
@@ -70,7 +80,20 @@ export function formatContestScore(contest, result) {
         }
         return 'eliminated';
     }
+    if (contest.rules?.type === 'hot_button') {
+        if (result.details?.chicken) return 'chickened out';
+        if (result.details?.surviving && result.details?.pressed) return 'last standing';
+        const survivedMs = result.details?.survivedMs;
+        if (Number.isFinite(survivedMs) && !result.details?.surviving) {
+            return `exploded at ${formatContestTime(survivedMs)}`;
+        }
+        if (result.details?.surviving) return 'surviving';
+        return 'eliminated';
+    }
     if (contest.rules?.type === 'cake_race' && result.details?.teamName) {
+        if (Array.isArray(result.details?.ingredients)) {
+            return formatCakeTeamProgress(result.details, { compact: true });
+        }
         if (Number.isFinite(result.details?.elapsedMs)) {
             return formatContestTime(result.details.elapsedMs);
         }
@@ -94,6 +117,28 @@ export function formatContestScore(contest, result) {
 
 export function formatContestBossbar(contest, leader, now = Date.now()) {
     const remaining = formatContestTime((contest.deadlineAt ?? now) - now);
+    const seriesLabel = contest?.metadata?.series?.bestOf > 1
+        ? formatSeriesLabel(contest.metadata.series)
+        : '';
+    const title = seriesLabel
+        ? `${contest.title} · ${seriesLabel}`
+        : contest.title;
+    if (
+        contest.rules?.type === 'cake_race'
+        && (
+            leader?.details?.summary
+            || Array.isArray(leader?.details?.standings)
+            || Array.isArray(leader?.details?.ingredients)
+        )
+    ) {
+        const summary = leader.details.summary
+            || (
+                Array.isArray(leader.details.standings)
+                    ? formatCakeRaceBossbarSummary(leader.details.standings)
+                    : `${leader.participantId} ${formatCakeTeamProgress(leader.details, { compact: true })}`
+            );
+        return `${title} · ${remaining} · ${summary}`;
+    }
     const leaderText = leader?.participantId
         ? ` · Leader: ${leader.participantId}${
             formatContestScore(contest, leader)
@@ -101,7 +146,7 @@ export function formatContestBossbar(contest, leader, now = Date.now()) {
                 : ''
         }`
         : ' · No leader yet';
-    return `${contest.title} · ${remaining}${leaderText}`;
+    return `${title} · ${remaining}${leaderText}`;
 }
 
 export function formatSurvivorBossbar(state, deadlineAt = null, now = Date.now()) {
@@ -216,6 +261,9 @@ export class ContestHud {
 
     async _announceStart(contest) {
         const maxSeconds = Math.max(1, Math.ceil(contest.durationMs / 1000));
+        const seriesLabel = contest?.metadata?.series?.bestOf > 1
+            ? formatSeriesLabel(contest.metadata.series)
+            : '';
         const competitors = ['team_tower_battle', 'team_base_siege', 'cake_race'].includes(contest.rules?.type)
             && contest.metadata?.gameSession?.teamNames?.length === 2
             ? contest.metadata.gameSession.teamNames.join(' vs ')
@@ -231,12 +279,14 @@ export class ContestHud {
             `title ${ALL_PLAYERS} times 10 80 20`,
             `title ${ALL_PLAYERS} title ${textComponent('GAME ON!', { color: 'gold', bold: true })}`,
             `title ${ALL_PLAYERS} subtitle ${textComponent(
-                `${contest.title} · ${formatContestTime(contest.durationMs)}`,
+                seriesLabel
+                    ? `${seriesLabel} · ${formatContestTime(contest.durationMs)}`
+                    : `${contest.title} · ${formatContestTime(contest.durationMs)}`,
                 { color: 'yellow' }
             )}`,
             `playsound entity.ender_dragon.growl master ${ALL_PLAYERS} ~ ~ ~ 0.6 1.3 1`,
             `tellraw ${ALL_PLAYERS} ${textComponent(
-                `[${contest.title}] ${competitors} — ${formatContestTime(contest.durationMs)} starts now!`,
+                `[${contest.title}] ${seriesLabel ? `${seriesLabel} · ` : ''}${competitors} — ${formatContestTime(contest.durationMs)} starts now!`,
                 { color: 'gold', bold: true }
             )}`,
         ]);
@@ -269,6 +319,17 @@ export class ContestHud {
                 `playsound block.note_block.hat master ${ALL_PLAYERS} ~ ~ ~ 0.8 ${
                     remainingSeconds <= 3 ? 1.8 : 1.2
                 } 1`,
+            ]);
+        } else if (
+            contest.rules?.type === 'cake_race'
+            && remainingSeconds > 10
+            && visibleLeader?.details?.summary
+        ) {
+            await this._commands([
+                `title ${ALL_PLAYERS} actionbar ${textComponent(
+                    visibleLeader.details.summary,
+                    { color: 'light_purple' }
+                )}`,
             ]);
         }
 

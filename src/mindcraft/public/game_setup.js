@@ -62,6 +62,12 @@
                         <input type="text" maxlength="16" spellcheck="false" data-team-name="1">
                     </label>
                 </div>
+                <div class="game-setup-lineup" data-el="lineupRow">
+                    <label data-el="lineupLabel">Model pack
+                        <select data-el="lineupSelect" aria-label="Bot model pack"></select>
+                    </label>
+                    <p class="games-sub" data-el="lineupBlurb"></p>
+                </div>
                 <div class="game-setup-participants" data-el="participants"></div>
                 <div class="game-setup-voice-status" data-el="voiceStatus"></div>
                 <div class="game-setup-actions">
@@ -123,6 +129,9 @@
         if (!socket) throw new Error('createGameSetup requires a socket');
         const getProfiles = options.getProfiles || (() => []);
         const getReservedNames = options.getReservedNames || (() => []);
+        const getBotModelLineups = options.getBotModelLineups || (() => []);
+        const getBotPersonas = options.getBotPersonas || (() => []);
+        const getDefaultBotModelLineupId = options.getDefaultBotModelLineupId || (() => 'variety');
         const onStatus = options.onStatus || (() => {});
         const onBusyChange = options.onBusyChange || (() => {});
         const onLaunchReport = options.onLaunchReport || (() => {});
@@ -146,6 +155,7 @@
         let busy = false;
         let lastReport = '';
         let teamNames = [];
+        let selectedLineupId = 'variety';
         // Bumped per launch so a late ack from an abandoned launch cannot
         // overwrite the state of whatever the roster is doing now.
         let launchId = 0;
@@ -199,6 +209,106 @@
             busy = next;
             action('submit').disabled = next;
             onBusyChange(next);
+        }
+
+        function findLineup(lineupId) {
+            const lineups = getBotModelLineups();
+            return lineups.find(item => item.id === lineupId)
+                || lineups.find(item => item.id === getDefaultBotModelLineupId())
+                || lineups[0]
+                || null;
+        }
+
+        // Personas stay fixed; only profileIds come from the pack. Count follows the
+        // pack unless the game needs more seats (team minimum / Survivor cast size).
+        function charactersFromLineup(lineupId, count) {
+            const lineup = findLineup(lineupId);
+            const personas = getBotPersonas();
+            if (!lineup?.profileIds?.length || !personas.length) return null;
+            const profileIds = lineup.profileIds;
+            let total = Number.isFinite(count) && count > 0 ? Math.floor(count) : profileIds.length;
+            if (config?.minParticipants && total < config.minParticipants) {
+                total = config.minParticipants;
+            }
+            if (config?.maxParticipants && total > config.maxParticipants) {
+                total = config.maxParticipants;
+            }
+            if (total > personas.length) total = personas.length;
+            return Array.from({ length: total }, (_, index) => {
+                const persona = personas[index];
+                return {
+                    name: persona.name,
+                    voice: persona.voice || null,
+                    systemPrompt: persona.systemPrompt || '',
+                    profileId: profileIds[index % profileIds.length],
+                };
+            });
+        }
+
+        function applySelectedLineup({ preserveCount = false } = {}) {
+            const count = preserveCount
+                ? participants.length
+                : (config?.preferredParticipantCount || null);
+            const characters = charactersFromLineup(selectedLineupId, count);
+            if (!characters?.length) return false;
+            participants = defaultParticipantsFor(characters, characters.length);
+            if (config?.teams) {
+                participants.forEach((participant, index) => {
+                    participant.team = teamNames[index % teamNames.length];
+                });
+            }
+            return true;
+        }
+
+        function renderLineup() {
+            const lineups = getBotModelLineups();
+            const row = el('lineupRow');
+            const select = el('lineupSelect');
+            const blurb = el('lineupBlurb');
+            if (!lineups.length) {
+                row.hidden = true;
+                return;
+            }
+            row.hidden = false;
+            if (!lineups.some(item => item.id === selectedLineupId)) {
+                selectedLineupId = getDefaultBotModelLineupId();
+            }
+            select.innerHTML = lineups.map(lineup =>
+                `<option value="${esc(lineup.id)}"${lineup.id === selectedLineupId ? ' selected' : ''}>${esc(lineup.title)} (${lineup.profileIds.length})</option>`
+            ).join('');
+            const current = findLineup(selectedLineupId);
+            blurb.textContent = current?.blurb || '';
+        }
+
+        function defaultParticipantsFor(characters, count) {
+            const profiles = configuredProfiles();
+            if (!profiles.length) return [];
+            const rotation = profilesByFamily(profiles);
+            const reserved = new Set(getReservedNames());
+            const rows = [];
+            const total = count || characters?.length || Math.min(2, profiles.length);
+            // A cast can be larger than the character list (Survivor seats eleven), so
+            // the unnamed slots take families the characters left unused before any
+            // family repeats at a slower effort.
+            const usedFamilies = new Set();
+            for (let i = 0; i < total; i++) {
+                const character = characters?.[i] || null;
+                const profile = profiles.find(item => item.id === character?.profileId)
+                    || rotation.find(item => !usedFamilies.has(item.family || item.id))
+                    || rotation[i % rotation.length];
+                usedFamilies.add(profile.family || profile.id);
+                const name = character
+                    ? sanitizeMinecraftName(character.name)
+                    : nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
+                reserved.add(name);
+                rows.push({
+                    profileId: profile.id,
+                    name,
+                    voice: character?.voice || null,
+                    systemPrompt: character?.systemPrompt || '',
+                });
+            }
+            return rows;
         }
 
         function effectiveVoice(participant) {
@@ -389,14 +499,28 @@
                 const label = document.createElement('label');
                 label.textContent = field.label;
                 label.htmlFor = `gameSetupField-${field.id}`;
-                const input = document.createElement('input');
-                input.id = `gameSetupField-${field.id}`;
-                input.type = 'number';
-                input.dataset.fieldId = field.id;
-                if (field.min != null) input.min = String(field.min);
-                if (field.max != null) input.max = String(field.max);
-                if (field.step != null) input.step = String(field.step);
-                input.value = String(field.value ?? '');
+                let input;
+                if (field.type === 'select' && Array.isArray(field.options)) {
+                    input = document.createElement('select');
+                    input.id = `gameSetupField-${field.id}`;
+                    input.dataset.fieldId = field.id;
+                    for (const option of field.options) {
+                        const opt = document.createElement('option');
+                        opt.value = String(option.value);
+                        opt.textContent = option.label ?? String(option.value);
+                        if (String(option.value) === String(field.value)) opt.selected = true;
+                        input.append(opt);
+                    }
+                } else {
+                    input = document.createElement('input');
+                    input.id = `gameSetupField-${field.id}`;
+                    input.type = 'number';
+                    input.dataset.fieldId = field.id;
+                    if (field.min != null) input.min = String(field.min);
+                    if (field.max != null) input.max = String(field.max);
+                    if (field.step != null) input.step = String(field.step);
+                    input.value = String(field.value ?? '');
+                }
                 box.append(label, input);
             }
         }
@@ -629,6 +753,7 @@
                 return;
             }
             config = nextConfig;
+            selectedLineupId = nextConfig.lineupId || getDefaultBotModelLineupId();
             participants = (nextConfig.participants || []).map(participant => ({ ...participant }));
             teamNames = nextConfig.teams
                 ? [...(nextConfig.teams.defaultNames || ['Ember', 'Tide'])].slice(0, 2)
@@ -651,6 +776,7 @@
             el('promptCount').textContent = '0';
             renderFields();
             renderTeams();
+            renderLineup();
             setError('');
             el('debug').hidden = true;
             renderParticipants();

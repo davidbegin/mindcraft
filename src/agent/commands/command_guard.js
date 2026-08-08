@@ -62,6 +62,29 @@ export function spleefCommandRejection(commandName) {
         + 'and removes the ground under them while refusing to break your own footing.';
 }
 
+const HOT_BUTTON_BANNED_COMMANDS = new Map([
+    ['!digDown', 'digging is against the rules of Hot Button'],
+    ['!clearArea', 'breaking blocks is against the rules of Hot Button'],
+    ['!collectBlocks', 'mining is against the rules of Hot Button'],
+    ['!placeHere', 'placing blocks is against the rules of Hot Button'],
+    ['!placeRow', 'placing blocks is against the rules of Hot Button'],
+    ['!plantArea', 'placing blocks is against the rules of Hot Button'],
+    ['!attack', 'you cannot fight in Hot Button; press a button instead'],
+    ['!attackPlayer', 'you cannot fight in Hot Button; press a button instead'],
+    ['!newAction', 'custom code can cheat the button stations'],
+]);
+
+/**
+ * Refuses commands that dig, build, or fight during Hot Button, and points the
+ * bot back at the automatic press action.
+ */
+export function hotButtonCommandRejection(commandName) {
+    const reason = HOT_BUTTON_BANNED_COMMANDS.get(commandName);
+    if (!reason) return null;
+    return `${commandName} is banned during Hot Button because ${reason}. `
+        + 'Use !playHotButton instead: it walks to an unused stone button and presses it.';
+}
+
 const FAILURE_PATTERNS = /timed out|timeout|failed|could not|cannot |can't |unable to|no path|path not found|don't have|ran out of time|nothing to place on|not found/i;
 const SUCCESS_PATTERNS = /you have reached|successfully|planted \d|collected \d|placed|crafted|broke \d|deposited|finished|cleared area|reached the/i;
 

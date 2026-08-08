@@ -23,6 +23,66 @@ function runningContest(overrides = {}) {
     };
 }
 
+test('formats first-cake bossbar from team pantry progress', () => {
+    const contest = runningContest({
+        title: 'First Cake',
+        rules: { type: 'cake_race', winItem: 'cake' },
+    });
+    assert.equal(
+        formatContestScore(contest, {
+            score: 6,
+            details: {
+                teamName: 'Ember',
+                gathered: 6,
+                needed: 9,
+                hasCake: false,
+                ingredients: [
+                    { item: 'milk_bucket', label: 'Milk', have: 2, need: 3 },
+                    { item: 'sugar', label: 'Sugar', have: 1, need: 2 },
+                    { item: 'egg', label: 'Egg', have: 1, need: 1 },
+                    { item: 'wheat', label: 'Wheat', have: 2, need: 3 },
+                ],
+            },
+        }),
+        '6/9 (M2/3 S1/2 E1/1 W2/3)'
+    );
+    assert.equal(
+        formatContestBossbar(
+            contest,
+            {
+                participantId: 'Ember',
+                score: 6,
+                details: {
+                    summary: 'Ember 6/9 (M2/3 S1/2 E1/1 W2/3) · Tide 2/9 (M1/3 S0/2 E1/1 W0/3)',
+                },
+            },
+            10_000
+        ),
+        'First Cake · 1:00 · Ember 6/9 (M2/3 S1/2 E1/1 W2/3) · Tide 2/9 (M1/3 S0/2 E1/1 W0/3)'
+    );
+});
+
+test('Spleef series standings appear on the bossbar title', () => {
+    const contest = runningContest({
+        title: 'Spleef',
+        rules: { type: 'spleef', scoring: 'last-standing', floorY: 100 },
+        metadata: {
+            series: {
+                bestOf: 5,
+                winsNeeded: 3,
+                matchIndex: 2,
+                scores: { Billy: 1, Kimmy: 0 },
+                matches: [],
+                seriesWinnerIds: null,
+            },
+        },
+    });
+    assert.match(
+        formatContestBossbar(contest, null, 10_000),
+        /Spleef · Match 2 · Bo5 · Billy 1–0 Kimmy · 1:00/
+    );
+});
+
 test('formats the countdown and game-specific scores', () => {
     const contest = runningContest();
     assert.equal(formatContestTime(60_001), '1:01');

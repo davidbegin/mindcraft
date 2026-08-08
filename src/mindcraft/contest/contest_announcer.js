@@ -1,3 +1,9 @@
+import {
+    buildSeriesIntermissionAnnouncement,
+    buildSeriesResultAnnouncement,
+    formatSeriesLabel,
+} from './series.js';
+
 export const CONTEST_NARRATOR_CHARACTER = Object.freeze({
     name: 'narrator',
     voice: 'Narrator',
@@ -5,6 +11,11 @@ export const CONTEST_NARRATOR_CHARACTER = Object.freeze({
 
 export function buildContestStartAnnouncement(contest) {
     const title = String(contest?.title || 'Game').trim();
+    const series = contest?.metadata?.series;
+    if (series?.bestOf > 1) {
+        const label = formatSeriesLabel(series);
+        return `${title}. ${label}. Three. Two. One. Go!`;
+    }
     return `${title} starting. Three. Two. One. Go!`;
 }
 
@@ -225,5 +236,14 @@ export class ContestAnnouncer {
 
     async announceResult(contest) {
         await this.speak(buildContestResultAnnouncement(contest), { delivery: 'booming' });
+    }
+
+    async announceSeriesIntermission(series, contest = null) {
+        const winnerIds = contest?.winnerIds || series?.matches?.at(-1)?.winnerIds || [];
+        await this.speak(buildSeriesIntermissionAnnouncement(series, winnerIds));
+    }
+
+    async announceSeriesResult(series) {
+        await this.speak(buildSeriesResultAnnouncement(series), { delivery: 'booming' });
     }
 }

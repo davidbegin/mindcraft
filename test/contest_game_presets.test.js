@@ -23,6 +23,7 @@ test('lists the starter contest games for the UI', () => {
             'deepest_5',
             'diamond_race',
             'dog_race',
+            'hot_button',
             'netherite_race',
             'spleef',
             'team_base_siege',
@@ -303,11 +304,15 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(deathRace.rules.scoring, 'first-death-wins');
     assert.equal(deathRace.rules.metrics[0].direction, 'minimize');
     assert.equal(deathRace.metadata.pvp, false);
-    assert.match(deathRace.prompt, /cause your own death/i);
+    assert.equal(deathRace.metadata.arena, 'death-edge-v1');
+    assert.match(deathRace.prompt, /cause your own death|first competitor to die/i);
     assert.match(deathRace.prompt, /survival instincts are disabled/i);
-    assert.match(deathRace.prompt, /no prescribed solution/i);
-    assert.doesNotMatch(deathRace.prompt, /lava pit/i);
-    assert.match(deathRace.prompt, /ends automatically/i);
+    assert.match(deathRace.prompt, /run off|edge|outer rim/i);
+    assert.match(deathRace.prompt, /NOT allowed to spawn/i);
+    assert.doesNotMatch(deathRace.prompt, /drown|water pool|deep water/i);
+    assert.doesNotMatch(deathRace.prompt, /blank flat plain/i);
+    assert.doesNotMatch(deathRace.prompt, /central lava|lava pit/i);
+    assert.match(deathRace.prompt, /ends the instant|ends automatically/i);
 
     const diamonds = getContestGamePreset('diamond_race');
     assert.equal(diamonds.rules.winItem, 'diamond');
@@ -361,6 +366,15 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.match(spleef.prompt, /the eight blocks touching it/i);
     assert.match(spleef.prompt, /instant self-elimination/i);
     assert.match(spleef.prompt, /!playSpleef\(100\)/i);
+
+    const hotButton = getContestGamePreset('hot_button');
+    assert.equal(hotButton.rules.type, 'hot_button');
+    assert.equal(hotButton.rules.scoring, 'last-standing');
+    assert.equal(hotButton.durationMs, 180_000);
+    assert.equal(hotButton.metadata.pvp, false);
+    assert.match(hotButton.prompt, /exactly ONE station is safe/i);
+    assert.match(hotButton.prompt, /chicken/i);
+    assert.match(hotButton.prompt, /!playHotButton/i);
 });
 
 test('unknown contest game ids throw', () => {

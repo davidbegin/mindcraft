@@ -3,7 +3,7 @@ import { actionsList } from './actions.js';
 import { colonyActionList, colonyQueryList } from './colony.js';
 import { queryList } from './queries.js';
 import { survivorActionList } from './survivor.js';
-import { ALLOWED_WHILE_DEAD, spleefCommandRejection } from './command_guard.js';
+import { ALLOWED_WHILE_DEAD, hotButtonCommandRejection, spleefCommandRejection } from './command_guard.js';
 import settings from '../settings.js';
 
 let suppressNoDomainWarning = true;
@@ -235,6 +235,12 @@ export async function executeCommand(agent, message) {
             const spleefRejection = spleefCommandRejection(command.name);
             if (spleefRejection) {
                 return spleefRejection;
+            }
+        }
+        if (settings.game_session?.contestType === 'hot_button') {
+            const hotButtonRejection = hotButtonCommandRejection(command.name);
+            if (hotButtonRejection) {
+                return hotButtonRejection;
             }
         }
         const rejection = agent.command_guard?.check(command.name, parsed.args);

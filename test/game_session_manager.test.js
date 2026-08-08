@@ -127,6 +127,14 @@ async function withManager(run, overrides = {}, coordinatorOverrides = {}) {
                 calls.push(['announce-visual-result', contest.id, contest.winnerIds]);
                 return Promise.resolve();
             },
+            announceSeriesIntermission: (series, contest) => {
+                calls.push(['announce-series-intermission', contest?.id, series?.matchIndex, series?.scores]);
+                return Promise.resolve();
+            },
+            announceSeriesResult: series => {
+                calls.push(['announce-series-result', series?.seriesWinnerIds, series?.scores]);
+                return Promise.resolve();
+            },
             sleep: async ms => { calls.push(['sleep', ms]); },
             ...overrides,
         });
@@ -1237,6 +1245,33 @@ test('Spleef directives start dedicated competitive play without conversation de
     assert.doesNotMatch(directive, /!startConversation/);
 });
 
+test('Hot Button directives start the automatic press action', () => {
+    const directive = buildParticipantGameDirective(
+        'Press a button.',
+        ['speedy', 'thinker', 'miner'],
+        'thinker',
+        { contestType: 'hot_button' }
+    );
+    assert.match(directive, /ACTIVE RIVALS: speedy, miner/);
+    assert.match(directive, /starts !playHotButton for you automatically/);
+    assert.match(directive, /Refusing to press loses/);
+    assert.doesNotMatch(directive, /!startConversation/);
+});
+
+test('Self-destruct directives push immediate environmental death without spawning', () => {
+    const directive = buildParticipantGameDirective(
+        'Die first. Do not spawn.',
+        ['speedy', 'thinker', 'miner'],
+        'thinker',
+        { contestType: 'death_race' }
+    );
+    assert.match(directive, /Speed wins/);
+    assert.match(directive, /outer rim|searchForBlock/i);
+    assert.match(directive, /Do not place or spawn/);
+    assert.doesNotMatch(directive, /water|drown/i);
+    assert.doesNotMatch(directive, /!startConversation/);
+});
+
 test('recording manifests filter by session without unrelated clips', () => {
     const text = [
         JSON.stringify({ file: '/a.mp4', sessionId: 'contest-game-1', contestId: 'game-1', startedAt: 10, endedAt: 20 }),
@@ -1248,4 +1283,119 @@ test('recording manifests filter by session without unrelated clips', () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].file, '/a.mp4');
     assert.match(serializeRecordingManifest(entries), /contest-game-1/);
+});
+
+const spleefPreset = {
+    id: 'spleef',
+    title: 'Spleef',
+    prompt: 'Dig rivals into the pit.',
+    durationMs: 60_000,
+    rules: { type: 'spleef', scoring: 'last-standing', floorY: 100 },
+    metadata: { arena: 'spleef-v1' },
+};
+
+test('Spleef best-of-3 continues to the next match instead of the podium', async () => {
+    let nextId = 0;
+    await withManager(
+        async ({ manager, coordinator, calls }) => {
+            const result = await manager.start({
+                gameId: 'spleef',
+                bestOf: 3,
+                participants: [
+                    { profileId: 'fast', name: 'Billy' },
+                    { profileId: 'smart', name: 'Kimmy' },
+                ],
+                durationMs: 60_000,
+            });
+
+            assert.equal(result.contest.status, 'running');
+            assert.equal(manager.view().series.bestOf, 3);
+            assert.equal(manager.view().series.winsNeeded, 2);
+            assert.equal(manager.view().series.matchIndex, 1);
+            assert.equal(result.contest.metadata.series.bestOf, 3);
+
+            await coordinator.eliminate(result.contest.id, 'Kimmy', { reason: 'fell' });
+            assert.equal(coordinator.snapshot().contests[result.contest.id].status, 'completed');
+
+            await manager.syncWithContestView(coordinator.view());
+
+            const session = manager.view();
+            assert.equal(session.status, 'running');
+            assert.notEqual(session.contestId, result.contest.id);
+            assert.equal(session.series.scores.Billy, 1);
+            assert.equal(session.series.scores.Kimmy, 0);
+            assert.equal(session.series.matchIndex, 2);
+            assert.equal(session.series.seriesWinnerIds, null);
+            assert.ok(
+                calls.some(([type]) => type === 'announce-series-intermission'),
+                'narrator calls the series score between matches'
+            );
+            assert.ok(
+                !calls.some(([type]) => type === 'present-results'),
+                'podium ceremony waits until the series is decided'
+            );
+            assert.equal(
+                calls.filter(([type]) => type === 'arena').length,
+                2,
+                'arena rebuilds for the rematch'
+            );
+            const rematchPause = calls.find(
+                ([type, , prompt, options]) => type === 'directive'
+                    && options?.pause === true
+                    && options?.gameStarted === false
+                    && /arena resets/i.test(prompt)
+            );
+            assert.ok(rematchPause, 'bots pause with gameStarted false between matches');
+            const rematchGoals = calls.filter(
+                ([type, , , options]) => type === 'directive'
+                    && options?.gameStarted === true
+                    && options?.automaticAction === 'play-spleef'
+            );
+            assert.ok(rematchGoals.length >= 4, 'play-spleef goals fire for both matches');
+        },
+        {
+            getPreset: () => spleefPreset,
+        },
+        {
+            idFactory: () => `spleef-${++nextId}`,
+        }
+    );
+});
+
+test('Spleef best-of-3 crowns the series after two wins and runs the ceremony', async () => {
+    let nextId = 0;
+    await withManager(
+        async ({ manager, coordinator, calls }) => {
+            const first = await manager.start({
+                gameId: 'spleef',
+                bestOf: 3,
+                participants: [
+                    { profileId: 'fast', name: 'Billy' },
+                    { profileId: 'smart', name: 'Kimmy' },
+                ],
+            });
+            await coordinator.eliminate(first.contest.id, 'Kimmy', { reason: 'fell' });
+            await manager.syncWithContestView(coordinator.view());
+
+            const matchTwoId = manager.view().contestId;
+            await coordinator.eliminate(matchTwoId, 'Kimmy', { reason: 'fell' });
+            await manager.syncWithContestView(coordinator.view());
+
+            const session = manager.view();
+            assert.equal(session.status, 'awaiting-next-game');
+            assert.deepEqual(session.series.seriesWinnerIds, ['Billy']);
+            assert.equal(session.series.scores.Billy, 2);
+            assert.ok(calls.some(([type]) => type === 'announce-series-result'));
+            assert.ok(calls.some(([type]) => type === 'present-results'));
+            assert.ok(calls.some(([type]) => type === 'present-winner'));
+        },
+        {
+            getPreset: () => spleefPreset,
+            winnerRevealMs: 0,
+            podiumHoldMs: 60_000,
+        },
+        {
+            idFactory: () => `spleef-${++nextId}`,
+        }
+    );
 });

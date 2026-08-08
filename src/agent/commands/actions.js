@@ -121,6 +121,14 @@ export const actionsList = [
         }, false, 6)
     },
     {
+        name: '!playHotButton',
+        description: 'Hot Button: walk to an unused stone button station and press it once. Most stations explode; one is safe. Use this for the entire Hot Button match.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            await skills.playHotButton(agent.bot);
+        }, false, 3)
+    },
+    {
         name: '!followPlayer',
         description: 'Endlessly follow the given player.',
         params: {
@@ -156,7 +164,12 @@ export const actionsList = [
                 log(agent.bot, `Minimum search range is 32.`);
                 range = 32;
             }
-            await skills.goToNearestBlock(agent.bot, block_type, 4, range);
+            // Death race needs the bot IN the hazard, not standing next to it.
+            const closeness = settings.game_session?.contestType === 'death_race'
+                && (block_type === 'water' || block_type === 'lava')
+                ? 0
+                : 4;
+            await skills.goToNearestBlock(agent.bot, block_type, closeness, range);
         })
     },
     {

@@ -89,16 +89,42 @@
     }
 
     function statusChip(status) {
-        const known = ['completed', 'running', 'cancelled'].includes(status) ? status : '';
-        return `<span class="chip ${known}">${esc(status)}</span>`;
+        const known = ['completed', 'running', 'cancelled', 'draft', 'judging'].includes(status)
+            ? status
+            : '';
+        const label = status === 'draft'
+            ? 'planning'
+            : status === 'judging'
+                ? 'judging'
+                : status;
+        return `<span class="chip ${known}">${esc(label)}</span>`;
     }
 
     function integrityChip(summary) {
-        if (summary.status === 'running') return '';
+        if (summary.inProgress || ['draft', 'running', 'judging'].includes(summary.status)) {
+            return '';
+        }
         if (summary.integrityClean) {
             return '<span class="chip clean">clean</span>';
         }
         return `<span class="chip flagged">${esc(plural(summary.integrityFlagCount, 'flag'))}</span>`;
+    }
+
+    function seriesChip(game) {
+        const series = game?.series;
+        if (!series || !(series.bestOf > 1)) return '';
+        return `<span class="chip">${esc(formatSeriesSummary(series))}</span>`;
+    }
+
+    function formatSeriesSummary(series) {
+        if (!series || !(series.bestOf > 1)) return '';
+        const scores = series.scores || {};
+        const entries = Object.entries(scores)
+            .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+        if (entries.length === 2) {
+            return `Series ${entries[0][1]}–${entries[1][1]}`;
+        }
+        return `Bo${series.bestOf}`;
     }
 
     // —— URL ———————————————————————————————————————————————————————
@@ -158,11 +184,16 @@
             ].join(' · ');
             const outcome = game.winnerId
                 ? `<div class="game-winner">${who(game.winnerId)} won${game.winItem ? ` (${esc(game.winItem)})` : ''}</div>`
-                : `<div class="game-winner none">${esc(game.status === 'running' ? 'still playing' : 'no winner')}</div>`;
+                : `<div class="game-winner none">${esc(
+                    game.inProgress || ['draft', 'running', 'judging'].includes(game.status)
+                        ? (game.status === 'draft' ? 'planning / provisioning' : 'still playing')
+                        : 'no winner'
+                )}</div>`;
             return `<button type="button" class="game-row${game.id === selectedId ? ' selected' : ''}" data-game="${esc(game.id)}">
                 <span class="game-top">
                     <span class="game-title">${esc(gameTitle(game))}</span>
                     ${statusChip(game.status)}
+                    ${seriesChip(game)}
                     ${integrityChip(game)}
                 </span>
                 <span class="game-meta">${esc(meta)}</span>
@@ -237,11 +268,13 @@
         } else {
             cards.push(`<div class="card">
                 <h3>How it ended</h3>
-                <div class="msg-text">${esc(game.status === 'running'
-                    ? 'This game is still being played.'
-                    : game.status === 'cancelled'
-                        ? 'This game was cancelled.'
-                        : 'This game ended without a winner.')}</div>
+                <div class="msg-text">${esc(
+                    game.inProgress || ['draft', 'running', 'judging'].includes(game.status)
+                        ? 'This game is still being played.'
+                        : game.status === 'cancelled'
+                            ? 'This game was cancelled.'
+                            : 'This game ended without a winner.'
+                )}</div>
             </div>`);
         }
 
@@ -262,6 +295,9 @@
                 ${stat('Ran for', durationLabel(game.durationMs))}
                 ${stat('Bots', (game.participantIds || []).length)}
                 ${stat('Messages', game.messageCount || 0)}
+                ${game.series?.bestOf > 1
+                    ? stat('Series', formatSeriesSummary(game.series))
+                    : ''}
                 ${stat('Inventories even', game.allInventoriesClean == null ? 'not audited' : game.allInventoriesClean ? 'yes' : 'NO')}
                 ${stat('Game id', String(game.id).slice(0, 8))}
             </div>
@@ -285,9 +321,11 @@
 
     function renderTranscript(game) {
         if (!game.messages || !game.messages.length) {
-            return `<div class="card"><div class="empty">${esc(game.status === 'running'
-                ? 'No messages captured yet.'
-                : 'No messages were captured for this game. Message capture only records games played after it was added.')}</div></div>`;
+            return `<div class="card"><div class="empty">${esc(
+                game.inProgress || ['draft', 'running', 'judging'].includes(game.status)
+                    ? 'No messages captured yet.'
+                    : 'No messages were captured for this game. Message capture only records games played after it was added.'
+            )}</div></div>`;
         }
         const speakers = [...new Set(game.messages.map(message => message.participantId))];
         const controls = `<div class="transcript-controls">${speakers.map(name => {
@@ -475,13 +513,63 @@
     });
     socket.on('disconnect', () => setConnected(false));
 
-    // A running game is part of the archive; the dashboard is what knows it moved.
-    socket.on('contest-update', () => {
-        const running = games.find(game => game.status === 'running');
+    // A running / planning game is part of the archive; refresh when the match
+    // moves or a new spoken line lands.
+    function refreshInProgressGame(contestId = null) {
         loadGames();
-        if (running && running.id === selectedId) {
-            details.delete(running.id);
-            loadGame(running.id, { force: true });
+        const targetId = contestId || selectedId;
+        const open = games.find(game => game.id === targetId)
+            || (targetId === selectedId ? details.get(selectedId) : null);
+        const live = open && (
+            open.inProgress
+            || ['draft', 'running', 'judging'].includes(open.status)
+        );
+        if (live && targetId === selectedId) {
+            details.delete(selectedId);
+            loadGame(selectedId, { force: true });
+        }
+    }
+
+    socket.on('contest-update', () => {
+        refreshInProgressGame();
+    });
+
+    socket.on('contest-message', payload => {
+        if (!payload?.contestId) return;
+        const summary = games.find(game => game.id === payload.contestId);
+        if (!summary) {
+            loadGames();
+            return;
+        }
+        summary.messageCount = (summary.messageCount || 0) + 1;
+        renderList();
+        if (selectedId === payload.contestId) {
+            const game = details.get(selectedId);
+            if (game) {
+                game.messages = [
+                    ...(game.messages || []),
+                    {
+                        at: payload.at || Date.now(),
+                        participantId: payload.participantId,
+                        text: payload.text,
+                        position: payload.position || null,
+                    },
+                ];
+                game.messageCount = game.messages.length;
+                const player = (game.players || []).find(entry => entry.id === payload.participantId);
+                if (player) player.messageCount = (player.messageCount || 0) + 1;
+                if (tab === 'transcript') {
+                    const body = el('detail');
+                    const stick = body.scrollHeight - body.scrollTop - body.clientHeight < 64;
+                    body.innerHTML = `<div class="detail-body">${renderTranscript(game)}</div>`;
+                    window.mcAvatar?.paint(body);
+                    if (stick) body.scrollTop = body.scrollHeight;
+                } else if (tab === 'overview') {
+                    renderDetail();
+                }
+            } else {
+                loadGame(selectedId, { force: true });
+            }
         }
     });
 

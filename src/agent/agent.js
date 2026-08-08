@@ -657,8 +657,10 @@ export class Agent {
         else {
             this._speakChat(to_translate, addressed);
             if (settings.chat_ingame) {this.bot.chat(message);}
-            sendOutputToServer(this.name, message, this.bot?.entity?.position ?? null);
         }
+        // Always relay to the server — including whispers — so the Games Log
+        // transcript captures every line a character says during a match.
+        sendOutputToServer(this.name, message, this.bot?.entity?.position ?? null);
     }
 
     /**
@@ -1152,8 +1154,11 @@ export class Agent {
         if (
             settings.game_session?.contestType === 'spleef'
             || settings.game_session?.contestType === 'team_base_siege'
+            || settings.game_session?.contestType === 'hot_button'
         ) {
-            this._reportContestEliminated('death');
+            this._reportContestEliminated(
+                settings.game_session?.contestType === 'hot_button' ? 'exploded' : 'death'
+            );
             return;
         }
         if (settings.game_session?.contestType === 'team_tower_battle') {
@@ -1203,7 +1208,9 @@ export class Agent {
     _reportContestEliminated(reason = 'fell') {
         const contestType = settings.game_session?.contestType;
         if (
-            (contestType !== 'spleef' && contestType !== 'team_base_siege')
+            (contestType !== 'spleef'
+                && contestType !== 'team_base_siege'
+                && contestType !== 'hot_button')
             || this._contestEliminatedReported
         ) {
             return;

@@ -152,7 +152,12 @@ class MindServerProxy {
                     this.agent.reinstate();
                 }
                 if (directive.gameStarted === true) {
+                    // Opening bell of a match (including series rematches) clears
+                    // the last match's elimination so a rematch fall can count.
+                    this.agent._contestEliminatedReported = false;
                     this.agent.gameStarted = true;
+                } else if (directive.gameStarted === false) {
+                    this.agent.gameStarted = false;
                 }
                 if (directive.react === true) {
                     await this.agent.self_prompter.pause();
@@ -181,6 +186,24 @@ class MindServerProxy {
                         { timeout: 6 }
                     ).catch(error => {
                         console.error('Automatic Spleef action failed:', error);
+                    });
+                    callback?.({ success: true, status: 'automatic_action_started' });
+                    return;
+                }
+                if (directive.automaticAction === 'play-hot-button') {
+                    await this.agent.self_prompter.pause();
+                    this.agent.actions.runAction(
+                        'game:play-hot-button',
+                        async () => {
+                            const pressed = await skills.playHotButton(this.agent.bot);
+                            if (pressed) {
+                                await reportContestButtonPressed({ event: 'button_pressed' });
+                            }
+                            return pressed;
+                        },
+                        { timeout: 3 }
+                    ).catch(error => {
+                        console.error('Automatic Hot Button action failed:', error);
                     });
                     callback?.({ success: true, status: 'automatic_action_started' });
                     return;
@@ -646,6 +669,26 @@ export function reportContestEliminated(payload = {}) {
             }
             if (!result?.success) {
                 reject(new Error(result?.error || 'Contest elimination report failed'));
+                return;
+            }
+            resolve(result.data);
+        });
+    });
+}
+
+export function reportContestButtonPressed(payload = {}) {
+    const socket = serverProxy.getSocket();
+    if (!socket?.connected) {
+        return Promise.reject(new Error('MindServer is not connected'));
+    }
+    return new Promise((resolve, reject) => {
+        socket.timeout(10000).emit('contest-button-pressed', payload, (error, result) => {
+            if (error) {
+                reject(new Error('Contest button press report timed out'));
+                return;
+            }
+            if (!result?.success) {
+                reject(new Error(result?.error || 'Contest button press report failed'));
                 return;
             }
             resolve(result.data);

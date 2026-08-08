@@ -14,6 +14,22 @@ test('builds game start and winner announcements', () => {
         buildContestStartAnnouncement({ title: 'Tallest Tower' }),
         'Tallest Tower starting. Three. Two. One. Go!'
     );
+    assert.match(
+        buildContestStartAnnouncement({
+            title: 'Spleef',
+            metadata: {
+                series: {
+                    bestOf: 5,
+                    winsNeeded: 3,
+                    matchIndex: 2,
+                    scores: { Billy: 1, Kimmy: 0 },
+                    matches: [],
+                    seriesWinnerIds: null,
+                },
+            },
+        }),
+        /Spleef\. Match 2 · Bo5 · Billy 1–0 Kimmy\. Three\. Two\. One\. Go!/
+    );
     assert.equal(
         buildContestResultAnnouncement({ winnerIds: ['billy'] }),
         'And the winner is... billy! billy wins!'

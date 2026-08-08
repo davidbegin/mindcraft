@@ -18,6 +18,8 @@ import {
 import {
     ContestArchive,
     buildGameRecord,
+    compareGamesByRecency,
+    isInProgressGameStatus,
     summarizeGame,
 } from '../src/mindcraft/contest/contest_archive.js';
 import {
@@ -254,4 +256,49 @@ test('ContestArchive reads games from a journal and state file', async () => {
     } finally {
         await rm(dir, { recursive: true, force: true });
     }
+});
+
+test('draft games sort above finished ones and summarize as in progress', () => {
+    const draft = buildGameRecord({
+        id: 'draft-1',
+        events: [
+            {
+                type: 'message.said',
+                at: 500,
+                contestId: 'draft-1',
+                participantId: 'Billy',
+                text: 'Split the milk route.',
+            },
+        ],
+        snapshot: {
+            id: 'draft-1',
+            title: 'First Cake',
+            status: 'draft',
+            createdAt: 400,
+            startedAt: null,
+            participantIds: ['Billy', 'Kimmy'],
+            metadata: { gameId: 'cake_race', startedFrom: 'game-session-ui' },
+            winnerIds: [],
+            submissions: {},
+            results: [],
+        },
+    });
+    const finished = buildGameRecord({
+        id: 'game-1',
+        events: [],
+        snapshot: diamondSnapshot(),
+    });
+
+    assert.equal(isInProgressGameStatus(draft.status), true);
+    assert.equal(draft.endedAt, null);
+    assert.equal(draft.startedAt, 400);
+    assert.equal(draft.messageCount, 1);
+
+    const summary = summarizeGame(draft);
+    assert.equal(summary.inProgress, true);
+    assert.equal(summary.messageCount, 1);
+
+    const ordered = [finished, draft].sort(compareGamesByRecency);
+    assert.equal(ordered[0].id, 'draft-1');
+    assert.equal(ordered[1].id, 'game-1');
 });
