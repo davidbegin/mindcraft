@@ -11,6 +11,9 @@ const DEFAULT_FAILURE_REPORT_DIR = './contests/launch-failures';
 const MAX_SAVED_REPORTS = 50;
 
 const events = [];
+// Live subscribers, so the launch timeline can be followed as it happens instead
+// of only being read out of a failure report afterwards.
+const listeners = new Set();
 let lastFailureReport = null;
 let lastFailureMeta = null;
 
@@ -48,6 +51,12 @@ export function clearLaunchTelemetry() {
     events.length = 0;
 }
 
+/** Returns an unsubscribe function. A listener must never break recording. */
+export function subscribe(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
+
 export function record(event = {}) {
     const entry = {
         ts: event.ts || nowIso(),
@@ -60,6 +69,13 @@ export function record(event = {}) {
     events.push(entry);
     if (events.length > MAX_EVENTS) {
         events.splice(0, events.length - MAX_EVENTS);
+    }
+    for (const listener of listeners) {
+        try {
+            listener(entry);
+        } catch (error) {
+            console.warn(`Launch telemetry listener failed: ${error.message}`);
+        }
     }
     return entry;
 }

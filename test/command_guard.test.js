@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CommandGuard, looksLikeFailure, ALLOWED_WHILE_DEAD } from '../src/agent/commands/command_guard.js';
+import {
+    ALLOWED_WHILE_DEAD,
+    CommandGuard,
+    looksLikeFailure,
+    spleefCommandRejection,
+} from '../src/agent/commands/command_guard.js';
 
 test('allows a command until it fails twice with identical args', () => {
     const guard = new CommandGuard(() => 1_000);
@@ -62,6 +67,26 @@ test('failure detection distinguishes success from failure text', () => {
     assert.equal(looksLikeFailure('Failed to give cobblestone to builder, too close.'), true);
     assert.equal(looksLikeFailure(undefined), false);
     assert.equal(looksLikeFailure(''), false);
+});
+
+test('Spleef refuses the commands that break a bot out from under itself', () => {
+    for (const command of ['!digDown', '!clearArea', '!collectBlocks', '!newAction']) {
+        const rejection = spleefCommandRejection(command);
+        assert.match(rejection, /banned during Spleef/);
+        assert.match(rejection, /Never dig beneath your own feet/);
+        assert.match(rejection, /!playSpleef\(100\)/);
+    }
+    // Placing blocks and fighting are against the rules, not just unsafe.
+    for (const command of ['!placeHere', '!placeRow', '!plantArea']) {
+        assert.match(spleefCommandRejection(command), /against the rules of Spleef/);
+    }
+    for (const command of ['!attack', '!attackPlayer']) {
+        assert.match(spleefCommandRejection(command), /cannot fight in Spleef/);
+    }
+    // Hunting rivals and staying mobile must stay available.
+    for (const command of ['!playSpleef', '!goToPlayer', '!goToCoordinates', '!moveAway', '!stop']) {
+        assert.equal(spleefCommandRejection(command), null);
+    }
 });
 
 test('stop and restart stay usable while dead', () => {

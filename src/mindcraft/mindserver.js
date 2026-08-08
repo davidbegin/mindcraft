@@ -9,6 +9,7 @@ import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, mkdtempSync
 import { tmpdir } from 'os';
 import { spawn } from 'child_process';
 import { hasKey } from '../utils/keys.js';
+import { buildAgentSpatialSnapshot } from '../utils/spatial.js';
 import {
     VOICE_POOL, VOICE_DESCRIPTIONS, DEFAULT_ELEVENLABS_MODEL,
     getVoicesConfig, saveVoicesConfig, autoVoiceName, resolveVoice, resolveVoiceName,
@@ -35,14 +36,17 @@ import {
     findDogRaceWinner,
     formatSurvivorBossbar,
     getArenaJoinInfo,
+    getArenaWorldKnowledge,
     getContestGamePreset,
     getSurvivorSeasonPreset,
     listContestGamePresets,
     listSurvivorScenarios,
     safeHighlightSessionId,
+    contestHasTeamSession,
     scoreDepthRace,
     scoreSpleef,
     scoreTeamBaseSiege,
+    scoreTeamFirstFinish,
     measureTeamTowerBattle,
     scoreTeamTowerBattle,
     scoreTowerBattle,
@@ -92,6 +96,8 @@ let server;
 const agent_connections = new Map();
 let agent_id_seq = 0;
 const agent_listeners = [];
+let spatialAwarenessInterval = null;
+let spatialAwarenessTickRunning = false;
 const operator_sockets = new Set();
 // Host speakers always play bot and narrator lines; browser pages opt in as
 // extra monitors. See public/bot_voice.js for the client half.
@@ -298,6 +304,30 @@ function emitContestUpdate(socket = io) {
     }
 }
 
+// Statuses that mean a game is still being set up rather than played.
+const LAUNCHING_SESSION_STATUSES = new Set([
+    'provisioning',
+    'preparing',
+    'recording',
+    'planning',
+    'building',
+    'announcing-start',
+]);
+
+function isSessionLaunching() {
+    const status = gameSessionManager?.view()?.status;
+    return status ? LAUNCHING_SESSION_STATUSES.has(status) : false;
+}
+
+// The launch timeline used to be visible only inside a failure report. Streaming
+// it lets the dashboard narrate a slow start while it is happening. Bot stdout is
+// only forwarded during a launch, or a whole match of chatter would ride along.
+function streamLaunchEvent(entry) {
+    if (!io) return;
+    if (entry.stage === 'agent_log' && !isSessionLaunching()) return;
+    io.emit('launch-log', entry);
+}
+
 function emitToOperators(eventName, payload) {
     for (const socket of operator_sockets) {
         if (socket.connected) socket.emit(eventName, payload);
@@ -459,7 +489,8 @@ async function ensureContest(options) {
                 sendDirective: sendGameDirective,
                 clearQueuedVoice: clearContestVoice,
                 runArenaCommands: command => runMinecraftCommand(command),
-                announceStart: contest => contestAnnouncer.announceStart(contest),
+                announceStart: (contest, options) =>
+                    contestAnnouncer.announceStart(contest, options),
                 announcePlanning: (contest, options) =>
                     contestAnnouncer.announcePlanning(contest, options),
                 announceBuildPhase: (contest, options) =>
@@ -537,7 +568,12 @@ async function ensureContest(options) {
                     if (!connection?.socket) {
                         return Promise.reject(new Error(`Agent '${agentRef}' is not connected`));
                     }
-                    connection.socket.emit('survivor-challenge-config', config);
+                    connection.socket.emit('survivor-challenge-config', {
+                        ...config,
+                        worldKnowledge: config?.challengeId
+                            ? getArenaWorldKnowledge(config.challengeId)
+                            : null,
+                    });
                     return Promise.resolve();
                 },
                 phaseDurationsMs: {
@@ -731,6 +767,11 @@ function sendGameDirective(agentRef, prompt, options = {}) {
     if (options.react === true || options.pause !== true) {
         allowBot(connection.name);
     }
+    const activeGame = gameSessionManager?.view();
+    const gameId = connection.settings?.game_session?.gameId ?? activeGame?.gameId ?? null;
+    const worldKnowledge = options.worldKnowledge ?? (gameId
+        ? getArenaWorldKnowledge(gameId, { halfSize: activeGame?.arenaHalfSize })
+        : null);
     return new Promise((resolve, reject) => {
         connection.socket.timeout(20000).emit(
             'game-directive',
@@ -739,6 +780,9 @@ function sendGameDirective(agentRef, prompt, options = {}) {
                 pause: options.pause === true,
                 react: options.react === true,
                 endConversations: options.endConversations === true,
+                automaticAction: options.automaticAction ?? null,
+                floorY: Number.isFinite(options.floorY) ? options.floorY : null,
+                worldKnowledge,
             },
             (error, result) => {
                 if (error) {
@@ -1025,6 +1069,20 @@ async function getContestLeader(contest) {
             }
         }
         results = [...byTeam.values()];
+    } else if (contest.rules?.type === 'cake_race' && contestHasTeamSession(contest)) {
+        const scored = scoreTeamFirstFinish(contest).filter(result => !result.disqualified);
+        const byTeam = new Map();
+        for (const result of scored) {
+            const teamName = result.details?.teamName;
+            if (teamName && !byTeam.has(teamName)) {
+                byTeam.set(teamName, {
+                    participantId: teamName,
+                    score: result.score,
+                    details: result.details,
+                });
+            }
+        }
+        results = [...byTeam.values()];
     } else {
         results = defaultJudge(contest).filter(result => !result.disqualified);
     }
@@ -1092,6 +1150,9 @@ async function judgeContest(contest) {
     }
     if (contest.rules?.type === 'team_base_siege') {
         return scoreTeamBaseSiege(contest);
+    }
+    if (contest.rules?.type === 'cake_race' && contestHasTeamSession(contest)) {
+        return scoreTeamFirstFinish(contest);
     }
     return defaultJudge(contest);
 }
@@ -1545,6 +1606,39 @@ function requestWallState(connection) {
     });
 }
 
+async function broadcastSpatialAwareness() {
+    if (spatialAwarenessTickRunning) return;
+    spatialAwarenessTickRunning = true;
+    try {
+        const liveConnections = listConnections().filter(connection =>
+            connection.in_game && connection.socket?.connected
+        );
+        const states = await Promise.all(liveConnections.map(async connection => {
+            const state = await requestWallState(connection);
+            if (state) {
+                connection.full_state = state;
+                connection.full_state_at = Date.now();
+            }
+            return state;
+        }));
+        const snapshot = buildAgentSpatialSnapshot(states.filter(Boolean));
+        for (const connection of liveConnections) {
+            connection.socket.emit('spatial-state', snapshot);
+        }
+    } catch (error) {
+        console.error('Agent spatial awareness update failed:', error);
+    } finally {
+        spatialAwarenessTickRunning = false;
+    }
+}
+
+function startSpatialAwareness() {
+    if (spatialAwarenessInterval) return;
+    spatialAwarenessInterval = setInterval(broadcastSpatialAwareness, 1000);
+    spatialAwarenessInterval.unref?.();
+    setTimeout(broadcastSpatialAwareness, 100).unref?.();
+}
+
 function sendColonyDirective(connection) {
     if (!connection.socket) return;
     const directive = colonyCoordinator.directiveFor(connection.name);
@@ -1760,6 +1854,7 @@ class AgentConnection {
         this.settings = settings;
         this.in_game = false;
         this.full_state = null;
+        this.full_state_at = null;
         this.viewer_port = viewer_port;
         this.last_directive_at = 0;
         this.last_restart_attempt_at = 0;
@@ -2082,6 +2177,8 @@ export function createMindServer(host_public = false, port = 8080) {
     const app = express();
     server = http.createServer(app);
     io = new Server(server);
+    launchTelemetry.subscribe(streamLaunchEvent);
+    startSpatialAwareness();
 
     // Serve static files
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2483,6 +2580,12 @@ export function createMindServer(host_public = false, port = 8080) {
                 const report = error.diagnosticsReport || buildLaunchFailureReport(error);
                 callback({ success: false, error: error.message, report });
             }
+        });
+
+        // A dashboard opened part way through a launch still needs the steps that
+        // already went by.
+        socket.on('launch-log-history', (callback) => {
+            callback({ success: true, events: launchTelemetry.getLaunchEvents().slice(-120) });
         });
 
         socket.on('diagnostics-report', (callback) => {

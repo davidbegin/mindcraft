@@ -9,6 +9,10 @@ import { ContestCoordinator } from '../src/mindcraft/contest/contest_coordinator
 import { formatContestScore } from '../src/mindcraft/contest/contest_hud.js';
 import { getContestGamePreset } from '../src/mindcraft/contest/game_presets.js';
 import {
+    spleefProtectedColumns,
+    spleefTargetBlocks,
+} from '../src/agent/library/skills.js';
+import {
     remainingSpleefSurvivors,
     scoreSpleef,
 } from '../src/mindcraft/contest/spleef.js';
@@ -62,6 +66,38 @@ test('builds a snow platform over a water pit with shovel kits', async () => {
         assert.ok(commands.includes(`give ${name} diamond_shovel 1`));
         assert.ok(commands.includes(`give ${name} bread 16`));
         assert.ok(commands.includes(`effect give ${name} weakness infinite 255 true`));
+    }
+});
+
+test('a bot never targets the floor holding itself up, however a rival moves', () => {
+    const floorY = 100;
+    // A bot straddling a block boundary still has to protect both columns.
+    for (const own of [
+        { x: 100000.5, y: floorY + 1, z: 100000.5 },
+        { x: 100000.02, y: floorY + 1, z: 99999.98 },
+    ]) {
+        const protectedColumns = spleefProtectedColumns(own);
+        for (const velocity of [
+            { x: 0, z: 0 },
+            { x: 0.25, z: 0 },
+            { x: -0.25, z: 0.25 },
+            { x: 0, z: -0.25 },
+        ]) {
+            // The worst case: a rival standing right on top of the bot.
+            const targets = spleefTargetBlocks({ position: own, velocity }, floorY);
+            const reachable = targets.filter(target =>
+                !protectedColumns.has(`${target.x},${target.z}`)
+            );
+            for (const target of reachable) {
+                assert.ok(
+                    Math.max(
+                        Math.abs(target.x - Math.floor(own.x)),
+                        Math.abs(target.z - Math.floor(own.z))
+                    ) > 1,
+                    `would dig its own footing at ${target.x},${target.z}`
+                );
+            }
+        }
     }
 });
 

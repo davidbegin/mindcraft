@@ -46,6 +46,36 @@ test('starts close and wide participant cameras plus two overviews on one observ
     assert.ok(calls.every(call => call.options.syncEpochMs === 123456));
 });
 
+test('reports each camera as it comes up', async () => {
+    const progress = [];
+    const release = {};
+    const manager = new ContestRecordingManager({
+        requestAgent: (agentName) => new Promise(resolve => {
+            release[agentName] = () => resolve({ success: true });
+        }),
+    });
+
+    const started = manager.start({
+        contestId: 'contest-1',
+        participants: ['alice', 'bob'],
+        arena,
+        onProgress: detail => progress.push(detail),
+    });
+    // Cameras start together but finish apart, so the slow one must be named
+    // instead of leaving the launch on a single unchanging line.
+    await Promise.resolve();
+    release.bob();
+    await Promise.resolve();
+    release.alice();
+    await started;
+
+    assert.deepEqual(progress, [
+        'Starting cameras on 2 bots',
+        'Cameras rolling on 1/2 bots · waiting on alice',
+        'Cameras rolling on 2/2 bots',
+    ]);
+});
+
 test('keeps the session alive when a participant cannot record', async () => {
     const calls = [];
     const manager = new ContestRecordingManager({

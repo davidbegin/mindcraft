@@ -1,9 +1,11 @@
 /**
- * Guards command execution against wasteful loops:
+ * Guards command execution against wasteful loops and self-defeating moves:
  * - Blocks commands issued while the bot is dead (a corpse can't act).
  * - Blocks verbatim retries of a command+args pair that has already failed
  *   twice recently, and injects an escalation hint so the LLM changes
  *   strategy instead of burning turns on the same failure.
+ * - Blocks the commands that lose a Spleef match outright, since a prompt
+ *   telling a bot not to dig under itself is not an enforcement mechanism.
  */
 
 const FAILURE_WINDOW_MS = 5 * 60 * 1000;
@@ -32,6 +34,33 @@ const ESCALATION_HINTS = {
 };
 
 const GENERIC_HINT = 'Do NOT repeat it verbatim. Change your approach or parameters, or move on to a different step of your task.';
+
+// Spleef is lost the instant a bot drops through the floor it is standing on, so
+// the commands that break that floor — or that break the game's other rules —
+// are refused outright instead of being left to the prompt to discourage.
+const SPLEEF_BANNED_COMMANDS = new Map([
+    ['!digDown', 'it digs straight through the floor under your own feet, which eliminates you instantly'],
+    ['!clearArea', 'it breaks a whole region of floor, including the block you are standing on'],
+    ['!collectBlocks', 'it mines the snow floor out from under yourself'],
+    ['!placeHere', 'placing blocks is against the rules of Spleef'],
+    ['!placeRow', 'placing blocks is against the rules of Spleef'],
+    ['!plantArea', 'placing blocks is against the rules of Spleef'],
+    ['!attack', 'you cannot fight in Spleef; the floor is your only weapon'],
+    ['!attackPlayer', 'you cannot fight in Spleef; the floor is your only weapon'],
+    ['!newAction', 'custom code can dig under your own feet and lose the match'],
+]);
+
+/**
+ * Refuses a command that would drop the bot through the Spleef floor, and points
+ * it back at the one action that digs at rivals while protecting its own footing.
+ */
+export function spleefCommandRejection(commandName) {
+    const reason = SPLEEF_BANNED_COMMANDS.get(commandName);
+    if (!reason) return null;
+    return `${commandName} is banned during Spleef because ${reason}. `
+        + 'Never dig beneath your own feet. Use !playSpleef(100) instead: it chases rivals '
+        + 'and removes the ground under them while refusing to break your own footing.';
+}
 
 const FAILURE_PATTERNS = /timed out|timeout|failed|could not|cannot |can't |unable to|no path|path not found|don't have|ran out of time|nothing to place on|not found/i;
 const SUCCESS_PATTERNS = /you have reached|successfully|planted \d|collected \d|placed|crafted|broke \d|deposited|finished|cleared area|reached the/i;

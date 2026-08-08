@@ -14,6 +14,18 @@ const ARENA = Object.freeze({
     spectatorY: 140,
 });
 
+// One redstone pulse into a row of command blocks runs every teleport on the
+// same server tick, so the whole cast lands together instead of popping in one
+// at a time as separate RCON calls trickle through. The rig is parked just
+// above bedrock — below the depth-race floor, so no game's world rebuild lands
+// on it — and inside the force-loaded arena footprint so its chunks are always
+// ticking. It is torn back down the moment it fires.
+const TELEPORT_RIG = Object.freeze({
+    startX: ARENA.centerX - ARENA.halfSize + 1,
+    y: ARENA.worldBottomY + 2,
+    z: ARENA.centerZ,
+});
+
 const DOG_ARENA = Object.freeze({
     plainRadius: 15,
     wolfMinRadius: 22,
@@ -33,6 +45,31 @@ const CAKE_FARM_STATIONS = Object.freeze([
     Object.freeze({ dx: -16, dz: -16 }),
 ]);
 
+const DIAMOND_RACE_ORES = Object.freeze([
+    [-21, 78, -17], [-14, 72, 19], [-6, 83, 11], [3, 69, -24],
+    [9, 76, 22], [16, 81, -8], [23, 70, 14], [27, 86, -20],
+]);
+
+const NETHERITE_RACE_DIAMOND_ORES = Object.freeze([
+    [-27, 90, -21], [-24, 85, -7], [-22, 94, 12], [-19, 87, 25],
+    [-14, 92, -17], [-11, 84, 3], [-9, 96, 20], [-5, 89, -27],
+    [-2, 86, -12], [1, 93, 8], [4, 84, 25], [7, 95, -20],
+    [10, 88, -4], [13, 91, 16], [16, 85, 28], [19, 94, -11],
+    [22, 87, 5], [25, 92, 22], [27, 84, -25], [29, 96, 1],
+    [-28, 88, 27], [-16, 95, -29], [6, 90, 29], [24, 86, -30],
+]);
+
+const NETHERITE_RACE_ANCIENT_DEBRIS = Object.freeze([
+    [-29, 72, -24], [-27, 79, -9], [-25, 75, 8], [-23, 81, 24],
+    [-20, 70, -16], [-18, 77, 1], [-16, 73, 18], [-13, 80, -28],
+    [-11, 76, -11], [-9, 71, 7], [-7, 78, 26], [-4, 74, -21],
+    [-2, 81, -5], [1, 72, 13], [3, 79, 29], [6, 75, -14],
+    [8, 70, 4], [10, 77, 21], [13, 73, -26], [15, 80, -8],
+    [17, 76, 10], [20, 71, 27], [22, 78, -19], [24, 74, -2],
+    [26, 81, 15], [28, 72, -29], [30, 79, -12], [29, 75, 6],
+    [-30, 70, 29], [-21, 78, 30], [5, 73, -30], [18, 80, 30],
+]);
+
 const DOG_TREE_SPECIES = Object.freeze([
     Object.freeze({ log: 'oak_log', leaves: 'oak_leaves' }),
     Object.freeze({ log: 'birch_log', leaves: 'birch_leaves' }),
@@ -46,6 +83,9 @@ const PODIUM_BLOCKS = Object.freeze([
 ]);
 const PODIUM_WIDTH = 3;
 const PODIUM_GAP = 1;
+// How often the world rebuild reports in. Every command would flood the launch
+// log for no extra insight.
+const PROGRESS_COMMAND_INTERVAL = 25;
 
 const DEPTH_RACE_KIT = Object.freeze([
     'diamond_pickaxe 1',
@@ -127,7 +167,9 @@ const GAME_KITS = Object.freeze({
 });
 
 function isTeamArenaGame(gameId) {
-    return gameId === 'team_tower_battle' || gameId === 'team_base_siege';
+    return gameId === 'cake_race'
+        || gameId === 'team_tower_battle'
+        || gameId === 'team_base_siege';
 }
 
 function isDepthRaceGame(gameId) {
@@ -162,6 +204,69 @@ export function getArenaJoinInfo() {
         teleportCommand:
             `/tp @s ${ARENA.centerX} ${ARENA.spectatorY} ${ARENA.centerZ}`,
     };
+}
+
+function absoluteLandmarks(label, offsets) {
+    return offsets.map(([dx, y, dz], index) => ({
+        label: `${label} ${index + 1}`,
+        position: { x: ARENA.centerX + dx, y, z: ARENA.centerZ + dz },
+    }));
+}
+
+export function getArenaWorldKnowledge(gameId, options = {}) {
+    const halfSize = Number.isFinite(options.halfSize)
+        ? Math.max(4, Math.min(ARENA.halfSize, Math.floor(options.halfSize)))
+        : ARENA.halfSize;
+    const knowledge = {
+        gameId: gameId || null,
+        arena: {
+            center: { x: ARENA.centerX, y: ARENA.floorY, z: ARENA.centerZ },
+            floorY: ARENA.floorY,
+            bounds: {
+                minX: ARENA.centerX - halfSize,
+                maxX: ARENA.centerX + halfSize,
+                minZ: ARENA.centerZ - halfSize,
+                maxZ: ARENA.centerZ + halfSize,
+            },
+        },
+        landmarks: [],
+        zones: [],
+    };
+    if (gameId === 'cake_race') {
+        knowledge.landmarks = CAKE_FARM_STATIONS.map(({ dx, dz }, index) => ({
+            label: `Cake resource station ${index + 1} (wheat, sugar cane, cow, chicken)`,
+            position: { x: ARENA.centerX + dx, y: ARENA.floorY + 1, z: ARENA.centerZ + dz },
+        }));
+    } else if (gameId === 'diamond_race') {
+        knowledge.landmarks = absoluteLandmarks('Diamond ore', DIAMOND_RACE_ORES);
+    } else if (gameId === 'netherite_race') {
+        knowledge.landmarks = [
+            ...absoluteLandmarks('Diamond ore', NETHERITE_RACE_DIAMOND_ORES),
+            ...absoluteLandmarks('Ancient debris', NETHERITE_RACE_ANCIENT_DEBRIS),
+        ];
+    } else if (gameId === 'dog_race') {
+        knowledge.zones = [
+            {
+                label: 'Spawn plain',
+                description: `within ${DOG_ARENA.plainRadius} blocks of the arena center`,
+            },
+            {
+                label: 'Wolf and bone wilderness',
+                description: `server-generated outside radius ${DOG_ARENA.plainRadius}; wolves begin beyond radius ${DOG_ARENA.wolfMinRadius}`,
+            },
+        ];
+    } else if (isDepthRaceGame(gameId)) {
+        knowledge.zones = [{
+            label: 'Depth race mine',
+            description: `solid stone/deepslate from y ${ARENA.floorY - 2} down to y ${ARENA.depthBottomY}, with bedrock below`,
+        }];
+    } else if (gameId === 'spleef') {
+        knowledge.zones = [{
+            label: 'Spleef floor',
+            description: `snow blocks at y ${ARENA.floorY}; water from y ${ARENA.floorY - 7} through ${ARENA.floorY - 1}`,
+        }];
+    }
+    return knowledge;
 }
 
 /**
@@ -515,12 +620,7 @@ function buildWorldResetCommands(gameId, options = {}) {
             + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
         );
 
-        const ores = [
-            [-21, 78, -17], [-14, 72, 19], [-6, 83, 11],
-            [3, 69, -24], [9, 76, 22], [16, 81, -8],
-            [23, 70, 14], [27, 86, -20],
-        ];
-        for (const [dx, y, dz] of ores) {
+        for (const [dx, y, dz] of DIAMOND_RACE_ORES) {
             commands.push(
                 `setblock ${ARENA.centerX + dx} ${y} `
                 + `${ARENA.centerZ + dz} diamond_ore`
@@ -548,32 +648,14 @@ function buildWorldResetCommands(gameId, options = {}) {
             + `${maxX} ${ARENA.floorY} ${maxZ} grass_block`
         );
 
-        const diamondOres = [
-            [-27, 90, -21], [-24, 85, -7], [-22, 94, 12], [-19, 87, 25],
-            [-14, 92, -17], [-11, 84, 3], [-9, 96, 20], [-5, 89, -27],
-            [-2, 86, -12], [1, 93, 8], [4, 84, 25], [7, 95, -20],
-            [10, 88, -4], [13, 91, 16], [16, 85, 28], [19, 94, -11],
-            [22, 87, 5], [25, 92, 22], [27, 84, -25], [29, 96, 1],
-            [-28, 88, 27], [-16, 95, -29], [6, 90, 29], [24, 86, -30],
-        ];
-        for (const [dx, y, dz] of diamondOres) {
+        for (const [dx, y, dz] of NETHERITE_RACE_DIAMOND_ORES) {
             commands.push(
                 `setblock ${ARENA.centerX + dx} ${y} `
                 + `${ARENA.centerZ + dz} diamond_ore`
             );
         }
 
-        const ancientDebris = [
-            [-29, 72, -24], [-27, 79, -9], [-25, 75, 8], [-23, 81, 24],
-            [-20, 70, -16], [-18, 77, 1], [-16, 73, 18], [-13, 80, -28],
-            [-11, 76, -11], [-9, 71, 7], [-7, 78, 26], [-4, 74, -21],
-            [-2, 81, -5], [1, 72, 13], [3, 79, 29], [6, 75, -14],
-            [8, 70, 4], [10, 77, 21], [13, 73, -26], [15, 80, -8],
-            [17, 76, 10], [20, 71, 27], [22, 78, -19], [24, 74, -2],
-            [26, 81, 15], [28, 72, -29], [30, 79, -12], [29, 75, 6],
-            [-30, 70, 29], [-21, 78, 30], [5, 73, -30], [18, 80, 30],
-        ];
-        for (const [dx, y, dz] of ancientDebris) {
+        for (const [dx, y, dz] of NETHERITE_RACE_ANCIENT_DEBRIS) {
             commands.push(
                 `setblock ${ARENA.centerX + dx} ${y} `
                 + `${ARENA.centerZ + dz} ancient_debris`
@@ -754,6 +836,66 @@ function buildParticipantCommands(gameId, participants, options = {}) {
             commands.push(`give ${name} ${item}`);
         }
     });
+    return commands;
+}
+
+/**
+ * Split a participant command list into the setup work (clear/give/effect/
+ * spawnpoint) and the `tp` lines, so the teleports can be fired together on a
+ * single tick while everything else still runs in order.
+ */
+export function partitionTeleportCommands(commands = []) {
+    const setup = [];
+    const teleports = [];
+    for (const command of commands) {
+        if (typeof command === 'string' && command.startsWith('tp ')) {
+            teleports.push(command);
+        } else {
+            setup.push(command);
+        }
+    }
+    return { setup, teleports };
+}
+
+/**
+ * Turn a batch of `tp` commands into a chain-command-block rig: one impulse
+ * block that waits for redstone, then one always-active chain block per
+ * remaining teleport. A single redstone pulse under the impulse cascades the
+ * whole chain in the same tick, so every bot moves simultaneously no matter how
+ * many separate RCON round-trips it took to build the rig. The rig is then torn
+ * down. Returns the ordered RCON commands to build, fire, and clear it.
+ */
+export function buildSimultaneousTeleportCommands(teleportCommands = []) {
+    const teleports = teleportCommands.filter(
+        command => typeof command === 'string' && command.length > 0
+    );
+    if (teleports.length === 0) return [];
+
+    const { startX, y, z } = TELEPORT_RIG;
+    const endX = startX + teleports.length - 1;
+    const triggerY = y - 1;
+    const commands = [
+        // Wipe any leftover rig (and the block the trigger sits in) before rebuilding.
+        `fill ${startX} ${triggerY} ${z} ${endX} ${y} ${z} air`,
+    ];
+    teleports.forEach((teleport, index) => {
+        const block = index === 0 ? 'command_block' : 'chain_command_block';
+        // The impulse waits for redstone (auto:0b); chain blocks fire whenever
+        // the block pointing into them runs (auto:1b), all in one tick.
+        const auto = index === 0 ? '0b' : '1b';
+        commands.push(
+            `setblock ${startX + index} ${y} ${z} `
+            + `${block}[facing=east]{Command:${JSON.stringify(teleport)},auto:${auto}}`
+        );
+    });
+    commands.push(
+        // Rising edge under the impulse fires the whole chain on this tick.
+        `setblock ${startX} ${triggerY} ${z} redstone_block`,
+        // Teleports have landed — pull the rig so it never shows in play or
+        // stacks up between rounds.
+        `setblock ${startX} ${triggerY} ${z} air`,
+        `fill ${startX} ${y} ${z} ${endX} ${y} ${z} air`
+    );
     return commands;
 }
 
@@ -979,7 +1121,15 @@ export class ContestArenaManager {
 
         onProgress?.(`Teleporting and equipping ${participants.length} bots`);
         const participantCommands = buildParticipantCommands(preset.id, participants, options);
-        for (const command of participantCommands) {
+        // Equip and prep each bot in order, but hold their teleports so every bot
+        // lands on the same tick via the command-block rig instead of popping in
+        // one at a time as the RCON calls trickle through.
+        const { setup: participantSetup, teleports } = partitionTeleportCommands(participantCommands);
+        for (const command of participantSetup) {
+            await this.runCommand(command);
+        }
+        const teleportRigCommands = buildSimultaneousTeleportCommands(teleports);
+        for (const command of teleportRigCommands) {
             await this.runCommand(command);
         }
         const teamCommands = isTeamArenaGame(preset.id)
@@ -990,7 +1140,12 @@ export class ContestArenaManager {
             await this.runCommand(command);
         }
 
-        const commands = [...worldCommands, ...participantCommands, ...teamCommands];
+        const commands = [
+            ...worldCommands,
+            ...participantSetup,
+            ...teleportRigCommands,
+            ...teamCommands,
+        ];
         const participantSet = new Set(participants);
         let spectators = Array.isArray(options.spectators)
             ? [...new Set(options.spectators)]

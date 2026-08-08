@@ -1,5 +1,6 @@
 import pf from 'mineflayer-pathfinder';
 import * as mc from '../../utils/mcdata.js';
+import { finitePosition } from '../../utils/spatial.js';
 
 
 export function getNearestFreeSpace(bot, size=1, distance=8) {
@@ -202,7 +203,11 @@ export function getNearbyPlayers(bot, maxDistance) {
     for (const entity of Object.values(bot.entities)) {
         const distance = entity.position.distanceTo(bot.entity.position);
         if (distance > maxDistance) continue;
-        if (entity.type == 'player' && entity.username != bot.username) {
+        if (
+            entity.type == 'player'
+            && entity !== bot.entity
+            && entity.username != bot.username
+        ) {
             players.push({ entity: entity, distance: distance });
         } 
     }
@@ -212,6 +217,28 @@ export function getNearbyPlayers(bot, maxDistance) {
         res.push(players[i].entity);
     }
     return res;
+}
+
+export function getNearbyPlayerDetails(bot, maxDistance = 64) {
+    return getNearbyPlayers(bot, maxDistance).map(entity => ({
+        username: entity.username,
+        position: finitePosition(entity.position),
+        distance: bot.entity.position.distanceTo(entity.position),
+        dimension: bot.game?.dimension ?? null,
+    }));
+}
+
+export function getNearbyEntityDetails(bot, maxDistance = 16) {
+    return getNearbyEntities(bot, maxDistance)
+        .filter(entity => entity !== bot.entity)
+        .map(entity => ({
+            id: entity.id,
+            name: entity.username || entity.name || entity.type || 'unknown',
+            type: entity.type || null,
+            position: finitePosition(entity.position),
+            distance: bot.entity.position.distanceTo(entity.position),
+            entity,
+        }));
 }
 
 // Helper function to get villager profession from metadata

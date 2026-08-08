@@ -35,19 +35,20 @@ export function buildPressureRoundAnnouncement(halfSize, pressureRound) {
 }
 
 export function buildContestResultAnnouncement(contest) {
-    if (contest?.rules?.type === 'team_tower_battle' || contest?.rules?.type === 'team_base_siege') {
-        const winningTeams = [...new Set(
-            (contest.results || [])
-                .filter(result => result.rank === 1)
-                .map(result => result.details?.teamName)
-                .filter(Boolean)
-        )];
+    const winningTeams = [...new Set(
+        (contest.results || [])
+            .filter(result => result.rank === 1)
+            .map(result => result.details?.teamName)
+            .filter(Boolean)
+    )];
+    if (
+        ['team_tower_battle', 'team_base_siege', 'cake_race'].includes(contest?.rules?.type)
+        && winningTeams.length > 0
+    ) {
         if (winningTeams.length === 1) {
             return `And the winning team is... ${winningTeams[0]}! ${winningTeams[0]} wins!`;
         }
-        if (winningTeams.length > 1) {
-            return `The game ends in a tie between ${winningTeams.join(' and ')}!`;
-        }
+        return `The game ends in a tie between ${winningTeams.join(' and ')}!`;
     }
     const winners = Array.isArray(contest?.winnerIds) ? contest.winnerIds.filter(Boolean) : [];
     if (winners.length === 0) return 'Game over. There was no winner.';
@@ -153,9 +154,20 @@ export class ContestAnnouncer {
         await this.speak(buildPressureRoundAnnouncement(options.halfSize, options.pressureRound));
     }
 
-    async announceStart(contest) {
+    // The pause after the callout is deliberate — it gives the spoken line time
+    // to land before the bots move — but it looked identical to a hang, so the
+    // wait is counted down out loud to whoever is watching the dashboard.
+    async announceStart(contest, options = {}) {
+        const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+        onProgress?.('Speaking the start announcement');
         await this.speak(buildContestStartAnnouncement(contest));
-        await this.sleep(this.startDelayMs);
+        let remaining = Math.max(0, this.startDelayMs);
+        while (remaining > 0) {
+            onProgress?.(`Starting in ${Math.ceil(remaining / 1000)}…`);
+            const slice = Math.min(1000, remaining);
+            await this.sleep(slice);
+            remaining -= slice;
+        }
     }
 
     async announceResult(contest) {

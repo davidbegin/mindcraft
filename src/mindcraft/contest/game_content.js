@@ -169,13 +169,27 @@ export function buildParticipantGameDirective(
         : participantIds.filter(name => name !== participantName);
     const isAttacker = team.attackerId === participantName;
     const isBaseSiege = team.contestType === 'team_base_siege';
+    const isCakeRace = team.contestType === 'cake_race';
+    const isSpleef = team.contestType === 'spleef';
     const lines = [
         presetPrompt,
         `COMPETITORS: ${participantIds.join(', ')}.`,
         'Choose a signature strategy that fits your personality and differs from the obvious default approach.',
         'Say that strategy out loud once near the start. Later, only narrate new decisions, discoveries, tradeoffs, or changes to the plan; never recycle earlier lines or talking points.',
     ];
-    if (team.teamId && isBaseSiege) {
+    if (isSpleef) {
+        lines.push(
+            `ACTIVE RIVALS: ${rivals.join(', ') || 'none'}.`,
+            'The server starts !playSpleef(100) for you automatically. Keep that action running until you fall or win.'
+        );
+    } else if (team.teamId && isCakeRace) {
+        lines.push(
+            `YOUR TEAM: ${team.teamId}. Your teammates are ${teammates.join(', ') || 'none'}.`,
+            `Enemy team: ${rivals.join(', ') || 'the other side'}.`,
+            'Split the cake ingredients across teammates (milk, sugar cane, eggs, wheat), share what you gather, and craft as soon as your team has three milk buckets, two sugar, one egg, and three wheat.',
+            'Any teammate crafting the cake wins for the whole team. Prefer !startConversation for short handoffs with teammates; do not give ingredients or help to the enemy.',
+        );
+    } else if (team.teamId && isBaseSiege) {
         lines.push(
             `YOUR TEAM: ${team.teamId}. Your teammates are ${teammates.join(', ') || 'none'}.`,
             team.captainId
@@ -204,7 +218,7 @@ export function buildParticipantGameDirective(
                 : 'Never attack a teammate. Build onto the same team structure, make room for each other, and keep paths and standing room open.'
         );
     }
-    if (rivals.length > 0) {
+    if (rivals.length > 0 && !isSpleef && !isCakeRace) {
         lines.push(
             `Your rivals are ${rivals.join(', ')}. Occasionally use !startConversation for a brief mind game with one of them when there is a strategic reason.`,
             'Probe, predict, bluff, misdirect, bargain, or challenge their strategy. A playful jab is fine sometimes, but do not turn every conversation into a roast.',

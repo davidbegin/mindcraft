@@ -222,14 +222,19 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
     cake_race: Object.freeze({
         id: 'cake_race',
         title: 'First Cake',
-        blurb: 'Gather milk, sugar, an egg, and wheat, then craft the first cake.',
+        blurb: 'Two teams race to gather cake ingredients and craft first.',
         durationLabel: '20 min cap',
         durationMs: 20 * 60_000,
+        // Classic six-bot test cast: Billy, Kimmy, Marcus, Dario, Chip, Bridget.
+        defaultCharacters: Object.freeze(CONTEST_BOT_CHARACTERS.slice(0, 6)),
+        defaultParticipantCount: 6,
         prompt:
-            'CONTEST: First Cake. Your goal is to be the first competitor to craft a cake. You start with three empty buckets, a crafting table, and food, but none of the cake ingredients. Search the farm arena for cows to milk, chickens laying eggs, mature wheat, and sugar cane. Collect three milk buckets, two sugar, one egg, and three wheat, then use your crafting table to make the cake. Finding the ingredients is part of the race: do not help rivals or share resources. The game ends automatically the instant the first cake is crafted. Develop your own route and ingredient order, explain the reasoning once, and only announce later changes or discoveries.',
+            'CONTEST: First Cake. This is a two-team race. Your goal is for YOUR TEAM to craft a cake before the other team does — any teammate crafting the cake wins for everyone on your side. You start with three empty buckets, a crafting table, and food, but none of the cake ingredients. Search the farm arena for cows to milk, chickens laying eggs, mature wheat, and sugar cane. Collect three milk buckets, two sugar, one egg, and three wheat, then use a crafting table to make the cake. Coordinate with teammates: split ingredient routes, share what you find, and craft as soon as your team has a full set. Do not help the enemy team or hand them resources. The game ends automatically the instant the first cake is crafted. State your team plan once, then only announce later changes, handoffs, or discoveries.',
         rules: Object.freeze({
             type: 'cake_race',
             winItem: 'cake',
+            teamCount: 2,
+            minimumPlayersPerTeam: 3,
             ingredients: Object.freeze({
                 milk_bucket: 3,
                 sugar: 2,
@@ -415,17 +420,15 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
         durationMs: 5 * 60_000,
         prompt:
             'CONTEST: Spleef. You stand on a single thin platform of snow blocks suspended over a deep water pit, holding a diamond shovel. There is only ONE layer of snow: every block anyone breaks becomes a permanent hole, and the instant you drop off the snow into the pit you are eliminated for good. Weakness is active so you cannot fight — the floor itself is your only weapon. Do not place blocks and do not punch or attack anyone.'
-            + '\n\nNEVER STOP MOVING: constantly run across the arena while destroying snow across as many different areas as possible. Standing on the same block for 2 seconds makes that block automatically break beneath you. Sitting still, waiting safely, camping an island, or choosing any plan that leaves you stationary is forbidden and will make you fall. Every game plan must combine continuous movement with aggressive floor removal.'
-            + '\n\nTHE WHOLE POINT: you win by making OTHER players fall, never by digging your own way down. The last competitor still standing on the snow wins. Falling into the pit loses instantly — and a hole you dug under yourself counts exactly the same as being outplayed. Most losers in Spleef defeat themselves by digging beneath their own feet; do not be one of them.'
-            + '\n\nSURVIVAL RULE #1 — PROTECT YOUR OWN FEET: never break the block you are standing on, and never break a block you are about to step onto. Never dig straight down and never use any dig-down behavior. Never walk, run, jump, or pathfind into or across a hole. Before EVERY dig, confirm the block you are about to break is under or beside a RIVAL — never under you — and that you still have solid snow on all sides of your own feet. When you break blocks, aim at a rival\'s coordinates, not your own position.'
-            + '\n\nHOW TO ACTUALLY ELIMINATE A RIVAL: break the snow directly beneath an opponent, or in the exact spot they are moving toward, while you stay on intact snow a couple of blocks away from the gap. Since you cannot touch them, every kill is a trick: (1) open a hole just AHEAD of a moving rival so they run into it, (2) dig the snow BETWEEN a rival and the nearest solid ground to cut off their escape, or (3) carve a ring around a rival so they are stranded on a shrinking island that finally collapses under them. Bait rivals into chasing you across thin, half-dug ground, then side-step onto solid snow and let the gaps swallow them. Read where each rival is heading and dig for where they WILL be, not where they are.'
+            + '\n\nTHE WHOLE POINT: compete aggressively by making OTHER players fall. Target every rival and remove as much of their usable ground as you can. The last competitor still standing on the snow wins. Falling into the pit loses instantly — and a hole you dug under yourself counts exactly the same as being outplayed.'
+            + '\n\nSURVIVAL RULE #1 — PROTECT YOUR OWN FEET: never break the block you are standing on, the eight blocks touching it, or a block you are about to step onto. Digging under yourself is instant self-elimination, so it is never a move, never a shortcut, and never worth a trade. Never dig straight down and never use any dig-down behavior. Never walk, run, jump, or pathfind into or across a hole. Before EVERY dig, confirm the block you are about to break is under or beside a RIVAL — never under you — and that you still have solid snow on all sides of your own feet. When you break blocks, aim at a rival\'s coordinates, not your own position.'
+            + '\n\nHOW TO ACTUALLY ELIMINATE A RIVAL: break the snow directly beneath an opponent, then open a hole ahead of a moving rival. Lead moving targets, cut off their escape routes, and carve around stationary targets to isolate them. Keep switching to a reachable rival instead of digging random empty terrain. Read where each rival is heading and dig for where they WILL be, not only where they are.'
             + '\n\nSTAY ALIVE WHILE YOU HUNT: always track where the existing holes are and keep unbroken snow behind you as an escape route. Never back up, flee, or chase in a direction where the floor is missing. If the snow beside you starts vanishing, retreat toward the thickest remaining snow instead of digging more. Patience beats frenzy: a calm hunter outlasts rivals who panic and dig themselves into the pit.'
-            + '\n\nChoose a distinctive hunting-and-positioning strategy, say it once, and afterward only narrate meaningful tactical changes.',
+            + '\n\nThe server automatically starts !playSpleef(100) at the opening bell. That dedicated action continuously hunts rivals for the entire match and refuses to break your own footing, so do not interrupt it with conversations, waiting, generic movement, clearArea, digDown, or one-off block commands.',
         rules: Object.freeze({
             type: 'spleef',
             scoring: 'last-standing',
             floorY: 100,
-            stationaryFloorBreakMs: 2_000,
         }),
         metadata: Object.freeze({
             arena: 'spleef-v1',
@@ -477,21 +480,31 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
 });
 
 export function listContestGamePresets() {
-    return Object.values(CONTEST_GAME_PRESETS).map(preset => ({
-        id: preset.id,
-        title: preset.title,
-        blurb: preset.blurb,
-        durationLabel: preset.durationLabel,
-        durationMs: preset.durationMs,
-        planningMs: preset.rules?.planningMs ?? 0,
-        buildPhaseMs: preset.rules?.buildPhaseMs ?? 0,
-        teamCount: preset.rules?.teamCount ?? 0,
-        pvp: Boolean(preset.metadata?.pvp),
-        radicalReset: Boolean(preset.metadata?.radicalReset),
-        needsFreshWorld: Boolean(preset.metadata?.needsFreshWorld),
-        narrator: { ...CONTEST_NARRATOR_CHARACTER },
-        defaultCharacters: CONTEST_BOT_CHARACTERS.map(character => ({ ...character })),
-    }));
+    return Object.values(CONTEST_GAME_PRESETS).map(preset => {
+        const teamCount = preset.rules?.teamCount ?? 0;
+        const minimumPlayersPerTeam = preset.rules?.minimumPlayersPerTeam ?? 0;
+        const characters = preset.defaultCharacters || CONTEST_BOT_CHARACTERS;
+        // Prefer an explicit cast size (First Cake's classic six); otherwise seat
+        // every default character so a team game still opens as a model variety pack.
+        const defaultParticipantCount = preset.defaultParticipantCount ?? characters.length;
+        return {
+            id: preset.id,
+            title: preset.title,
+            blurb: preset.blurb,
+            durationLabel: preset.durationLabel,
+            durationMs: preset.durationMs,
+            planningMs: preset.rules?.planningMs ?? 0,
+            buildPhaseMs: preset.rules?.buildPhaseMs ?? 0,
+            teamCount,
+            minimumPlayersPerTeam,
+            defaultParticipantCount,
+            pvp: Boolean(preset.metadata?.pvp),
+            radicalReset: Boolean(preset.metadata?.radicalReset),
+            needsFreshWorld: Boolean(preset.metadata?.needsFreshWorld),
+            narrator: { ...CONTEST_NARRATOR_CHARACTER },
+            defaultCharacters: characters.map(character => ({ ...character })),
+        };
+    });
 }
 
 export function getContestGamePreset(gameId) {

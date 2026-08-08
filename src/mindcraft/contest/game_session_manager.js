@@ -7,7 +7,9 @@ import {
 } from './game_content.js';
 import {
     buildPressureRoundCommands,
+    buildSimultaneousTeleportCommands,
     getArenaJoinInfo,
+    partitionTeleportCommands,
 } from './arena_manager.js';
 import {
     canDeferSiegeDeadline,
@@ -507,6 +509,7 @@ export class GameSessionManager {
             participantIds,
             planningMs,
             buildPhaseMs,
+            arenaHalfSize: getArenaJoinInfo().arena.halfSize ?? 32,
             teamNames: teamSetup?.teamNames ?? null,
             teamByParticipant: teamSetup?.teamByParticipant ?? null,
             teams: teamSetup?.teams ?? null,
@@ -564,6 +567,7 @@ export class GameSessionManager {
                 const settings = this.buildAgentSettings(profile, {
                     contestId: contest.id,
                     sessionId: this.active.sessionId,
+                    gameId: preset.id,
                     participantIds,
                     rivalIds: participantIds.filter(name =>
                         name !== participant.name
@@ -589,11 +593,6 @@ export class GameSessionManager {
                     contestType: preset.rules?.type ?? null,
                     floorY: Number.isFinite(preset.rules?.floorY)
                         ? preset.rules.floorY
-                        : null,
-                    stationaryFloorBreakMs: Number.isFinite(
-                        preset.rules?.stationaryFloorBreakMs
-                    )
-                        ? preset.rules.stationaryFloorBreakMs
                         : null,
                 });
                 const result = await this.createAgent(settings);
@@ -718,7 +717,13 @@ export class GameSessionManager {
                     // Planning chatter must not swallow the goal that starts the
                     // clock; a queued directive would idle the bot for the whole
                     // conversation timeout.
-                    { endConversations: true }
+                    {
+                        endConversations: true,
+                        automaticAction: preset.rules?.type === 'spleef'
+                            ? 'play-spleef'
+                            : null,
+                        floorY: preset.rules?.floorY,
+                    }
                 ).then(result => {
                     goalsSent += 1;
                     this._setStageDetail(
@@ -920,12 +925,19 @@ export class GameSessionManager {
             teamByParticipant: gameSession.teamByParticipant || {},
             halfSize: nextHalf,
         });
-        for (const command of commands) {
+        // Shrink the walls and re-kit each survivor in order, then fire all of
+        // their teleports on a single tick so the tribe is repositioned together.
+        const { setup, teleports } = partitionTeleportCommands(commands);
+        for (const command of setup) {
+            await this.runArenaCommands(command);
+        }
+        for (const command of buildSimultaneousTeleportCommands(teleports)) {
             await this.runArenaCommands(command);
         }
 
         gameSession.pressureRound = pressureRound;
         gameSession.arenaHalfSize = nextHalf;
+        if (this.active) this.active.arenaHalfSize = nextHalf;
         contest.deadlineAt = this.clock() + contest.durationMs;
 
         await this._announce(

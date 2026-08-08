@@ -784,11 +784,6 @@ export class SurvivorSessionManager {
             floorY: Number.isFinite(preset.rules?.floorY)
                 ? preset.rules.floorY
                 : null,
-            stationaryFloorBreakMs: Number.isFinite(
-                preset.rules?.stationaryFloorBreakMs
-            )
-                ? preset.rules.stationaryFloorBreakMs
-                : null,
         })));
         await this._broadcastPhase();
         this._emit();
@@ -808,7 +803,15 @@ export class SurvivorSessionManager {
             let challengeResult;
             if (state.merged) {
                 challengeResult = { winnerId: contest.winnerIds[0] };
-            } else if (contest.rules.type === 'depth_race' || contest.rules.type === 'tower_battle') {
+            } else if (
+                contest.rules.type === 'depth_race'
+                || contest.rules.type === 'tower_battle'
+                // Spleef tribes are told they are scored on their longest
+                // survivor. Taking the individual winner's tribe instead decides
+                // immunity by result order whenever the clock expires with
+                // survivors on both tribes, since they all score the same.
+                || contest.rules.type === 'spleef'
+            ) {
                 const tribeByParticipant = Object.fromEntries(
                     state.participantIds.map(id => [id, state.players[id].tribe])
                 );
@@ -818,6 +821,8 @@ export class SurvivorSessionManager {
                     y: result.details?.y,
                     depthY: result.details?.y,
                     height: result.details?.height ?? result.score,
+                    survivedMs: result.details?.survivedMs,
+                    surviving: result.details?.surviving === true,
                 }));
                 challengeResult = resolveTeamChallenge(preset, results, tribeByParticipant);
                 if (challengeResult.tied) {

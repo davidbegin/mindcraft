@@ -66,9 +66,12 @@ export {
     survivingTeamsForSiege,
 } from './team_base_siege.js';
 export {
+    contestHasTeamSession,
     isTeamContestType,
     isTeamEliminationContest,
+    isTeamItemRaceContest,
     isTeamTowerContest,
+    scoreTeamFirstFinish,
     TEAM_CONTEST_TYPES,
 } from './team_games.js';
 export {
@@ -82,6 +85,7 @@ export {
     buildPressureRoundCommands,
     buildSurvivorEliminationCommands,
     getArenaJoinInfo,
+    getArenaWorldKnowledge,
     parseOnlinePlayers,
     spectatorWarpCommands,
 } from './arena_manager.js';

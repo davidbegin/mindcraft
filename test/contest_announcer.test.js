@@ -36,6 +36,27 @@ test('builds game start and winner announcements', () => {
         }),
         'And the winning team is... Ember! Ember wins!'
     );
+    assert.equal(
+        buildContestResultAnnouncement({
+            rules: { type: 'cake_race' },
+            winnerIds: ['Billy', 'Kimmy', 'Marcus'],
+            results: [
+                { participantId: 'Billy', rank: 1, details: { teamName: 'Ember' } },
+                { participantId: 'Kimmy', rank: 1, details: { teamName: 'Ember' } },
+                { participantId: 'Marcus', rank: 1, details: { teamName: 'Ember' } },
+                { participantId: 'Dario', rank: 2, details: { teamName: 'Tide' } },
+            ],
+        }),
+        'And the winning team is... Ember! Ember wins!'
+    );
+    assert.equal(
+        buildContestResultAnnouncement({
+            rules: { type: 'cake_race' },
+            winnerIds: ['Billy'],
+            results: [{ participantId: 'Billy', rank: 1 }],
+        }),
+        'And the winner is... Billy! Billy wins!'
+    );
 });
 
 test('opens the planning phase without holding the clock itself', async () => {
@@ -72,6 +93,7 @@ test('opens the planning phase without holding the clock itself', async () => {
 
 test('waits after the spoken countdown before starting play', async () => {
     const calls = [];
+    const progress = [];
     const announcer = new ContestAnnouncer({
         startDelayMs: 5000,
         speak: (text, options) => {
@@ -84,16 +106,33 @@ test('waits after the spoken countdown before starting play', async () => {
         },
     });
 
-    await announcer.announceStart({ title: 'First Dog' });
+    await announcer.announceStart(
+        { title: 'First Dog' },
+        { onProgress: detail => progress.push(detail) }
+    );
     await announcer.announceResult({ winnerIds: ['billy'] });
 
-    assert.deepEqual(calls, [
-        ['speak', 'First Dog starting. Three. Two. One. Go!', undefined],
-        ['sleep', 5000],
+    const sleeps = calls.filter(([type]) => type === 'sleep').map(([, ms]) => ms);
+    assert.equal(sleeps.reduce((total, ms) => total + ms, 0), 5000);
+    assert.deepEqual(
+        calls.filter(([type]) => type === 'speak'),
         [
-            'speak',
-            'And the winner is... billy! billy wins!',
-            { delivery: 'booming' },
-        ],
+            ['speak', 'First Dog starting. Three. Two. One. Go!', undefined],
+            [
+                'speak',
+                'And the winner is... billy! billy wins!',
+                { delivery: 'booming' },
+            ],
+        ]
+    );
+    // The wait is broadcast a second at a time so the dashboard can show the
+    // pause counting down instead of looking stuck.
+    assert.deepEqual(progress, [
+        'Speaking the start announcement',
+        'Starting in 5…',
+        'Starting in 4…',
+        'Starting in 3…',
+        'Starting in 2…',
+        'Starting in 1…',
     ]);
 });

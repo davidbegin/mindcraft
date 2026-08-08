@@ -4,9 +4,34 @@ import { getCommandDocs } from './index.js';
 import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
 import { load } from 'cheerio';
+import { formatPosition } from '../../utils/spatial.js';
+import { knownBotPositionLines } from '../library/spatial_context.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
+}
+
+function formatNearbyPlayer(player) {
+    return `${player.username} at ${formatPosition(player.position)} (${player.distance.toFixed(1)} blocks away)`;
+}
+
+function formatWorldKnowledge(worldKnowledge) {
+    if (!worldKnowledge) return [];
+    const lines = [];
+    if (worldKnowledge.arena) {
+        const { center, bounds, floorY } = worldKnowledge.arena;
+        lines.push(
+            `Arena center: ${formatPosition(center, 0)}; floor y: ${floorY}; `
+            + `bounds x ${bounds.minX}..${bounds.maxX}, z ${bounds.minZ}..${bounds.maxZ}`
+        );
+    }
+    for (const landmark of worldKnowledge.landmarks || []) {
+        lines.push(`${landmark.label}: ${formatPosition(landmark.position, 0)}`);
+    }
+    for (const zone of worldKnowledge.zones || []) {
+        lines.push(`${zone.label}: ${zone.description}`);
+    }
+    return lines;
 }
 
 // queries are commands that just return strings and don't affect anything in the world
@@ -52,12 +77,19 @@ export const queryList = [
             res += `\- Current Action: ${action}`;
 
 
-            let players = world.getNearbyPlayerNames(bot);
-            let bots = convoManager.getInGameAgents().filter(b => b !== agent.name);
-            players = players.filter(p => !bots.includes(p));
+            const botNames = new Set(convoManager.getInGameAgents());
+            const players = world.getNearbyPlayerDetails(bot)
+                .filter(player => !botNames.has(player.username));
+            const knownBots = knownBotPositionLines(agent, convoManager.getInGameAgents());
+            const worldKnowledge = formatWorldKnowledge(agent.worldKnowledge);
 
-            res += '\n- Nearby Human Players: ' + (players.length > 0 ? players.join(', ') : 'None.');
-            res += '\n- Nearby Bot Players: ' + (bots.length > 0 ? bots.join(', ') : 'None.');
+            res += '\n- Nearby Human Players: '
+                + (players.length > 0 ? players.map(formatNearbyPlayer).join('; ') : 'None.');
+            res += '\n- Server-authoritative Bot Positions: '
+                + (knownBots.length > 0 ? `\n  - ${knownBots.join('\n  - ')}` : 'None.');
+            if (worldKnowledge.length > 0) {
+                res += `\n- Server-known World Layout:\n  - ${worldKnowledge.join('\n  - ')}`;
+            }
 
             res += '\n' + agent.bot.modes.getMiniDocs() + '\n';
             return pad(res);
@@ -150,60 +182,21 @@ export const queryList = [
         perform: function (agent) {
             let bot = agent.bot;
             let res = 'NEARBY_ENTITIES';
-            let players = world.getNearbyPlayerNames(bot);
-            let bots = convoManager.getInGameAgents().filter(b => b !== agent.name);
-            players = players.filter(p => !bots.includes(p));
-
-            for (const player of players) {
-                res += `\n- Human player: ${player}`;
-            }
-            for (const bot of bots) {
-                res += `\n- Bot player: ${bot}`;
-            }
-
-            let nearbyEntities = world.getNearbyEntities(bot);
-            let entityCounts = {};
-            let villagerIds = [];
-            let babyVillagerIds = [];
-            let villagerDetails = []; // Store detailed villager info including profession
-            
-            for (const entity of nearbyEntities) {
-                if (entity.type === 'player' || entity.name === 'item')
-                    continue;
-                    
-                if (!entityCounts[entity.name]) {
-                    entityCounts[entity.name] = 0;
-                }
-                entityCounts[entity.name]++;
-                
-                if (entity.name === 'villager') {
-                    if (entity.metadata && entity.metadata[16] === 1) {
-                        babyVillagerIds.push(entity.id);
-                    } else {
-                        const profession = world.getVillagerProfession(entity);
-                        villagerIds.push(entity.id);
-                        villagerDetails.push({
-                            id: entity.id,
-                            profession: profession
-                        });
-                    }
-                }
-            }
-            
-            for (const [entityType, count] of Object.entries(entityCounts)) {
-                if (entityType === 'villager') {
-                    let villagerInfo = `${count} ${entityType}(s)`;
-                    if (villagerDetails.length > 0) {
-                        const detailStrings = villagerDetails.map(v => `(${v.id}:${v.profession})`);
-                        villagerInfo += ` - Adults: ${detailStrings.join(', ')}`;
-                    }
-                    if (babyVillagerIds.length > 0) {
-                        villagerInfo += ` - Baby IDs: ${babyVillagerIds.join(', ')} (babies cannot trade)`;
-                    }
-                    res += `\n- entities: ${villagerInfo}`;
+            const botNames = new Set(convoManager.getInGameAgents());
+            const nearbyEntities = world.getNearbyEntityDetails(bot);
+            for (const detail of nearbyEntities) {
+                const entity = detail.entity;
+                let label;
+                if (entity.type === 'player') {
+                    label = `${botNames.has(entity.username) ? 'Bot' : 'Human'} player ${entity.username}`;
+                } else if (entity.name === 'villager') {
+                    const age = entity.metadata?.[16] === 1 ? 'baby' : world.getVillagerProfession(entity);
+                    label = `villager #${entity.id} (${age})`;
                 } else {
-                    res += `\n- entities: ${count} ${entityType}(s)`;
+                    label = `${detail.name} #${entity.id}`;
                 }
+                res += `\n- ${label} at ${formatPosition(detail.position)} `
+                    + `(${detail.distance.toFixed(1)} blocks away)`;
             }
             
             if (res == 'NEARBY_ENTITIES') {

@@ -259,6 +259,111 @@ test('provisions, records, and holds competitors on podiums until cleanup', asyn
     });
 });
 
+test('publishes a launch timeline so a slow start is legible', async () => {
+    const updates = [];
+    await withManager(async ({ manager }) => {
+        await manager.start({
+            gameId: 'tower',
+            participants: [
+                { profileId: 'fast', name: 'speedy' },
+                { profileId: 'smart', name: 'thinker' },
+            ],
+        });
+
+        const launch = manager.view().launch;
+        assert.deepEqual(
+            launch.steps.map(step => step.id),
+            [
+                'reclaim_names',
+                'create_agent',
+                'wait_ready',
+                'prepare_arena',
+                'start_recording',
+                'announce',
+                'send_goals',
+            ]
+        );
+        assert.ok(
+            launch.steps.every(step => step.status === 'done'),
+            'every step is closed out once the game is running'
+        );
+        assert.ok(
+            launch.steps.every(step => step.startedAt && step.endedAt >= step.startedAt),
+            'each step is timed so the dashboard can show how long it took'
+        );
+        assert.ok(launch.endedAt >= launch.startedAt);
+
+        // The long steps have to be reported while they run, not only in
+        // hindsight, or the dashboard goes quiet for minutes.
+        const stagesSeen = updates
+            .filter(session => session?.progress?.stage)
+            .map(session => session.progress.stage);
+        for (const stage of ['create_agent', 'wait_ready', 'prepare_arena', 'start_recording', 'send_goals']) {
+            assert.ok(stagesSeen.includes(stage), `stage ${stage} was broadcast while launching`);
+        }
+        assert.ok(
+            updates.some(session => session?.progress?.detail === 'Rebuilding the arena (7/7 commands)'),
+            'arena progress is passed through to the dashboard'
+        );
+        assert.ok(
+            updates.some(session => session?.progress?.detail === 'thinker has its goal (2/2)'),
+            'each bot reports when its goal lands'
+        );
+    }, {
+        onUpdate: session => updates.push(session),
+        prepareArena: async (_game, _participants, options) => {
+            for (let done = 1; done <= 7; done += 1) {
+                options.onProgress?.(`Rebuilding the arena (${done}/7 commands)`);
+            }
+            return { center: { x: 1, y: 2, z: 3 } };
+        },
+    });
+});
+
+test('a launch that stalls names the bots it is waiting on', async () => {
+    const updates = [];
+    const readyAfter = { speedy: 0, thinker: 2 };
+    let polls = 0;
+    await withManager(async ({ manager }) => {
+        await manager.start({
+            gameId: 'tower',
+            participants: [
+                { profileId: 'fast', name: 'speedy' },
+                { profileId: 'smart', name: 'thinker' },
+            ],
+        });
+
+        const waiting = updates.find(session =>
+            session?.progress?.stage === 'wait_ready' && session.progress.pending?.length
+        );
+        assert.deepEqual(waiting.progress.pending, ['thinker']);
+        assert.equal(waiting.progress.ready, 1);
+        assert.ok(waiting.progress.waitingUntil > 0, 'the wait publishes its own deadline');
+    }, {
+        onUpdate: session => updates.push(session),
+        isAgentReady: name => polls >= readyAfter[name],
+        sleep: async () => { polls += 1; },
+    });
+});
+
+test('a failed launch marks the step that broke', async () => {
+    await withManager(async ({ manager }) => {
+        await assert.rejects(
+            manager.start({
+                gameId: 'tower',
+                participants: [{ profileId: 'fast', name: 'speedy' }],
+            }),
+            /arena is flooded/
+        );
+        const steps = manager.lastFailure.session.launch.steps;
+        assert.equal(steps.find(step => step.id === 'prepare_arena').status, 'failed');
+        assert.equal(steps.find(step => step.id === 'wait_ready').status, 'done');
+        assert.equal(steps.find(step => step.id === 'start_recording').status, 'pending');
+    }, {
+        prepareArena: async () => { throw new Error('arena is flooded'); },
+    });
+});
+
 test('a lost camera angle costs footage, not the match', async () => {
     const incomplete = [];
     await withManager(async ({ manager, calls }) => {
@@ -829,6 +934,26 @@ test('team directives give attackers and builders non-overlapping core jobs', ()
     assert.match(builder, /never place a new foundation on bare ground/);
 });
 
+test('first cake team directives emphasize shared ingredient routes', () => {
+    const directive = buildParticipantGameDirective(
+        'First Cake.',
+        ['Billy', 'Kimmy', 'Marcus', 'Dario', 'ChipChipperson', 'bridget'],
+        'Billy',
+        {
+            contestType: 'cake_race',
+            teamId: 'Ember',
+            teammateIds: ['Kimmy', 'Marcus'],
+            enemyIds: ['Dario', 'ChipChipperson', 'bridget'],
+        }
+    );
+    assert.match(directive, /YOUR TEAM: Ember/);
+    assert.match(directive, /Kimmy, Marcus/);
+    assert.match(directive, /Split the cake ingredients/);
+    assert.match(directive, /Any teammate crafting the cake wins/);
+    assert.doesNotMatch(directive, /YOU ARE THE ATTACKER/);
+    assert.doesNotMatch(directive, /tower/);
+});
+
 test('a refused second game leaves the running bots alone', async () => {
     const reclaimed = [];
     await withManager(async ({ manager, coordinator }) => {
@@ -971,6 +1096,18 @@ test('participant directives require distinct strategies and purposeful mind gam
     assert.match(directive, /brief mind game/);
     assert.match(directive, /do not turn every conversation into a roast/);
     assert.doesNotMatch(directive, /Your rivals are .*thinker/);
+});
+
+test('Spleef directives start dedicated competitive play without conversation detours', () => {
+    const directive = buildParticipantGameDirective(
+        'Play Spleef.',
+        ['speedy', 'thinker', 'miner'],
+        'thinker',
+        { contestType: 'spleef' }
+    );
+    assert.match(directive, /ACTIVE RIVALS: speedy, miner/);
+    assert.match(directive, /starts !playSpleef\(100\) for you automatically/);
+    assert.doesNotMatch(directive, /!startConversation/);
 });
 
 test('recording manifests filter by session without unrelated clips', () => {

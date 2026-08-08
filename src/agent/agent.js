@@ -1180,35 +1180,6 @@ export class Agent {
     }
 
     _watchSpleefFall() {
-        const breakStationaryFloor = (position, floorY) => {
-            const stationaryFloorBreakMs = settings.game_session?.stationaryFloorBreakMs;
-            if (
-                !Number.isFinite(stationaryFloorBreakMs)
-                || stationaryFloorBreakMs <= 0
-                || this._spleefFloorBreakPending
-            ) {
-                return;
-            }
-            const x = Math.floor(position.x);
-            const z = Math.floor(position.z);
-            const blockKey = `${x},${floorY},${z}`;
-            if (this._spleefStandingBlock !== blockKey) {
-                this._spleefStandingBlock = blockKey;
-                this._spleefStandingSince = Date.now();
-                return;
-            }
-            if (Date.now() - this._spleefStandingSince < stationaryFloorBreakMs) return;
-
-            const block = this.bot?.blockAt(new Vec3(x, floorY, z));
-            if (block?.name !== 'snow_block') return;
-            this._spleefFloorBreakPending = true;
-            this.bot.dig(block, true).catch(error => {
-                console.warn(`[${this.name}] Could not break stationary Spleef floor:`, error.message);
-            }).finally(() => {
-                this._spleefFloorBreakPending = false;
-                this._spleefStandingSince = Date.now();
-            });
-        };
         const checkFall = () => {
             if (settings.game_session?.contestType !== 'spleef') return;
             if (this._contestEliminatedReported) return;
@@ -1218,9 +1189,7 @@ export class Agent {
             if (!Number.isFinite(position?.y)) return;
             if (position.y < floorY) {
                 this._reportContestEliminated('fell');
-                return;
             }
-            breakStationaryFloor(position, floorY);
         };
         this._spleefFallInterval = setInterval(checkFall, 250);
         this._spleefFallInterval.unref?.();

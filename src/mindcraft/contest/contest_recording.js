@@ -44,7 +44,7 @@ export class ContestRecordingManager {
         this.active = null;
     }
 
-    async start({ contestId, participants, arena }) {
+    async start({ contestId, participants, arena, onProgress = null }) {
         if (this.active) {
             throw new Error(`Recording session ${this.active.sessionId} is already active`);
         }
@@ -67,12 +67,24 @@ export class ContestRecordingManager {
                 ],
             },
         }));
+        // Cameras start in parallel but finish at wildly different times, so each
+        // bot reports as it lands rather than leaving the launch on one line for
+        // as long as the slowest renderer takes.
+        onProgress?.(`Starting cameras on ${participants.length} bots`);
+        const pending = new Set(participants);
         const results = await Promise.allSettled(requests.map(request =>
-            this.requestAgent(
+            Promise.resolve(this.requestAgent(
                 request.agentName,
                 'start-contest-recording',
                 request.options
-            )
+            )).finally(() => {
+                pending.delete(request.agentName);
+                const started = participants.length - pending.size;
+                onProgress?.(
+                    `Cameras rolling on ${started}/${participants.length} bots`
+                    + (pending.size ? ` · waiting on ${[...pending].join(', ')}` : '')
+                );
+            })
         ));
 
         // Every camera is a full offscreen renderer, so a whole roster starting

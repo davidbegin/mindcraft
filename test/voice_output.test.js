@@ -138,6 +138,50 @@ test('clears host playback and every monitoring tab', () => {
     assert.deepEqual(second.emitted, [['bot-voice-clear', undefined]]);
 });
 
+test('silences one bot without cutting off the rest of the cast', () => {
+    const silenced = [];
+    let hostClears = 0;
+    const { output } = recordingOutput({
+        clearHost: () => { hostClears++; },
+        silenceOnHost: agentName => silenced.push(agentName),
+    });
+    const tab = fakeSocket();
+    output.addMonitor(tab);
+
+    output.silence('billy');
+
+    assert.deepEqual(silenced, ['billy']);
+    assert.equal(hostClears, 0, 'a full flush would swallow the narrator calling the elimination');
+    assert.deepEqual(tab.emitted, [['bot-voice-clear', { agentName: 'billy' }]]);
+});
+
+test('a silence request with no bot named is a no-op', () => {
+    const silenced = [];
+    const { output } = recordingOutput({ silenceOnHost: agentName => silenced.push(agentName) });
+    const tab = fakeSocket();
+    output.addMonitor(tab);
+
+    output.silence(null);
+
+    assert.deepEqual(silenced, []);
+    assert.deepEqual(tab.emitted, []);
+});
+
+test('a throwing host silence still reaches the monitors', () => {
+    const errors = [];
+    const { output } = recordingOutput({
+        silenceOnHost: () => { throw new Error('queue gone'); },
+        onError: error => errors.push(error.message),
+    });
+    const tab = fakeSocket();
+    output.addMonitor(tab);
+
+    output.silence('billy');
+
+    assert.deepEqual(errors, ['queue gone']);
+    assert.equal(tab.emitted.length, 1);
+});
+
 test('ignores lines that have no audio', () => {
     const { output, played } = recordingOutput();
 

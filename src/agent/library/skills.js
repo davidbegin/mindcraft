@@ -3,6 +3,7 @@ import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
+import { findAgentSpatialEntry, formatPosition } from '../../utils/spatial.js';
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -607,6 +608,160 @@ export async function breakBlockAt(bot, x, y, z) {
     return true;
 }
 
+function spleefRivals(bot, floorY) {
+    return Object.values(bot.players || {})
+        .map(player => player?.entity)
+        .filter(entity =>
+            entity
+            && entity !== bot.entity
+            && Number.isFinite(entity.position?.y)
+            && entity.position.y >= floorY
+            && entity.position.y < floorY + 3
+        )
+        .sort((a, b) =>
+            bot.entity.position.distanceTo(a.position)
+            - bot.entity.position.distanceTo(b.position)
+        );
+}
+
+/**
+ * Every floor column the bot must keep intact: the blocks its hitbox stands on
+ * plus the ring around them. Breaking any of these drops the bot itself, which
+ * loses the match outright, so they are off limits no matter how good the shot
+ * at a rival looks.
+ */
+export function spleefProtectedColumns(position) {
+    const halfWidth = 0.3;
+    const columns = new Set();
+    for (const x of [position.x - halfWidth, position.x + halfWidth]) {
+        for (const z of [position.z - halfWidth, position.z + halfWidth]) {
+            const blockX = Math.floor(x);
+            const blockZ = Math.floor(z);
+            for (let dx = -1; dx <= 1; dx += 1) {
+                for (let dz = -1; dz <= 1; dz += 1) {
+                    columns.add(`${blockX + dx},${blockZ + dz}`);
+                }
+            }
+        }
+    }
+    return columns;
+}
+
+export function spleefTargetBlocks(entity, floorY) {
+    const velocity = entity?.velocity || { x: 0, z: 0 };
+    const speed = Math.hypot(velocity.x || 0, velocity.z || 0);
+    const lead = speed > 0.04 ? 5 : 0;
+    const x = entity.position.x + (velocity.x || 0) * lead;
+    const z = entity.position.z + (velocity.z || 0) * lead;
+    const centerX = Math.floor(x);
+    const centerZ = Math.floor(z);
+    const offsets = speed > 0.04
+        ? [[0, 0], [Math.sign(velocity.x), Math.sign(velocity.z)], [1, 0], [-1, 0], [0, 1], [0, -1]]
+        : [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
+    const seen = new Set();
+    return offsets.flatMap(([dx, dz]) => {
+        const target = { x: centerX + dx, y: floorY, z: centerZ + dz };
+        const key = `${target.x},${target.z}`;
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [target];
+    });
+}
+
+/**
+ * Chasing a rival while a dig is in flight can carry the bot onto the very
+ * column it is breaking, so the dig is abandoned the moment that column becomes
+ * part of the bot's own footing.
+ */
+async function digRivalFloor(bot, block) {
+    const column = `${block.position.x},${block.position.z}`;
+    const guard = setInterval(() => {
+        if (!spleefProtectedColumns(bot.entity.position).has(column)) return;
+        try {
+            bot.stopDigging();
+        } catch (_) {
+            // Nothing was being dug, which is already the safe outcome.
+        }
+    }, 50);
+    guard.unref?.();
+    try {
+        await bot.dig(block, true);
+        return true;
+    } catch (_) {
+        return false;
+    } finally {
+        clearInterval(guard);
+    }
+}
+
+export async function playSpleef(bot, floorY = 100) {
+    /**
+     * Compete in Spleef until eliminated. Continuously pursue other players and
+     * break the snow under them or just ahead of their movement. Never breaks
+     * the bot's own footing or the ring of blocks around it, since falling loses
+     * the match instantly.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {number} floorY, y coordinate of the destructible snow floor.
+     * @returns {Promise<boolean>} true when the Spleef action ends.
+     * @example
+     * await skills.playSpleef(bot, 100);
+     **/
+    const shovel = bot.inventory.items().find(item => item.name.endsWith('_shovel'));
+    if (shovel) await bot.equip(shovel, 'hand');
+
+    const movements = new pf.Movements(bot);
+    movements.canDig = false;
+    movements.canPlaceOn = false;
+    movements.allow1by1towers = false;
+    movements.allowParkour = true;
+    bot.pathfinder.setMovements(movements);
+    bot.modes.pause('self_defense');
+    bot.modes.pause('cowardice');
+    bot.modes.pause('elbow_room');
+    bot.modes.pause('unstuck');
+
+    let target = null;
+    let targetRefreshAt = 0;
+    try {
+        while (!bot.interrupt_code && bot.entity.position.y >= floorY) {
+            const now = Date.now();
+            const rivals = spleefRivals(bot, floorY);
+            if (rivals.length === 0) break;
+            if (!target || !rivals.includes(target) || now >= targetRefreshAt) {
+                target = rivals[0];
+                targetRefreshAt = now + 1_000;
+                bot.pathfinder.setGoal(new pf.goals.GoalFollow(target, 2.5), true);
+            }
+
+            const own = bot.entity.position;
+            const protectedColumns = spleefProtectedColumns(own);
+            let dug = false;
+            for (const position of spleefTargetBlocks(target, floorY)) {
+                if (protectedColumns.has(`${position.x},${position.z}`)) continue;
+                const block = bot.blockAt(new Vec3(position.x, floorY, position.z));
+                if (
+                    block?.name !== 'snow_block'
+                    || own.distanceTo(block.position.offset(0.5, 0.5, 0.5)) > 5
+                ) {
+                    continue;
+                }
+                // A failed dig just means the rival moved or someone else broke it.
+                dug = await digRivalFloor(bot, block);
+                if (dug) break;
+            }
+            await new Promise(resolve => setTimeout(resolve, dug ? 40 : 100));
+        }
+    } finally {
+        bot.pathfinder.setGoal(null);
+        bot.clearControlStates();
+        bot.modes.unpause('self_defense');
+        bot.modes.unpause('cowardice');
+        bot.modes.unpause('elbow_room');
+        bot.modes.unpause('unstuck');
+    }
+    return true;
+}
+
 
 export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dontCheat=false) {
     /**
@@ -1011,10 +1166,15 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
         log(bot, `You cannot give items to yourself.`);
         return false;
     }
-    let player = bot.players[username].entity
+    let player = bot.players?.[username]?.entity;
     if (!player) {
-        log(bot, `Could not find ${username}.`);
-        return false;
+        const reached = await goToPlayer(bot, username, 3);
+        if (!reached) return false;
+        player = bot.players?.[username]?.entity;
+        if (!player) {
+            log(bot, `Reached ${username}'s last known position, but they are no longer there.`);
+            return false;
+        }
     }
     await goToPlayer(bot, username, 3);
     // if we are 2 below the player
@@ -1314,10 +1474,28 @@ export async function goToPlayer(bot, username, distance=3) {
 
     bot.modes.pause('self_defense');
     bot.modes.pause('cowardice');
-    let player = bot.players[username].entity
+    let player = bot.players?.[username]?.entity;
     if (!player) {
-        log(bot, `Could not find ${username}.`);
-        return false;
+        const known = findAgentSpatialEntry(bot.spatialState, username, {
+            dimension: bot.game?.dimension,
+        });
+        if (!known) {
+            log(bot, `Could not find a current same-dimension position for ${username}.`);
+            return false;
+        }
+        log(bot, `${username} is outside entity range; navigating to server position ${formatPosition(known.position)}.`);
+        await goToPosition(
+            bot,
+            known.position.x,
+            known.position.y,
+            known.position.z,
+            Math.max(distance, 1)
+        );
+        player = bot.players?.[username]?.entity;
+        if (!player) {
+            log(bot, `Reached ${username}'s last known server position.`);
+            return true;
+        }
     }
 
     distance = Math.max(distance, 0.5);
@@ -1326,6 +1504,7 @@ export async function goToPlayer(bot, username, distance=3) {
     await goToGoal(bot, goal, true);
 
     log(bot, `You have reached ${username}.`);
+    return true;
 }
 
 
@@ -1338,9 +1517,13 @@ export async function followPlayer(bot, username, distance=4) {
      * @example
      * await skills.followPlayer(bot, "player");
      **/
-    let player = bot.players[username].entity
-    if (!player)
-        return false;
+    let player = bot.players?.[username]?.entity;
+    if (!player) {
+        const reached = await goToPlayer(bot, username, distance);
+        if (!reached) return false;
+        player = bot.players?.[username]?.entity;
+        if (!player) return false;
+    }
 
     const move = new pf.Movements(bot);
     move.digCost = 10;

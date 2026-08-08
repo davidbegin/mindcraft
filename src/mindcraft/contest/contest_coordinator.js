@@ -569,6 +569,11 @@ export class ContestCoordinator {
         if (
             contest.rules?.type === 'team_tower_battle'
             || contest.rules?.type === 'team_base_siege'
+            || (
+                contest.rules?.type === 'cake_race'
+                && Array.isArray(contest.metadata?.gameSession?.teamNames)
+                && contest.metadata.gameSession.teamNames.length === 2
+            )
         ) {
             const teamScores = [...new Set(
                 contest.results

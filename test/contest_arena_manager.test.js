@@ -4,14 +4,66 @@ import test from 'node:test';
 import {
     ContestArenaManager,
     buildContestTeamCommands,
+    buildSimultaneousTeleportCommands,
     getArenaJoinInfo,
     parseOnlinePlayers,
+    partitionTeleportCommands,
 } from '../src/mindcraft/contest/arena_manager.js';
 import { getContestGamePreset } from '../src/mindcraft/contest/game_presets.js';
 
 function listReply(names) {
     return `There are ${names.length} of a max of 20 players online: ${names.join(', ')}`;
 }
+
+// Participant teleports now ride a chain-command-block rig, so a `tp` shows up
+// as the Command payload of a `setblock ... command_block{...}` instead of a
+// bare `tp` line. Pull the teleport back out however it was issued.
+function teleportTargets(commands) {
+    const targets = [];
+    for (const command of commands) {
+        if (command.startsWith('tp ')) {
+            targets.push(command);
+            continue;
+        }
+        const match = command.match(/\{Command:"((?:tp )[^"]*)"/);
+        if (match) targets.push(match[1]);
+    }
+    return targets;
+}
+
+test('reports what the arena build is doing while it runs', async () => {
+    const progress = [];
+    let listed = 0;
+    const manager = new ContestArenaManager({
+        playerWaitPollMs: 0,
+        sleep: async () => {},
+        runCommand: async command => {
+            if (command !== 'list') return 'ok';
+            listed += 1;
+            // The first look finds only one bot, so the wait has to say who is
+            // still missing rather than sitting silent for up to a minute.
+            return listReply(listed === 1 ? ['alice'] : ['alice', 'bob']);
+        },
+    });
+
+    await manager.prepare(
+        getContestGamePreset('diamond_race'),
+        ['alice', 'bob'],
+        { spectators: [], onProgress: detail => progress.push(detail) }
+    );
+
+    assert.ok(
+        progress.some(detail => /^Rebuilding the arena \(25\/\d+ commands\)$/.test(detail)),
+        'the world rebuild reports a running count'
+    );
+    assert.ok(progress.includes('Waiting for Minecraft to show bob'));
+    assert.ok(progress.includes('Teleporting and equipping 2 bots'));
+    assert.ok(
+        progress.indexOf('Waiting for Minecraft to show bob')
+            < progress.indexOf('Teleporting and equipping 2 bots'),
+        'progress is reported in the order the work happens'
+    );
+});
 
 test('radically resets the arena and every diamond-race participant', async () => {
     const commands = [];
@@ -38,12 +90,21 @@ test('radically resets the arena and every diamond-race participant', async () =
     assert.ok(commands.includes('clear bob'));
     assert.ok(commands.includes('give alice iron_pickaxe 1'));
     assert.ok(commands.includes('gamemode survival bob'));
-    assert.ok(commands.some(command => command.startsWith('tp alice ')));
+    assert.ok(teleportTargets(commands).some(target => target.startsWith('tp alice ')));
     assert.ok(commands.some(command => command.startsWith('spawnpoint bob ')));
     assert.ok(
         commands.indexOf('list') < commands.indexOf('clear alice'),
         'must confirm players are online before clear/tp'
     );
+    // Every bot's teleport rides one impulse block + chain blocks fired by a
+    // single redstone pulse, so the whole cast lands on the same tick.
+    assert.ok(commands.some(command =>
+        /^setblock \S+ \S+ \S+ command_block\[facing=east\]\{Command:"tp alice /.test(command)
+    ));
+    assert.ok(commands.some(command =>
+        /chain_command_block\[facing=east\]\{Command:"tp bob .*,auto:1b\}$/.test(command)
+    ));
+    assert.ok(commands.some(command => command.endsWith(' redstone_block')));
 
     for (const command of commands.filter(command => command.startsWith('fill '))) {
         const [, x1, y1, z1, x2, y2, z2] = command.split(' ').map(Number);
@@ -263,10 +324,11 @@ test('team tower preserves inventory, clusters team spawns, and disables friendl
         assert.ok(commands.includes(`give ${name} iron_sword 1`));
         assert.ok(commands.includes(`give ${name} iron_pickaxe 1`));
     }
-    assert.ok(commands.includes('tp alice 99982 101 100000'));
-    assert.ok(commands.includes('tp amy 99982 101 100001'));
-    assert.ok(commands.includes('tp bob 100018 101 100000'));
-    assert.ok(commands.includes('tp ben 100018 101 100001'));
+    const towerTeleports = teleportTargets(commands);
+    assert.ok(towerTeleports.includes('tp alice 99982 101 100000'));
+    assert.ok(towerTeleports.includes('tp amy 99982 101 100001'));
+    assert.ok(towerTeleports.includes('tp bob 100018 101 100000'));
+    assert.ok(towerTeleports.includes('tp ben 100018 101 100001'));
     assert.ok(buildContestTeamCommands(participants, options).length > 0);
 });
 
@@ -366,6 +428,9 @@ test('builds a blank self-destruct plain with no hazards, mobs, or kit', async (
     const blocksPlaced = new Set(
         commands
             .filter(command => command.startsWith('fill ') || command.startsWith('setblock '))
+            // The teleport rig's command/redstone blocks are hidden infrastructure
+            // below the world, not arena terrain, so they are not "placed blocks".
+            .filter(command => !/command_block|redstone_block/.test(command))
             .map(command => command.split(' ').at(-1))
     );
     assert.deepEqual([...blocksPlaced].sort(), ['air', 'barrier', 'bedrock', 'dirt', 'grass_block']);
@@ -508,7 +573,7 @@ test('builds a dog wilderness that keeps spawn clear and hides the wolves', asyn
         );
     }
 
-    const spawns = commands.filter(command => command.startsWith('tp '));
+    const spawns = teleportTargets(commands);
     assert.equal(spawns.length, 2);
     for (const command of spawns) {
         const [, , x, , z] = command.split(' ');
@@ -597,6 +662,58 @@ test('waits for missing Minecraft players before clear/tp and times out clearly'
         failing.prepare(getContestGamePreset('tower_battle'), ['alice', 'bob'], { spectators: [] }),
         /Timed out waiting for Minecraft players before arena setup: bob/
     );
+});
+
+test('partitions teleports out of the participant setup commands', () => {
+    const { setup, teleports } = partitionTeleportCommands([
+        'clear alice',
+        'tp alice 1 2 3',
+        'give alice bread 16',
+        'tp bob 4 5 6',
+        'spawnpoint alice 1 2 3',
+    ]);
+    assert.deepEqual(setup, [
+        'clear alice',
+        'give alice bread 16',
+        'spawnpoint alice 1 2 3',
+    ]);
+    assert.deepEqual(teleports, ['tp alice 1 2 3', 'tp bob 4 5 6']);
+});
+
+test('wires teleports into a one-tick chain-command-block rig', () => {
+    assert.deepEqual(buildSimultaneousTeleportCommands([]), []);
+
+    const commands = buildSimultaneousTeleportCommands([
+        'tp alice 10 20 30',
+        'tp bob 40 50 60',
+        'tp cara 70 80 90',
+    ]);
+
+    // First: the impulse block waits for redstone; every later teleport is an
+    // always-active chain block that the block before it fires on the same tick.
+    const setblocks = commands.filter(command => command.startsWith('setblock '));
+    const impulse = setblocks.find(command => command.includes(' command_block['));
+    assert.ok(/command_block\[facing=east\]\{Command:"tp alice 10 20 30",auto:0b\}$/.test(impulse));
+    const chains = setblocks.filter(command => command.includes('chain_command_block'));
+    assert.equal(chains.length, 2);
+    assert.ok(chains.every(command => /,auto:1b\}$/.test(command)));
+    assert.ok(chains.some(command => command.includes('"tp bob 40 50 60"')));
+    assert.ok(chains.some(command => command.includes('"tp cara 70 80 90"')));
+
+    // The blocks march along +X (facing=east) so each points into the next.
+    const xs = setblocks
+        .filter(command => command.includes('command_block'))
+        .map(command => Number(command.split(' ')[1]));
+    assert.deepEqual(xs, [xs[0], xs[0] + 1, xs[0] + 2]);
+
+    // One redstone pulse fires the whole chain, then the rig is torn back down.
+    assert.ok(commands.some(command => command.endsWith(' redstone_block')));
+    const redstoneIndex = commands.findIndex(command => command.endsWith(' redstone_block'));
+    assert.ok(
+        redstoneIndex > commands.indexOf(impulse),
+        'the rig is fully built before the pulse fires it'
+    );
+    assert.ok(commands.slice(redstoneIndex + 1).some(command => command.endsWith(' air')));
 });
 
 test('parses online players and strips team suffixes from list output', async () => {

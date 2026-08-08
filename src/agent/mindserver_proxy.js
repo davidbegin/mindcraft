@@ -3,6 +3,8 @@ import convoManager from './conversation.js';
 import settings, { setSettings } from './settings.js';
 import { clearSpeechQueue } from './speak.js';
 import { getFullState, getWallState } from './library/full_state.js';
+import * as skills from './library/skills.js';
+import { findAgentSpatialEntry } from '../utils/spatial.js';
 
 // agent's individual connection to the mindserver
 // always connect to localhost
@@ -16,6 +18,8 @@ class MindServerProxy {
         this.socket = null;
         this.connected = false;
         this.agents = [];
+        this.spatialState = { generatedAt: 0, agents: [] };
+        this.worldKnowledge = null;
         MindServerProxy.instance = this;
     }
 
@@ -57,6 +61,17 @@ class MindServerProxy {
             if (this.agent?.task) {
                 console.log(this.agent.name, 'updating available agents');
                 this.agent.task.updateAvailableAgents(agents);
+            }
+        });
+
+        this.socket.on('spatial-state', (snapshot) => {
+            if (!Number.isFinite(snapshot?.generatedAt) || !Array.isArray(snapshot?.agents)) {
+                return;
+            }
+            this.spatialState = snapshot;
+            if (this.agent) {
+                this.agent.spatialState = snapshot;
+                if (this.agent.bot) this.agent.bot.spatialState = snapshot;
             }
         });
 
@@ -126,6 +141,10 @@ class MindServerProxy {
                     callback?.({ success: false, error: 'Agent is not ready for a game directive' });
                     return;
                 }
+                if (directive.worldKnowledge) {
+                    this.worldKnowledge = directive.worldKnowledge;
+                    this.agent.worldKnowledge = directive.worldKnowledge;
+                }
                 // A goal or a cue to react means the show wants this bot audible
                 // again, which is how a juror gets to speak and vote after being
                 // voted out. A bare pause is the opposite and leaves it silent.
@@ -149,6 +168,19 @@ class MindServerProxy {
                 if (directive.endConversations === true && convoManager.inConversation()) {
                     convoManager.forceEndCurrentConversation();
                     convoManager.endAllConversations();
+                }
+                if (directive.automaticAction === 'play-spleef') {
+                    await this.agent.self_prompter.pause();
+                    const floorY = Number.isFinite(directive.floorY) ? directive.floorY : 100;
+                    this.agent.actions.runAction(
+                        'game:play-spleef',
+                        () => skills.playSpleef(this.agent.bot, floorY),
+                        { timeout: 6 }
+                    ).catch(error => {
+                        console.error('Automatic Spleef action failed:', error);
+                    });
+                    callback?.({ success: true, status: 'automatic_action_started' });
+                    return;
                 }
                 if (convoManager.inConversation()) {
                     this.agent.self_prompter.setPromptPaused(directive.prompt);
@@ -279,14 +311,13 @@ class MindServerProxy {
         });
 
         this.socket.on('survivor-challenge-config', config => {
+            this.worldKnowledge = config?.worldKnowledge ?? null;
+            if (this.agent) this.agent.worldKnowledge = this.worldKnowledge;
             settings.game_session = {
                 ...(settings.game_session || {}),
                 contestType: config?.contestType ?? null,
                 winItem: config?.winItem ?? null,
                 floorY: Number.isFinite(config?.floorY) ? config.floorY : null,
-                stationaryFloorBreakMs: Number.isFinite(config?.stationaryFloorBreakMs)
-                    ? config.stationaryFloorBreakMs
-                    : null,
                 survivorChallengeId: config?.challengeId ?? null,
             };
             if (this.agent) {
@@ -428,6 +459,11 @@ class MindServerProxy {
 
     setAgent(agent) {
         this.agent = agent;
+        if (agent) {
+            agent.spatialState = this.spatialState;
+            agent.worldKnowledge = this.worldKnowledge;
+            if (agent.bot) agent.bot.spatialState = this.spatialState;
+        }
     }
 
     getAgents() {
@@ -436,6 +472,18 @@ class MindServerProxy {
 
     getNumOtherAgents() {
         return this.agents.length - 1;
+    }
+
+    getSpatialState() {
+        return this.spatialState;
+    }
+
+    getAgentPosition(name, options = {}) {
+        return findAgentSpatialEntry(this.spatialState, name, options);
+    }
+
+    getWorldKnowledge() {
+        return this.worldKnowledge;
     }
 
     login() {

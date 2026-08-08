@@ -70,6 +70,12 @@ export function formatContestScore(contest, result) {
         }
         return 'eliminated';
     }
+    if (contest.rules?.type === 'cake_race' && result.details?.teamName) {
+        if (Number.isFinite(result.details?.elapsedMs)) {
+            return formatContestTime(result.details.elapsedMs);
+        }
+        return result.score > 0 ? 'cake crafted' : 'outpaced';
+    }
     if (contest.rules?.type === 'team_base_siege') {
         if (result.details?.surviving) {
             const survivors = result.details?.survivors;
@@ -117,10 +123,13 @@ function rankedResults(contest) {
             (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER)
             || left.participantId.localeCompare(right.participantId)
         );
-    if (
-        contest.rules?.type !== 'team_tower_battle'
-        && contest.rules?.type !== 'team_base_siege'
-    ) return results;
+    const teamMode = contest.rules?.type === 'team_tower_battle'
+        || contest.rules?.type === 'team_base_siege'
+        || (
+            contest.rules?.type === 'cake_race'
+            && results.some(result => result.details?.teamName)
+        );
+    if (!teamMode) return results;
     const byTeam = new Map();
     for (const result of results) {
         const teamName = result.details?.teamName;
@@ -128,6 +137,7 @@ function rankedResults(contest) {
             byTeam.set(teamName, { ...result, participantId: teamName });
         }
     }
+    if (byTeam.size === 0) return results;
     const teams = [...byTeam.values()].sort((left, right) =>
         right.score - left.score || left.participantId.localeCompare(right.participantId)
     );
@@ -206,8 +216,9 @@ export class ContestHud {
 
     async _announceStart(contest) {
         const maxSeconds = Math.max(1, Math.ceil(contest.durationMs / 1000));
-        const competitors = ['team_tower_battle', 'team_base_siege'].includes(contest.rules?.type)
-            ? (contest.metadata?.gameSession?.teamNames || contest.participantIds).join(' vs ')
+        const competitors = ['team_tower_battle', 'team_base_siege', 'cake_race'].includes(contest.rules?.type)
+            && contest.metadata?.gameSession?.teamNames?.length === 2
+            ? contest.metadata.gameSession.teamNames.join(' vs ')
             : contest.participantIds.join(' vs ');
         await this._commands([
             `bossbar remove ${BOSSBAR_ID}`,
@@ -280,7 +291,8 @@ export class ContestHud {
     }
 
     async _announceCompleted(contest) {
-        const teamMode = ['team_tower_battle', 'team_base_siege'].includes(contest.rules?.type);
+        const teamMode = ['team_tower_battle', 'team_base_siege', 'cake_race'].includes(contest.rules?.type)
+            && rankedResults(contest).some(result => result.details?.teamName);
         const winners = teamMode
             ? rankedResults(contest).filter(result => result.rank === 1)
                 .map(result => result.participantId)

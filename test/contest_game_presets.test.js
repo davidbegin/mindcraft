@@ -65,6 +65,7 @@ test('lists the starter contest games for the UI', () => {
     assert.match(tower.defaultCharacters[2].systemPrompt, /curious and open/i);
     assert.match(tower.defaultCharacters[3].systemPrompt, /contingency planning/i);
     assert.match(tower.defaultCharacters[4].systemPrompt, /never rerun/i);
+    assert.match(tower.defaultCharacters[4].systemPrompt, /"Back to you, Beginbot\."/);
     assert.match(tower.defaultCharacters[5].systemPrompt, /do not keep insulting/i);
     assert.match(tower.defaultCharacters[6].systemPrompt, /bluffs/i);
     assert.match(tower.defaultCharacters[7].systemPrompt, /down south, open source/i);
@@ -215,6 +216,13 @@ test('contest presets include game-specific rules and judge metrics', () => {
     const cake = getContestGamePreset('cake_race');
     assert.equal(cake.rules.type, 'cake_race');
     assert.equal(cake.rules.winItem, 'cake');
+    assert.equal(cake.rules.teamCount, 2);
+    assert.equal(cake.rules.minimumPlayersPerTeam, 3);
+    assert.equal(cake.defaultParticipantCount, 6);
+    assert.deepEqual(
+        cake.defaultCharacters.map(character => character.name),
+        ['Billy', 'Kimmy', 'Marcus', 'Dario', 'ChipChipperson', 'bridget']
+    );
     assert.deepEqual(cake.rules.ingredients, {
         milk_bucket: 3,
         sugar: 2,
@@ -223,9 +231,15 @@ test('contest presets include game-specific rules and judge metrics', () => {
     });
     assert.equal(cake.rules.metrics[0].direction, 'minimize');
     assert.equal(cake.metadata.pvp, false);
+    assert.match(cake.prompt, /two-team race/i);
     assert.match(cake.prompt, /none of the cake ingredients/i);
     assert.match(cake.prompt, /three milk buckets, two sugar, one egg, and three wheat/i);
+    assert.match(cake.prompt, /share what you find/i);
     assert.match(cake.prompt, /ends automatically/i);
+    const cakeListed = listContestGamePresets().find(game => game.id === 'cake_race');
+    assert.equal(cakeListed.teamCount, 2);
+    assert.equal(cakeListed.defaultParticipantCount, 6);
+    assert.equal(cakeListed.defaultCharacters.length, 6);
 
     const tower = getContestGamePreset('tower_battle');
     assert.equal(tower.rules.type, 'tower_battle');
@@ -327,7 +341,8 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(spleef.rules.type, 'spleef');
     assert.equal(spleef.rules.scoring, 'last-standing');
     assert.equal(spleef.rules.floorY, 100);
-    assert.equal(spleef.rules.stationaryFloorBreakMs, 2_000);
+    // Breaking a bot's own floor is self-elimination, so no rule may ask for it.
+    assert.equal(spleef.rules.stationaryFloorBreakMs, undefined);
     assert.equal(spleef.durationMs, 300_000);
     assert.equal(spleef.metadata.pvp, false);
     assert.match(spleef.prompt, /diamond shovel/i);
@@ -340,9 +355,10 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.match(spleef.prompt, /a rival's coordinates, not your own/i);
     assert.match(spleef.prompt, /ahead of a moving rival/i);
     assert.match(spleef.prompt, /cut off their escape/i);
-    assert.match(spleef.prompt, /never stop moving/i);
-    assert.match(spleef.prompt, /same block for 2 seconds/i);
-    assert.match(spleef.prompt, /as many different areas as possible/i);
+    assert.match(spleef.prompt, /remove as much of their usable ground as you can/i);
+    assert.match(spleef.prompt, /the eight blocks touching it/i);
+    assert.match(spleef.prompt, /instant self-elimination/i);
+    assert.match(spleef.prompt, /!playSpleef\(100\)/i);
 });
 
 test('unknown contest game ids throw', () => {

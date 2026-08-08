@@ -52,13 +52,23 @@ class FakeContestCoordinator {
 
     complete(id, winnerId) {
         this.activeContestId = null;
-        this.contests[id].status = 'completed';
-        this.contests[id].winnerIds = [winnerId];
-        this.contests[id].results = [{
-            participantId: winnerId,
-            score: 1,
+        const contest = this.contests[id];
+        contest.status = 'completed';
+        contest.winnerIds = [winnerId];
+        // A real coordinator scores every participant, which is what tribe
+        // scoring reads to find each tribe's best result.
+        contest.results = contest.participantIds.map(participantId => ({
+            participantId,
+            score: participantId === winnerId ? 1 : 0,
             details: {},
-        }];
+        }));
+    }
+
+    completeWithResults(id, winnerIds, results) {
+        this.activeContestId = null;
+        this.contests[id].status = 'completed';
+        this.contests[id].winnerIds = [...winnerIds];
+        this.contests[id].results = results;
     }
 
     completeCurrent(manager, winnerId) {
@@ -275,6 +285,32 @@ test('a four-player season runs end to end to a two-juror finale', async () => {
         ['strategy', 'tribal_council', 'voting', 'jury_questioning', 'jury_voting', 'completed']
     );
     assert.equal(manager.view().status, 'completed');
+});
+
+test('a Spleef tribe wins immunity on its longest survivor, not on result order', async () => {
+    const { manager, coordinator, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(6),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['spleef'],
+    });
+    const contestId = manager.view().challengeContestId;
+    // Ember is Bot1/Bot3/Bot5 and Tide is Bot2/Bot4/Bot6. Ember's Bot1 outlasted
+    // everyone, so Ember takes immunity even though a Tide bot leads the results.
+    contestCoordinator.completeWithResults(contestId, ['Bot2'], [
+        { participantId: 'Bot2', score: 8_000, details: { surviving: false, survivedMs: 8_000 } },
+        { participantId: 'Bot1', score: 9_000, details: { surviving: true, survivedMs: 9_000 } },
+        { participantId: 'Bot4', score: 2_000, details: { surviving: false, survivedMs: 2_000 } },
+        { participantId: 'Bot3', score: 1_000, details: { surviving: false, survivedMs: 1_000 } },
+        { participantId: 'Bot6', score: 3_000, details: { surviving: false, survivedMs: 3_000 } },
+        { participantId: 'Bot5', score: 4_000, details: { surviving: false, survivedMs: 4_000 } },
+    ]);
+    await manager.syncContestView(contestCoordinator.view());
+
+    const game = coordinator.view();
+    assert.equal(game.councilTribe, 'Tide');
+    assert.deepEqual([...game.immunityIds].sort(), ['Bot1', 'Bot3', 'Bot5']);
 });
 
 test('strategy leads to Tribal Council, and only the host opens voting', async () => {

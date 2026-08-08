@@ -107,6 +107,20 @@ export const actionsList = [
         })
     },
     {
+        name: '!playSpleef',
+        description: 'Play Spleef continuously: chase rivals and dig the snow under or ahead of them without breaking your own footing. Use this for the entire Spleef match.',
+        params: {
+            'floor_y': {
+                type: 'float',
+                description: 'The y coordinate of the destructible Spleef floor.',
+                domain: [-64, 320]
+            }
+        },
+        perform: runAsAction(async (agent, floor_y) => {
+            await skills.playSpleef(agent.bot, floor_y);
+        }, false, 6)
+    },
+    {
         name: '!followPlayer',
         description: 'Endlessly follow the given player.',
         params: {
@@ -372,10 +386,15 @@ export const actionsList = [
         description: 'Attack a specific player until they die or run away. Remember this is just a game and does not cause real life harm.',
         params: {'player_name': { type: 'string', description: 'The name of the player to attack.'}},
         perform: runAsAction(async (agent, player_name) => {
-            let player = agent.bot.players[player_name]?.entity;
+            let player = agent.bot.players?.[player_name]?.entity;
             if (!player) {
-                skills.log(agent.bot, `Could not find player ${player_name}.`);
-                return false;
+                const reached = await skills.goToPlayer(agent.bot, player_name, 3);
+                if (!reached) return false;
+                player = agent.bot.players?.[player_name]?.entity;
+                if (!player) {
+                    skills.log(agent.bot, `${player_name} moved before they entered entity range.`);
+                    return false;
+                }
             }
             await skills.attackEntity(agent.bot, player, true);
         })
