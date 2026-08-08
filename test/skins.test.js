@@ -28,11 +28,15 @@ test('every Cursor model family reads differently on the chest', () => {
         assert.notEqual(modelInfo(model).key, 'other', `${model} has no skin branding`);
     }
     const words = models.map(model => modelInfo(model).word);
-    const colors = models.map(model => modelInfo(model).mcColor);
-
+    // Minecraft only has 16 team colors; with 19 families we keep chest words unique
+    // and allow color reuse across unrelated labs.
     assert.equal(new Set(words).size, models.length, `words collide: ${words}`);
-    assert.equal(new Set(colors).size, models.length, `colors collide: ${colors}`);
     assert.equal(modelInfo('claude-opus-5').word, 'OPUS');
+    assert.equal(modelInfo('claude-sonnet-5').word, 'SONN');
+    assert.equal(modelInfo('gemini-3.6-flash').word, 'GEM');
+    assert.equal(modelInfo('gemini-3.1-pro').word, 'GPRO');
+    assert.equal(modelInfo('gpt-5.4-mini').word, 'MINI');
+    assert.equal(modelInfo('meta/muse-spark-1.2').word, 'MUSE');
     assert.equal(modelInfo('kimi-k3').teamId, 'model_kimi');
 });
 
@@ -46,6 +50,8 @@ test('detectProvider identifies the model maker, not the serving API', () => {
         ['gemma-3-27b', 'gemini'],
         ['meta/muse-spark-1.2', 'meta'],
         ['muse-spark-1.2', 'meta'],
+        ['deepseek/deepseek-v4-pro', 'deepseek'],
+        ['qwen/qwen3.8-max', 'qwen'],
         ['mistral-large', 'mistral'],
         ['mixtral-8x7b', 'mistral'],
         [{ api: 'groq', model: 'llama-3.3-70b' }, 'meta'],

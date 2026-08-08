@@ -39,7 +39,7 @@ test('lists every named model pack for the setup UI', () => {
     const packs = listBotModelLineups();
     assert.deepEqual(
         packs.map(pack => pack.id).sort(),
-        ['chinese', 'fable', 'fast', 'max', 'openai', 'opus', 'thorough', 'usa', 'variety'].sort()
+        ['chinese', 'fable', 'fast', 'max', 'openai', 'openrouter', 'opus', 'sonnet', 'thorough', 'usa', 'variety'].sort()
     );
     assert.equal(DEFAULT_BOT_MODEL_LINEUP_ID, 'variety');
     assert.equal(getBotModelLineup().id, 'variety');
@@ -85,12 +85,13 @@ test('survivor variety personas skip Carl and keep eleven named seats', () => {
 });
 
 test('short packs pad by cycling models when a larger cast is requested', () => {
-    const padded = charactersForLineup('chinese', {
+    const padded = charactersForLineup('sonnet', {
         personas: CONTEST_BOT_PERSONAS,
         count: 8,
     });
     assert.equal(padded.length, 8);
-    assert.equal(padded[5].profileId, 'kimi-k3-fast');
+    // Sonnet pack has 5 models; seats 5–7 cycle from the front.
+    assert.equal(padded[5].profileId, 'claude-sonnet-5-fast');
     assert.equal(padded[5].name, 'bridget');
     assert.equal(padded[5].voice, 'Bridget');
 });

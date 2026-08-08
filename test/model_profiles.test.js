@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
     CURSOR_FAMILIES,
     REASONING_PRESETS,
+    effortValue,
     getCursorProfiles,
 } from '../src/mindcraft/model_profiles.js';
 
@@ -22,9 +23,10 @@ test('generates every family and supported effort combination', () => {
     for (const family of CURSOR_FAMILIES) {
         for (const presetId of family.presets) {
             const preset = REASONING_PRESETS.find(candidate => candidate.id === presetId);
+            const effort = effortValue(family, preset);
             const profile = profiles.find(candidate =>
                 candidate.profile.model.model === family.model &&
-                candidate.profile.model.params[family.param] === preset.effort
+                candidate.profile.model.params[family.param] === effort
             );
 
             assert.ok(profile, `missing ${family.id} ${presetId}`);
@@ -48,7 +50,7 @@ function familyMatch(family, profile) {
     return family.id === profile.family && family.model === profile.profile.model.model;
 }
 
-test('offers every Cursor model family the bots can be run on', () => {
+test('offers every model family the bots can be run on', () => {
     const models = new Set(getCursorProfiles().map(profile => profile.profile.model.model));
 
     for (const model of [
@@ -57,9 +59,17 @@ test('offers every Cursor model family the bots can be run on', () => {
         'glm-5.2',
         'claude-opus-5',
         'claude-fable-5',
+        'claude-sonnet-5',
         'grok-4.5',
         'gemini-3.6-flash',
+        'gemini-3.1-pro',
+        'gpt-5.5',
         'meta/muse-spark-1.2',
+        'deepseek/deepseek-v4-flash',
+        'deepseek/deepseek-v4-pro',
+        'qwen/qwen3.8-max',
+        'mistralai/mistral-large-2512',
+        'meta-llama/llama-4-maverick',
         'gpt-5.6-terra',
     ]) {
         assert.ok(models.has(model), `${model} is not offered as a profile`);
@@ -76,11 +86,14 @@ test('keeps the profile ids that contest presets and saved colonies reference', 
         'gpt-5-6-sol-instant',
         'gpt-5-6-luna-instant',
         'claude-fable-5-fast',
+        'claude-sonnet-5-fast',
         'grok-4-5-fast',
         'kimi-k3-fast',
         'gemini-3-6-flash',
         'meta-muse-spark-1-2',
         'composer-2-5',
+        'deepseek-deepseek-v4-flash',
+        'qwen-qwen3-8-max',
     ]) {
         assert.ok(ids.has(id), `${id} no longer resolves to a profile`);
     }
@@ -130,13 +143,21 @@ test('offers the cheap, quick model families before the expensive ones', () => {
         fastest.map(profile => profile.id),
         [
             'composer-2-5',
+            'deepseek-deepseek-v4-flash',
             'grok-4-5-fast',
             'gpt-5-6-luna-instant',
             'claude-fable-5-fast',
             'gemini-3-6-flash',
+            'claude-sonnet-5-fast',
             'kimi-k3-fast',
             'gpt-5-6-terra-instant',
             'meta-muse-spark-1-2',
+            'meta-llama-llama-4-maverick',
+            'qwen-qwen3-8-max',
+            'mistralai-mistral-large-2512',
+            'deepseek-deepseek-v4-pro',
+            'gpt-5-5-instant',
+            'gemini-3-1-pro',
             'glm-5-2-thorough',
             'gpt-5-6-sol-instant',
             'claude-opus-5-fast',
@@ -144,13 +165,29 @@ test('offers the cheap, quick model families before the expensive ones', () => {
     );
 });
 
-test('routes Muse Spark through OpenRouter until Cursor ships it', () => {
-    const muse = getCursorProfiles().find(profile => profile.id === 'meta-muse-spark-1-2');
+test('routes Muse Spark and other non-Cursor models through OpenRouter', () => {
+    const openrouter = getCursorProfiles().filter(profile => profile.provider === 'openrouter');
 
-    assert.equal(muse.name, 'muse');
-    assert.equal(muse.provider, 'openrouter');
+    assert.deepEqual(
+        openrouter.map(profile => profile.id).sort(),
+        [
+            'deepseek-deepseek-v4-flash',
+            'deepseek-deepseek-v4-pro',
+            'meta-llama-llama-4-maverick',
+            'meta-muse-spark-1-2',
+            'mistralai-mistral-large-2512',
+            'qwen-qwen3-8-max',
+        ]
+    );
+
+    const muse = openrouter.find(profile => profile.id === 'meta-muse-spark-1-2');
     assert.deepEqual(muse.profile.model, {
         api: 'openrouter',
         model: 'meta/muse-spark-1.2',
     });
+});
+
+test('maps GPT-5.5 deep effort to extra-high', () => {
+    const profile = getCursorProfiles().find(candidate => candidate.id === 'gpt-5-5-deep');
+    assert.equal(profile.profile.model.params.reasoning, 'extra-high');
 });

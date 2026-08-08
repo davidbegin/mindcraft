@@ -133,7 +133,7 @@ test('opens the planning phase without holding the clock itself', async () => {
         buildPlanningAnnouncement({ title: 'Team Tower Battle' }, 45_000),
         'Team Tower Battle. Teams, you have 45 seconds to plan. '
         + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
-        + 'All builders use only the captain\'s structure. No building until the countdown.'
+        + 'Builders stay home to raise and defend that one structure. Balance offense and defense. No building until the countdown.'
     );
     assert.equal(
         buildPlanningAnnouncement({ title: 'First Cake', rules: { type: 'cake_race' } }, 60_000),
@@ -161,7 +161,7 @@ test('opens the planning phase without holding the clock itself', async () => {
             'speak',
             'Team Tower Battle. Teams, you have 60 seconds to plan. '
             + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
-            + 'All builders use only the captain\'s structure. No building until the countdown.',
+            + 'Builders stay home to raise and defend that one structure. Balance offense and defense. No building until the countdown.',
         ],
     ]);
 });

@@ -25,7 +25,7 @@ export function buildPlanningAnnouncement(contest, planningMs) {
     if (contest?.rules?.type === 'team_base_siege') {
         return `${title}. Teams, you have ${seconds} seconds to plan. `
             + 'Captain, call one quick base. Agree who builds and who hunts. '
-            + 'Hiding forever loses — the arena will shrink if both teams survive. No building until the build phase.';
+            + 'Balance offense and defense. Hiding forever loses — the arena will shrink if both teams survive. No building until the build phase.';
     }
     if (contest?.rules?.type === 'cake_race') {
         return `${title}. Teams, you have ${seconds} seconds to plan. `
@@ -34,7 +34,7 @@ export function buildPlanningAnnouncement(contest, planningMs) {
     }
     return `${title}. Teams, you have ${seconds} seconds to plan. `
         + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
-        + 'All builders use only the captain\'s structure. No building until the countdown.';
+        + 'Builders stay home to raise and defend that one structure. Balance offense and defense. No building until the countdown.';
 }
 
 export function buildBuildPhaseAnnouncement(contest, buildPhaseMs) {

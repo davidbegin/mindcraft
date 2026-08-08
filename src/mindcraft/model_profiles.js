@@ -10,33 +10,45 @@ export const REASONING_PRESETS = [
 const ALL_PRESETS = REASONING_PRESETS.map(preset => preset.id);
 
 /**
- * Cursor models offered as bot profiles. `param` is the effort-style parameter the
- * model accepts (`reasoning` or `effort`) and `presets` lists only the REASONING_PRESETS
- * values it actually supports; both come from `Cursor.models.list()`, so a model that
- * exposes no effort dial (`param: null`) yields a single profile.
+ * Bot model families offered as selectable profiles.
  *
- * Non-Cursor families set `api` / `provider` (e.g. OpenRouter for Muse Spark, which
- * Cursor does not ship yet). Default api/provider is `cursor`.
+ * `param` is the effort-style parameter the model accepts (`reasoning` or `effort`)
+ * and `presets` lists only the REASONING_PRESETS values it actually supports.
+ * A model with no effort dial (`param: null`) yields a single profile.
  *
- * Profile ids are the model id with dots/slashes flattened, plus the preset id. Existing
- * ids (`gpt-5-6-terra-balanced`) are referenced by contest presets and saved colonies, so
- * changing a family's `id` or `model` renames its profile and orphans those references.
+ * `effortMap` remaps preset ids → provider-specific values when they diverge from
+ * REASONING_PRESETS (e.g. GPT-5.5's `extra-high`, Gemini Flash's `minimal`).
+ *
+ * Non-Cursor families set `api` / `provider` (OpenRouter for models Cursor does not
+ * ship yet: Muse Spark, DeepSeek V4, Qwen, Mistral, Llama 4). Default is `cursor`.
+ *
+ * Profile ids are the model id with dots/slashes flattened, plus the preset id.
+ * Existing ids are referenced by contest presets and saved colonies, so changing a
+ * family's `id` or `model` renames its profile and orphans those references.
+ *
+ * Bot `name`s must stay ≤16 chars (Minecraft) and must not collide with profiles/*.json.
  *
  * List order drives the profile dropdown and the roster picker's fallback, so families
- * are cheapest and quickest first: whatever a game grabs without being told is a fast
- * chat model, not `sol` or `opus` at twenty times the price.
+ * are cheapest and quickest first.
  */
 export const CURSOR_FAMILIES = [
     { id: 'composer', model: 'composer-2.5', param: null, presets: [] },
+    {
+        id: 'dsf',
+        model: 'deepseek/deepseek-v4-flash',
+        api: 'openrouter',
+        provider: 'openrouter',
+        param: null,
+        presets: [],
+    },
     { id: 'grok', model: 'grok-4.5', param: 'effort', presets: ['fast', 'balanced', 'thorough'] },
     { id: 'luna', model: 'gpt-5.6-luna', param: 'reasoning', presets: ALL_PRESETS },
     { id: 'fable', model: 'claude-fable-5', param: 'effort', presets: ['fast', 'balanced', 'thorough', 'deep', 'max'] },
     // `gemini_pro` rather than `gemini`: profiles/gemini.json already claims that bot name.
-    // Cursor's newest Gemini is 3.6 Flash (3.1 Pro remains available but is older).
     { id: 'gemini_pro', model: 'gemini-3.6-flash', param: null, presets: [] },
+    { id: 'sonnet', model: 'claude-sonnet-5', param: 'effort', presets: ['fast', 'balanced', 'thorough', 'deep', 'max'] },
     { id: 'kimi', model: 'kimi-k3', param: 'reasoning', presets: ['fast', 'thorough', 'max'] },
     { id: 'terra', model: 'gpt-5.6-terra', param: 'reasoning', presets: ALL_PRESETS },
-    // Muse Spark is not on Cursor yet; OpenRouter serves meta/muse-spark-1.2 today.
     {
         id: 'muse',
         model: 'meta/muse-spark-1.2',
@@ -45,6 +57,47 @@ export const CURSOR_FAMILIES = [
         param: null,
         presets: [],
     },
+    {
+        id: 'mav',
+        model: 'meta-llama/llama-4-maverick',
+        api: 'openrouter',
+        provider: 'openrouter',
+        param: null,
+        presets: [],
+    },
+    {
+        id: 'qwmax',
+        model: 'qwen/qwen3.8-max',
+        api: 'openrouter',
+        provider: 'openrouter',
+        param: null,
+        presets: [],
+    },
+    {
+        id: 'mist',
+        model: 'mistralai/mistral-large-2512',
+        api: 'openrouter',
+        provider: 'openrouter',
+        param: null,
+        presets: [],
+    },
+    {
+        id: 'dsv4',
+        model: 'deepseek/deepseek-v4-pro',
+        api: 'openrouter',
+        provider: 'openrouter',
+        param: null,
+        presets: [],
+    },
+    // GPT-5.5 uses `extra-high` instead of `xhigh` / `max`.
+    {
+        id: 'gpt55',
+        model: 'gpt-5.5',
+        param: 'reasoning',
+        presets: ['instant', 'fast', 'balanced', 'thorough', 'deep'],
+        effortMap: { deep: 'extra-high' },
+    },
+    { id: 'gempro', model: 'gemini-3.1-pro', param: null, presets: [] },
     { id: 'glm', model: 'glm-5.2', param: 'reasoning', presets: ['thorough', 'max'] },
     { id: 'sol', model: 'gpt-5.6-sol', param: 'reasoning', presets: ALL_PRESETS },
     { id: 'opus', model: 'claude-opus-5', param: 'effort', presets: ['fast', 'balanced', 'thorough', 'deep', 'max'] },
@@ -59,10 +112,19 @@ export function getCursorProfiles() {
     });
 }
 
+export function effortValue(family, preset) {
+    if (!preset) return null;
+    if (family.effortMap && Object.prototype.hasOwnProperty.call(family.effortMap, preset.id)) {
+        return family.effortMap[preset.id];
+    }
+    return preset.effort;
+}
+
 function buildProfile(family, preset) {
     const name = preset ? `${family.id}_${preset.id}` : family.id;
     const api = family.api || 'cursor';
     const provider = family.provider || 'cursor';
+    const effort = effortValue(family, preset);
     return {
         id: preset ? `${modelSlug(family.model)}-${preset.id}` : modelSlug(family.model),
         name,
@@ -76,7 +138,7 @@ function buildProfile(family, preset) {
             model: {
                 api,
                 model: family.model,
-                ...(preset ? { params: { [family.param]: preset.effort } } : {}),
+                ...(preset ? { params: { [family.param]: effort } } : {}),
             },
         },
     };
@@ -85,7 +147,7 @@ function buildProfile(family, preset) {
 function findPreset(family, id) {
     const preset = REASONING_PRESETS.find(candidate => candidate.id === id);
     if (!preset) {
-        throw new Error(`Unknown reasoning preset '${id}' for cursor model ${family.model}`);
+        throw new Error(`Unknown reasoning preset '${id}' for model ${family.model}`);
     }
     return preset;
 }

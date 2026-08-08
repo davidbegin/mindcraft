@@ -250,7 +250,8 @@ test('contest presets include game-specific rules and judge metrics', () => {
     const tower = getContestGamePreset('tower_battle');
     assert.equal(tower.rules.type, 'tower_battle');
     assert.equal(tower.rules.scoring, 'tallest-standing-tower');
-    assert.match(tower.prompt, /distinctive balance/i);
+    assert.match(tower.prompt, /balance of offense and defense/i);
+    assert.match(tower.prompt, /Do not abandon your own stack/i);
 
     for (const game of listContestGamePresets()) {
         assert.doesNotMatch(
@@ -271,8 +272,10 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(teamTower.metadata.pvp, true);
     assert.match(teamTower.prompt, /friendly fire is disabled/i);
     assert.match(teamTower.prompt, /planning phase/i);
-    assert.match(teamTower.prompt, /Attacking is mandatory, not optional/i);
+    assert.match(teamTower.prompt, /balance of offense and defense/i);
+    assert.match(teamTower.prompt, /BUILDER-DEFENDER/i);
     assert.match(teamTower.prompt, /dedicated ATTACKER/i);
+    assert.match(teamTower.prompt, /Do not send the whole team on offense/i);
     assert.match(teamTower.prompt, /place blocks only when they connect/i);
     assert.match(teamTower.prompt, /never place a new foundation/i);
     assert.equal(

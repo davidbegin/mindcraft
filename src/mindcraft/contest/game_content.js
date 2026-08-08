@@ -80,17 +80,18 @@ export function buildTeamPlanningDirective({
             ? `${captainId} is the team captain and has the final word. Settle disagreements in one line, then commit to the captain's call.`
             : 'Pick one teammate as captain immediately and commit to their call.',
         attackerId
-            ? `${attackerId} is the ATTACKER. This is a required PVP role: when the match starts, they go directly to the enemy tower, attack its builders, and break its supporting blocks. They do not switch to building unless the enemy tower is already destroyed.`
-            : 'Assign one teammate as the ATTACKER. Attacking the enemy tower is required, not optional.',
+            ? `${attackerId} is the ATTACKER (offense). When the match starts they cross to the enemy tower, fight its builders, and break supporting blocks. Everyone else stays home as BUILDER-DEFENDERS.`
+            : 'Assign one teammate as the ATTACKER for offense. Everyone else builds and defends the shared tower.',
+        'Win with a balance of offense and defense: one teammate pressures the enemy tower while the rest keep YOUR tower rising and protected. A full-team rush that leaves your base empty is a losing plan.',
         `Use !startConversation with ${teammateIds.join(' and ') || 'your team'} right now and settle three things:`,
         '1. THE BASE: one exact x z coordinate where the whole team stacks. Put the numbers only in the conversation command, never in spoken dialogue. Out loud, refer to that base vaguely in your own words and phrase it differently every time you mention it.',
-        `2. THE ROLES: ${attackerId || 'the assigned attacker'} attacks and dismantles the enemy tower for the whole match. Every other teammate is a BUILDER and works only on your one shared tower. Nobody starts a personal structure and nobody just guards.`,
+        `2. THE ROLES: ${attackerId || 'the assigned attacker'} handles offense against the enemy tower. Every other teammate is a BUILDER-DEFENDER — stack the shared tower, fight off raiders who come to demolish it, repair damage, then keep building. Nobody starts a personal structure and nobody parks idle as a pure guard with no blocks.`,
         '3. THE REGROUP RULE: if you die or get knocked away, you return to that same base. Nobody ever starts a second tower.',
         isCaptain
-            ? 'You are the captain and lead builder. Open the conversation first, put your current x and z only in the conversation command as the base, and call that base out loud with a vague phrase of your own, worded differently each time. Get an explicit yes from every builder that they will place only onto your structure, and an explicit confirmation from the attacker that they will assault the enemy tower.'
+            ? 'You are the captain and lead builder-defender. Open the conversation first, put your current x and z only in the conversation command as the base, and call that base out loud with a vague phrase of your own, worded differently each time. Get an explicit yes from every builder-defender that they will place only onto your structure and defend it, and an explicit confirmation from the attacker that they will assault the enemy tower.'
             : participantName === attackerId
-                ? 'YOU ARE THE ATTACKER. Quickly confirm the agreed spot without saying its numbers, then confirm your attack role. At the countdown, ignore building materials and immediately cross the arena to destroy the enemy tower and fight its builders.'
-                : 'Confirm the captain\'s base and your BUILDER role. At the countdown, go to the captain and place blocks only when they touch the shared team tower. Never place a new foundation on bare ground.',
+                ? 'YOU ARE THE ATTACKER. Quickly confirm the agreed spot without saying its numbers, then confirm your offense role. At the countdown, cross the arena to destroy the enemy tower and fight its builders — you are the team\'s offense, not another home builder.'
+                : 'Confirm the captain\'s base and your BUILDER-DEFENDER role. At the countdown, go to the captain, place blocks only when they touch the shared team tower, and fight enemies who attack that tower. Never place a new foundation on bare ground.',
     ];
     if (presetPrompt) lines.push(`MATCH RULES FOR REFERENCE: ${presetPrompt}`);
     if (enemyIds.length > 0) {
@@ -126,8 +127,8 @@ export function buildBaseSiegePlanningDirective({
             : 'Pick one teammate as captain immediately and commit to their call.',
         `Use !startConversation with ${teammateIds.join(' and ') || 'your team'} right now and settle:`,
         '1. THE BASE: one exact x z coordinate for a quick fort. Put numbers only in the conversation command, never in spoken dialogue.',
-        '2. THE ROLES: who builds walls/cover in the build phase, and who rushes out to hunt when combat starts.',
-        '3. THE ATTACK PLAN: do not agree to turtle forever. Name how you will find and kill the other team.',
+        '2. THE ROLES: who builds walls/cover in the build phase, and who leaves cover to hunt when combat starts — keep a balance of offense and defense, not an all-team suicide rush.',
+        '3. THE ATTACK PLAN: do not agree to turtle forever, and do not abandon every bit of cover. Name how you will find and kill the other team while still using the fort.',
         isCaptain
             ? 'You are the captain. Open first, put your current x and z only in the conversation command as the base, and get a yes from every teammate.'
             : 'Confirm the captain\'s base and your role. Be ready to build fast when the build phase starts.',
@@ -200,7 +201,7 @@ export function buildBaseSiegeBuildDirective({
             ? `Build at ${captainId}'s agreed base. Walls, cover, and a high ground or doorway beat empty ground.`
             : 'Build at the base your team agreed on during planning.',
         'Do NOT attack enemies yet. Do not wander across the arena. Place blocks fast, then be ready to fight.',
-        'When combat starts, hunting the other team matters more than perfect walls. A tiny fort plus aggression beats a mansion of cowards.',
+        'When combat starts, balance offense and defense: use the fort as cover and a regroup point, then hunt. A tiny fort plus coordinated aggression beats both a mansion of cowards and a naked all-out rush.',
     ];
     if (enemyIds.length > 0) {
         lines.push(`Enemies (${enemyIds.join(', ')}) are building too. Stay on your side until the fight starts.`);
@@ -262,7 +263,7 @@ export function buildParticipantGameDirective(
                 ? `${team.captainId} called the base. Use that fort as cover, then leave it to hunt.`
                 : 'Use the base your team agreed on as cover, then hunt.',
             'COMBAT IS ON. Death eliminates you permanently. Kill every enemy. Friendly fire is off.',
-            `Hunt ${rivals.join(', ') || 'the other team'} with !attackPlayer. Do not turtle forever — if the timer ends with both teams alive, the arena shrinks and you fight again in a tighter space.`,
+            `Balance offense and defense: use your fort as cover, then hunt ${rivals.join(', ') || 'the other team'} with !attackPlayer. Do not turtle forever — if the timer ends with both teams alive, the arena shrinks and you fight again in a tighter space. Do not all charge with zero cover either.`,
             'Coordinate with !startConversation only for a short tactical update, then resume fighting.'
         );
     } else if (team.teamId) {
@@ -273,15 +274,16 @@ export function buildParticipantGameDirective(
                 ? `${team.captainId} is your captain and calls the tower location. Follow that call even if you would have picked a different spot.`
                 : 'Follow the tower location your team already agreed on.',
             team.attackerId
-                ? `${team.attackerId} is your team's dedicated ATTACKER; everyone else is a BUILDER. These roles are mandatory for the whole match.`
-                : 'One teammate must attack the enemy tower while everyone else builds the shared tower.',
+                ? `${team.attackerId} is your team's dedicated ATTACKER (offense); everyone else is a BUILDER-DEFENDER. Keep that offense-defense split for the whole match — do not all rush the enemy.`
+                : 'One teammate must attack the enemy tower while everyone else builds and defends the shared tower.',
+            'BALANCE: offense without defense loses your tower; defense without offense lets theirs win. Do both as a team.',
             isAttacker
-                ? `YOU ARE THE ATTACKER. Go directly to the enemy team (${rivals.join(', ')}) now. Use !attackPlayer on an enemy builder, then use !clearArea with the coordinates of the enemy tower's lowest reachable supporting blocks. Keep attacking and dismantling; do not build a separate tower and do not return to routine building while an enemy tower stands.`
-                : 'YOU ARE A BUILDER. Go to the captain\'s base and build UP only on the one structure the captain starts. Your first and every later block must touch that shared tower; never place a new foundation on bare ground. If you cannot find it, regroup with the captain before placing anything.',
+                ? `YOU ARE THE ATTACKER (offense). Go directly to the enemy team (${rivals.join(', ')}) now. Use !attackPlayer on an enemy builder, then use !clearArea with the coordinates of the enemy tower's lowest reachable supporting blocks. Keep attacking and dismantling; do not build a separate tower and do not settle into routine home building while an enemy tower stands. Only peel back briefly if your team's tower is collapsing with nobody home, then resume the assault.`
+                : 'YOU ARE A BUILDER-DEFENDER. Go to the captain\'s base and build UP only on the one structure the captain starts. Your first and every later block must touch that shared tower; never place a new foundation on bare ground. If enemies come to demolish it, use !attackPlayer to fight them off, repair broken blocks, then resume stacking — do not abandon the tower to chase across the arena. If you cannot find the base, regroup with the captain before placing anything.',
             'Coordinate with !startConversation only for a short tactical update, then immediately resume your assigned job.',
             isAttacker
                 ? 'Never attack a teammate. Ignore friendly structures and keep pressure on the opposing tower.'
-                : 'Never attack a teammate. Build onto the same team structure, make room for each other, and keep paths and standing room open.'
+                : 'Never attack a teammate. Build onto the same team structure, defend it when threatened, make room for each other, and keep paths and standing room open.'
         );
     }
     if (rivals.length > 0 && !isSpleef && !isHotButton && !isCakeRace && !isDeathRace) {

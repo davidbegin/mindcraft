@@ -18,7 +18,10 @@ export const LOGOS_DIR = path.resolve(__dirname, '../../assets/model-logos');
 export const SKINS_MOUNT = '/skins';
 
 const MODEL_FAMILIES = [
-    { match: /mini/i,     key: 'mini',     word: 'MINI', color: '#2fd3c9', mcColor: 'aqua' },
+    // Boundary so "gemini" (contains the letters mini) does not paint as MINI.
+    { match: /(?:^|[\s./_-])mini(?:$|[\s./_-])/i, key: 'mini', word: 'MINI', color: '#2fd3c9', mcColor: 'aqua' },
+    // Match sonnet before sol — otherwise "claude-sonnet-5" paints as SOL.
+    { match: /sonnet/i,   key: 'sonnet',   word: 'SONN', color: '#c4a484', mcColor: 'white' },
     { match: /sol/i,      key: 'sol',      word: 'SOL',  color: '#ffb32b', mcColor: 'gold' },
     { match: /terra/i,    key: 'terra',    word: 'TERRA', color: '#5fc953', mcColor: 'green' },
     { match: /luna/i,     key: 'luna',     word: 'LUNA', color: '#c77dff', mcColor: 'light_purple' },
@@ -26,10 +29,18 @@ const MODEL_FAMILIES = [
     { match: /opus/i,     key: 'opus',     word: 'OPUS', color: '#d97757', mcColor: 'red' },
     { match: /fable/i,    key: 'fable',    word: 'FABL', color: '#e2b6ff', mcColor: 'dark_purple' },
     { match: /grok/i,     key: 'grok',     word: 'GROK', color: '#1d9bf0', mcColor: 'blue' },
+    // Pro before generic gemini so 3.1-pro does not share the Flash chest word.
+    { match: /gemini-3\.1-pro|gempro/i, key: 'gempro', word: 'GPRO', color: '#8ab4f8', mcColor: 'dark_gray' },
     { match: /gemini/i,   key: 'gemini',   word: 'GEM',  color: '#4285f4', mcColor: 'dark_aqua' },
     { match: /muse|spark/i, key: 'muse',   word: 'MUSE', color: '#0668e1', mcColor: 'yellow' },
+    { match: /maverick|llama-4/i, key: 'mav', word: 'MAV', color: '#0082fb', mcColor: 'dark_red' },
     { match: /kimi/i,     key: 'kimi',     word: 'KIMI', color: '#6f7bff', mcColor: 'dark_blue' },
     { match: /glm/i,      key: 'glm',      word: 'GLM',  color: '#2f9e44', mcColor: 'dark_green' },
+    { match: /deepseek-v4-flash/i, key: 'dsf', word: 'DSF', color: '#4d6bfe', mcColor: 'black' },
+    { match: /deepseek/i, key: 'dsv4',     word: 'DSK',  color: '#5b6cff', mcColor: 'aqua' },
+    { match: /qwen/i,     key: 'qwmax',    word: 'QWEN', color: '#6a00ff', mcColor: 'light_purple' },
+    { match: /mistral/i,  key: 'mist',     word: 'MIST', color: '#ff7000', mcColor: 'gold' },
+    { match: /gpt-5\.5|gpt55/i, key: 'gpt55', word: 'G55', color: '#10a37f', mcColor: 'green' },
 ];
 
 // Maps model names (and API providers as a fallback) to the company whose

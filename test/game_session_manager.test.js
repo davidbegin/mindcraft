@@ -1001,7 +1001,9 @@ test('a planning brief tells a non-captain who to follow and who to stay quiet a
     assert.doesNotMatch(directive, /Say the numbers out loud/);
     assert.doesNotMatch(directive, /You are the captain/);
     assert.match(directive, /YOU ARE THE ATTACKER/);
-    assert.match(directive, /immediately cross the arena/);
+    assert.match(directive, /offense role|team's offense/i);
+    assert.match(directive, /cross the arena/);
+    assert.match(directive, /balance of offense and defense/i);
 });
 
 test('team attacker selection assigns the first non-captain', () => {
@@ -1033,10 +1035,13 @@ test('team directives give attackers and builders non-overlapping core jobs', ()
     assert.match(attacker, /YOU ARE THE ATTACKER/);
     assert.match(attacker, /Use !attackPlayer on an enemy builder/);
     assert.match(attacker, /use !clearArea with the coordinates/);
-    assert.match(attacker, /do not return to routine building/);
-    assert.match(builder, /YOU ARE A BUILDER/);
+    assert.match(attacker, /do not settle into routine home building/);
+    assert.match(attacker, /BALANCE: offense without defense/);
+    assert.match(builder, /YOU ARE A BUILDER-DEFENDER/);
     assert.match(builder, /every later block must touch that shared tower/);
     assert.match(builder, /never place a new foundation on bare ground/);
+    assert.match(builder, /fight them off/);
+    assert.match(builder, /do not abandon the tower to chase/);
 });
 
 test('first cake team directives emphasize shared ingredient routes', () => {
