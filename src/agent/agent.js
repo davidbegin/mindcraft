@@ -1190,14 +1190,29 @@ export class Agent {
 
     _watchSpleefFall() {
         const checkFall = () => {
-            if (settings.game_session?.contestType !== 'spleef') return;
+            const contestType = settings.game_session?.contestType;
+            if (contestType !== 'spleef' && contestType !== 'team_base_siege') return;
             if (this._contestEliminatedReported) return;
-            const floorY = settings.game_session?.floorY;
-            if (!Number.isFinite(floorY)) return;
             const position = this.bot?.entity?.position;
-            if (!Number.isFinite(position?.y)) return;
-            if (position.y < floorY) {
+            if (!position || ![position.x, position.y, position.z].every(Number.isFinite)) return;
+
+            const floorY = settings.game_session?.floorY;
+            if (Number.isFinite(floorY) && position.y < floorY) {
                 this._reportContestEliminated('fell');
+                return;
+            }
+
+            if (contestType !== 'team_base_siege') return;
+            const halfSize = settings.game_session?.arenaHalfSize;
+            const center = settings.game_session?.arenaCenter;
+            if (!Number.isFinite(halfSize) || !Number.isFinite(center?.x) || !Number.isFinite(center?.z)) {
+                return;
+            }
+            if (
+                Math.abs(position.x - center.x) > halfSize
+                || Math.abs(position.z - center.z) > halfSize
+            ) {
+                this._reportContestEliminated('out-of-bounds');
             }
         };
         this._spleefFallInterval = setInterval(checkFall, 250);
