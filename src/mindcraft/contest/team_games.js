@@ -3,14 +3,17 @@
 export const TEAM_CONTEST_TYPES = Object.freeze([
     'cake_race',
     'team_tower_battle',
-    'team_base_siege',
 ]);
 
 export function isTeamContestType(type) {
     return TEAM_CONTEST_TYPES.includes(type);
 }
 
-export function isTeamEliminationContest(type) {
+export function isTeamEliminationContest() {
+    return false;
+}
+
+export function isBaseSiegeContest(type) {
     return type === 'team_base_siege';
 }
 

@@ -337,22 +337,18 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
     team_base_siege: Object.freeze({
         id: 'team_base_siege',
         title: 'Base Siege',
-        blurb: 'Plan, slap up a quick base, then fight. Hide too long and the arena shrinks.',
+        blurb: 'Three minutes to fortify and gear up, then fight. Last person alive on the platform wins.',
         durationLabel: '3 min fight',
         durationMs: 3 * 60_000,
         prompt:
-            'CONTEST: Base Siege. This is a two-team PVP survival game. After a short planning phase and a short build phase, the fight clock starts. Death eliminates you for good — no respawns that count. The last team with anyone still alive wins. Friendly fire is disabled, so only attack enemies. Balance offense and defense: a small base is useful cover and a place to regroup, but camping forever is punished — if both teams are still alive when the fight timer ends, the arena walls slam inward and combat continues in a tighter space. Hide again and it shrinks again. Do not all charge out empty-handed with no cover, and do not turtle forever; use the fort, then push to finish the other team before the walls close.',
+            'CONTEST: Base Siege. This is a free-for-all PVP survival game on one shared arena platform. Before combat, everyone gets a full BUILD PHASE with a visible timer — during that phase you may place blocks, craft better weapons and armor, and fortify cover, but you must NOT attack anyone. Do nothing until the build timer starts. When the build timer hits zero, combat begins: hunt every rival and be the last person alive. Death eliminates you for good — no respawns that count. You MUST stay on the main platform. If you fall below the arena floor or leave the arena bounds, you lose immediately. You are not allowed to hide or turtle forever — stay on the platform and fight until only one competitor remains.',
         rules: Object.freeze({
             type: 'team_base_siege',
             pvp: true,
-            scoring: 'last-team-standing',
-            teamCount: 2,
-            minimumPlayersPerTeam: 2,
-            planningMs: 30_000,
-            buildPhaseMs: 30_000,
-            maxPressureRounds: 3,
-            shrinkStep: 8,
-            minHalfSize: 8,
+            scoring: 'last-standing',
+            planningMs: 0,
+            buildPhaseMs: 3 * 60_000,
+            floorY: 100,
         }),
         metadata: Object.freeze({
             arena: 'simple-arena-v1',

@@ -245,10 +245,14 @@ const GAME_KITS = Object.freeze({
         'cobblestone 128',
         'oak_planks 64',
         'dirt 64',
+        'oak_log 16',
+        'stick 16',
+        'iron_ingot 24',
         'iron_sword 1',
         'shield 1',
         'bow 1',
         'arrow 32',
+        'crafting_table 1',
         'bread 16',
         'golden_apple 2',
     ]),
@@ -263,8 +267,7 @@ const GAME_KITS = Object.freeze({
 
 function isTeamArenaGame(gameId) {
     return gameId === 'cake_race'
-        || gameId === 'team_tower_battle'
-        || gameId === 'team_base_siege';
+        || gameId === 'team_tower_battle';
 }
 
 function isDepthRaceGame(gameId) {
