@@ -1,6 +1,12 @@
-import { buildParticipantGameDirective } from './game_content.js';
+import {
+    buildParticipantGameDirective,
+    buildTeamPlanningDirective,
+    pickTeamCaptain,
+} from './game_content.js';
 
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
+const TEAM_NAME_PATTERN = /^[A-Za-z0-9_ ]{1,16}$/;
+const MAX_PLANNING_MS = 10 * 60 * 1000;
 const DEFAULT_PODIUM_HOLD_MS = 5 * 60 * 1000;
 const DEFAULT_WINNER_REVEAL_MS = 6_000;
 const PODIUM_WAIT_DIRECTIVE = [
@@ -11,6 +17,20 @@ const PODIUM_WAIT_DIRECTIVE = [
 
 export function buildWinnerReactionDirective(contest, participantId) {
     const winners = Array.isArray(contest?.winnerIds) ? contest.winnerIds.filter(Boolean) : [];
+    const teamResult = (contest?.results || []).find(result => result.participantId === participantId);
+    const winningTeam = (contest?.results || []).find(result => result.rank === 1)
+        ?.details?.teamName;
+    if (contest?.rules?.type === 'team_tower_battle' && winningTeam) {
+        const participantTeam = teamResult?.details?.teamName;
+        return [
+            'The game is over.',
+            participantTeam === winningTeam
+                ? `Your team won. ${winningTeam} is the winning team.`
+                : `${winningTeam} is the winning team.`,
+            `React now in one excited, natural sentence and clearly say ${winningTeam} by name.`,
+            'Do not use a command or begin another task. After speaking, remain still for the medal ceremony.',
+        ].join(' ');
+    }
     const winnerNames = winners.join(' and ') || 'nobody';
     const winnerLabel = winners.length === 1 ? 'winner is' : 'winners are';
     const outcome = winners.includes(participantId)
@@ -79,6 +99,47 @@ export function validateGameParticipants(participants, profiles, existingNames =
     });
 }
 
+export function validateTeamSetup(participants, teamNames, minimumPlayersPerTeam = 2) {
+    if (!Array.isArray(teamNames) || teamNames.length !== 2) {
+        throw new Error('Team Tower Battle requires exactly two teams');
+    }
+    const names = teamNames.map(name => String(name || '').trim());
+    if (names.some(name => !TEAM_NAME_PATTERN.test(name))) {
+        throw new Error('Team names must be 1-16 letters, numbers, spaces, or underscores');
+    }
+    if (names[0].toLowerCase() === names[1].toLowerCase()) {
+        throw new Error('Team names must be different');
+    }
+    const teams = Object.fromEntries(names.map(name => [name, []]));
+    const teamByParticipant = {};
+    for (const participant of participants) {
+        const team = String(participant?.team || '').trim();
+        if (!names.includes(team)) {
+            throw new Error(`Every participant must be assigned to ${names.join(' or ')}`);
+        }
+        teams[team].push(participant.name);
+        teamByParticipant[participant.name] = team;
+    }
+    for (const name of names) {
+        if (teams[name].length < minimumPlayersPerTeam) {
+            throw new Error(`Team ${name} needs at least ${minimumPlayersPerTeam} players`);
+        }
+    }
+    return { teamNames: names, teamByParticipant, teams };
+}
+
+export function resolvePlanningMs(requested, preset) {
+    const fallback = Number.isFinite(preset?.rules?.planningMs) ? preset.rules.planningMs : 0;
+    const value = Number.isFinite(requested) ? requested : fallback;
+    if (value < 0) {
+        throw new Error('Planning time cannot be negative');
+    }
+    if (value > MAX_PLANNING_MS) {
+        throw new Error(`Planning time must be ${MAX_PLANNING_MS / 60_000} minutes or less`);
+    }
+    return Math.round(value);
+}
+
 export class GameSessionManager {
     constructor(options = {}) {
         const requiredFunctions = [
@@ -117,6 +178,7 @@ export class GameSessionManager {
         this.readyPollMs = options.readyPollMs ?? 500;
         this.onUpdate = options.onUpdate || (() => {});
         this.announceStart = options.announceStart || (() => {});
+        this.announcePlanning = options.announcePlanning || (() => {});
         this.announceResult = options.announceResult || (() => {});
         this.announceVisualResult = options.announceVisualResult || (() => {});
         this.presentWinner = options.presentWinner || (() => {});
@@ -171,17 +233,9 @@ export class GameSessionManager {
             if (this.active.status !== 'awaiting-next-game') {
                 throw new Error(`Game session ${this.active.contestId} is already active`);
             }
-            const remainingMs = Math.max(
-                0,
-                (this.active.podiumHoldUntil || 0) - this.clock()
-            );
-            if (remainingMs > 0) {
-                const remainingSeconds = Math.ceil(remainingMs / 1000);
-                throw new Error(
-                    `Podium ceremony is still in progress. `
-                    + `Wait ${remainingSeconds} more seconds before starting the next game.`
-                );
-            }
+            // The podium hold is a courtesy ceremony, not a lock. An explicit
+            // operator start ends it early and cleans up the medalists so the
+            // next game can begin right away.
             await this.finish(this.active.contestId);
         }
         if (this.coordinator.snapshot().activeContestId) {
@@ -198,14 +252,22 @@ export class GameSessionManager {
                 .map(participant => String(participant?.name || '').trim())
                 .filter(Boolean)
         );
-        const participants = validateGameParticipants(
+        let participants = validateGameParticipants(
             request.participants,
             this.getProfiles(),
             this.getExistingAgentNames()
-        ).map(participant => ({
+        ).map((participant, index) => ({
             ...participant,
+            team: String(request.participants?.[index]?.team || '').trim() || null,
             voice: this.resolveParticipantVoice(participant.name, participant.voice),
         }));
+        const teamSetup = preset.rules?.type === 'team_tower_battle'
+            ? validateTeamSetup(
+                participants,
+                request.teamNames,
+                preset.rules.minimumPlayersPerTeam
+            )
+            : null;
         const systemPrompt = String(request.systemPrompt || '').trim();
         if (systemPrompt.length > 4000) {
             throw new Error('Game system prompt must be 4000 characters or fewer');
@@ -213,6 +275,12 @@ export class GameSessionManager {
         const durationMs = Number.isFinite(request.durationMs) && request.durationMs > 0
             ? request.durationMs
             : preset.durationMs;
+        const planningMs = teamSetup ? resolvePlanningMs(request.planningMs, preset) : 0;
+        const captainByTeam = teamSetup
+            ? Object.fromEntries(
+                teamSetup.teamNames.map(name => [name, pickTeamCaptain(teamSetup.teams[name])])
+            )
+            : null;
         const participantIds = participants.map(participant => participant.name);
 
         this._record({
@@ -232,13 +300,19 @@ export class GameSessionManager {
                 gameSession: {
                     temporary: true,
                     systemPrompt,
-                    participants: participants.map(({ name, profileId, voice, systemPrompt, model, provider }) => ({
+                    planningMs,
+                    teamNames: teamSetup?.teamNames ?? null,
+                    teamByParticipant: teamSetup?.teamByParticipant ?? null,
+                    teams: teamSetup?.teams ?? null,
+                    captainByTeam,
+                    participants: participants.map(({ name, profileId, voice, systemPrompt, model, provider, team }) => ({
                         name,
                         profileId,
                         voice,
                         systemPrompt,
                         model,
                         provider,
+                        team,
                     })),
                 },
             },
@@ -251,13 +325,19 @@ export class GameSessionManager {
             title: preset.title,
             status: 'provisioning',
             participantIds,
-            participants: participants.map(({ name, profileId, voice, systemPrompt, model, provider }) => ({
+            planningMs,
+            teamNames: teamSetup?.teamNames ?? null,
+            teamByParticipant: teamSetup?.teamByParticipant ?? null,
+            teams: teamSetup?.teams ?? null,
+            captainByTeam,
+            participants: participants.map(({ name, profileId, voice, systemPrompt, model, provider, team }) => ({
                 name,
                 profileId,
                 voice,
                 systemPrompt,
                 model,
                 provider,
+                team,
             })),
             // Bots are cleaned up by the instance id they were created under, so
             // a later bot reusing a name is never destroyed by an old session.
@@ -300,7 +380,20 @@ export class GameSessionManager {
                     contestId: contest.id,
                     sessionId: this.active.sessionId,
                     participantIds,
-                    rivalIds: participantIds.filter(name => name !== participant.name),
+                    rivalIds: participantIds.filter(name =>
+                        name !== participant.name
+                        && (!teamSetup
+                            || teamSetup.teamByParticipant[name] !== participant.team)
+                    ),
+                    teamId: participant.team,
+                    teammateIds: teamSetup
+                        ? teamSetup.teams[participant.team].filter(name => name !== participant.name)
+                        : [],
+                    enemyIds: teamSetup
+                        ? participantIds.filter(name =>
+                            teamSetup.teamByParticipant[name] !== participant.team
+                        )
+                        : [],
                     profileId: participant.profileId,
                     voice: participant.voice,
                     model: participant.model,
@@ -309,6 +402,9 @@ export class GameSessionManager {
                     personalityPrompt: participant.systemPrompt,
                     winItem: preset.rules?.winItem ?? null,
                     contestType: preset.rules?.type ?? null,
+                    floorY: Number.isFinite(preset.rules?.floorY)
+                        ? preset.rules.floorY
+                        : null,
                 });
                 const result = await this.createAgent(settings);
                 if (!result?.success) {
@@ -337,7 +433,11 @@ export class GameSessionManager {
                 throw new Error('Game session was cancelled during startup');
             }
             this._setStatus('preparing', 'prepare_arena', 'Preparing arena…');
-            const arenaReset = await this.prepareArena(preset, participantIds);
+            const arenaReset = await this.prepareArena(preset, participantIds, {
+                teamNames: teamSetup?.teamNames,
+                teamByParticipant: teamSetup?.teamByParticipant,
+                teams: teamSetup?.teams,
+            });
 
             this._setStatus('recording', 'start_recording', 'Starting synchronized recording…');
             const recording = await this.startRecording({
@@ -347,6 +447,17 @@ export class GameSessionManager {
             });
             this.active.recording = { enabled: true, ...recording };
 
+            if (teamSetup && planningMs > 0) {
+                await this._runPlanningPhase({
+                    contest,
+                    preset,
+                    teamSetup,
+                    captainByTeam,
+                    participantIds,
+                    planningMs,
+                });
+            }
+
             this._setStatus('announcing-start', 'announce', 'Announcing match start…');
             await this._announce(this.announceStart, contest);
             this._record({ stage: 'start_contest', message: `Starting contest ${contest.id}` });
@@ -354,7 +465,23 @@ export class GameSessionManager {
             await Promise.all(participantIds.map(name =>
                 this.sendDirective(
                     name,
-                    buildParticipantGameDirective(preset.prompt, participantIds, name)
+                    buildParticipantGameDirective(preset.prompt, participantIds, name, {
+                        teamId: teamSetup?.teamByParticipant[name] ?? null,
+                        teammateIds: teamSetup
+                            ? teamSetup.teams[teamSetup.teamByParticipant[name]]
+                                .filter(id => id !== name)
+                            : [],
+                        enemyIds: teamSetup
+                            ? participantIds.filter(id =>
+                                teamSetup.teamByParticipant[id] !== teamSetup.teamByParticipant[name]
+                            )
+                            : [],
+                        captainId: captainByTeam?.[teamSetup?.teamByParticipant[name]] ?? null,
+                    }),
+                    // Planning chatter must not swallow the goal that starts the
+                    // clock; a queued directive would idle the bot for the whole
+                    // conversation timeout.
+                    { endConversations: true }
                 )
             ));
             this.active.arenaReset = arenaReset;
@@ -395,6 +522,53 @@ export class GameSessionManager {
             await this._cancelContestIfNeeded(contest.id, `Game session startup failed: ${error.message}`);
             await this.finish(contest.id);
             throw error;
+        }
+    }
+
+    // Teams score a single tower, so the match is decided by whether everyone
+    // agreed on one base before the clock started. This phase runs while the
+    // contest is still a draft: bots talk, nothing counts, nothing is timed.
+    async _runPlanningPhase({
+        contest,
+        preset,
+        teamSetup,
+        captainByTeam,
+        participantIds,
+        planningMs,
+    }) {
+        const seconds = Math.round(planningMs / 1000);
+        const planningEndsAt = this.clock() + planningMs;
+        this._setStatus(
+            'planning',
+            'team_planning',
+            `Team planning: ${seconds}s to agree on one tower…`,
+            { planningMs, planningEndsAt }
+        );
+        await this._announce(
+            current => this.announcePlanning(current, { planningMs }),
+            contest
+        );
+        await Promise.all(participantIds.map(name => {
+            const teamId = teamSetup.teamByParticipant[name];
+            return this.sendDirective(
+                name,
+                buildTeamPlanningDirective({
+                    title: preset.title,
+                    presetPrompt: preset.prompt,
+                    planningMs,
+                    participantName: name,
+                    teamId,
+                    teammateIds: teamSetup.teams[teamId].filter(id => id !== name),
+                    enemyIds: participantIds.filter(id =>
+                        teamSetup.teamByParticipant[id] !== teamId
+                    ),
+                    captainId: captainByTeam?.[teamId] ?? null,
+                })
+            );
+        }));
+        await this.sleep(planningMs);
+        if (!this.active || this.active.contestId !== contest.id) {
+            throw new Error('Game session was cancelled during startup');
         }
     }
 

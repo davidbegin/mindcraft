@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mindcraft — Survivor Control Room</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/bot_voice.js"></script>
+    <script src="/game_setup.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/game_setup.css">
+    <style>
+        :root {
+            --bg: #0e1210;
+            --bg-elevated: #161c19;
+            --bg-card: #1a221e;
+            --bg-inset: #101614;
+            --border: #2a3530;
+            --border-strong: #3d4d45;
+            --text: #e8efe9;
+            --text-dim: #8a9a90;
+            --text-mute: #5f7066;
+            --lime: #9fe870;
+            --lime-dim: rgba(159, 232, 112, 0.15);
+            --amber: #f0b429;
+            --amber-dim: rgba(240, 180, 41, 0.18);
+            --red: #ef5350;
+            --red-dim: rgba(239, 83, 80, 0.16);
+            --cyan: #5ec8c0;
+            --font: "DM Sans", system-ui, sans-serif;
+            --mono: "JetBrains Mono", ui-monospace, monospace;
+            --radius: 12px;
+            --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+        }
+
+        * { box-sizing: border-box; }
+
+        /* Class rules like .btn set display, which would otherwise beat the
+           user-agent [hidden] rule and leave "hidden" controls visible. */
+        [hidden] { display: none !important; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        h1, h2, h3 { margin: 0; }
+
+        /* —— Buttons —— */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 7px 12px;
+            font: inherit;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s, opacity 0.15s;
+        }
+
+        .btn:hover:not(:disabled) { border-color: var(--border-strong); }
+        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .btn-primary { background: var(--lime-dim); border-color: var(--lime); color: var(--lime); }
+        .btn-amber { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
+        .btn-danger { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+        .btn-ghost { background: transparent; border-color: var(--border-strong); }
+        .btn-icon { padding: 3px 8px; font-size: 0.8rem; line-height: 1.4; }
+
+        select, input[type="number"], input[type="text"] {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 7px 9px;
+            font: inherit;
+            font-size: 0.85rem;
+        }
+
+        select:focus, input:focus, textarea:focus {
+            outline: none;
+            border-color: var(--border-strong);
+        }
+
+        /* —— Modal shell (the setup modal injected by game_setup.js) —— */
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            width: min(900px, 92vw);
+            height: min(80vh, 720px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .modal-header, .modal-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            gap: 12px;
+        }
+
+        .modal-footer { border-bottom: none; border-top: 1px solid var(--border); }
+        .modal-body { flex: 1; overflow: auto; padding: 12px 16px; }
+        .modal-header h2 { font-size: 1.1rem; }
+        .footer-left { font-size: 0.82rem; color: var(--text-dim); }
+        .footer-actions { display: flex; gap: 8px; }
+        .games-sub { font-size: 0.8rem; color: var(--text-dim); }
+
+        /* —— Top bar —— */
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .brand { display: flex; align-items: baseline; gap: 8px; }
+        .brand h1 { font-size: 1.05rem; letter-spacing: -0.01em; }
+        .brand .tag {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .view-nav { display: flex; gap: 4px; margin-left: 8px; }
+
+        .view-nav a {
+            padding: 5px 12px;
+            border-radius: 8px;
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.85rem;
+            border: 1px solid transparent;
+        }
+
+        .view-nav a:hover { color: var(--text); }
+        .view-nav a.active { background: var(--amber-dim); color: var(--amber); }
+
+        .status-pill {
+            margin-left: auto;
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+
+        .status-pill.online { color: var(--lime); border-color: var(--lime); }
+        .status-pill.offline { color: var(--red); border-color: var(--red); }
+
+        /* —— Season HUD —— */
+        .hud {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            padding: 14px 20px;
+            background: linear-gradient(180deg, var(--bg-elevated), var(--bg));
+            border-bottom: 1px solid var(--border);
+        }
+
+        .hud-round { display: flex; flex-direction: column; }
+        .hud-round .round { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+
+        .hud-round .phase {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--amber);
+        }
+
+        .hud-stats { display: flex; gap: 18px; flex-wrap: wrap; }
+        .hud-stat { display: flex; flex-direction: column; min-width: 76px; }
+
+        .hud-stat .label {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+        }
+
+        .hud-stat .value { font-family: var(--mono); font-size: 0.95rem; }
+        .hud-stat .value.warn { color: var(--amber); }
+        .hud-stat .value.danger { color: var(--red); }
+        .hud-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+
+        .hud-badge {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            padding: 3px 9px;
+            border-radius: 999px;
+            border: 1px solid var(--amber);
+            color: var(--amber);
+        }
+
+        /* —— Layout —— */
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+            padding: 16px 20px 40px;
+            align-items: start;
+        }
+
+        @media (max-width: 1400px) {
+            .control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        @media (max-width: 900px) {
+            .control-grid { grid-template-columns: minmax(0, 1fr); }
+        }
+
+        .card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .card-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-head h2 { font-size: 0.92rem; }
+
+        .card-head .count {
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            color: var(--text-mute);
+            margin-left: auto;
+        }
+
+        .card-body { padding: 12px 14px; }
+        .card-body.flush { padding: 0; }
+        .scroll-body { max-height: 420px; overflow-y: auto; }
+
+        .empty {
+            color: var(--text-mute);
+            font-size: 0.82rem;
+            font-style: italic;
+            padding: 6px 0;
+        }
+
+        /* —— Start panel —— */
+        .start-panel {
+            margin: 16px 20px;
+            padding: 22px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-elevated);
+        }
+
+        .start-panel h2 { font-size: 1.15rem; margin-bottom: 6px; }
+        .start-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+
+        .status-msg { min-height: 20px; font-size: 0.83rem; color: var(--text-dim); padding: 0 20px; }
+        .status-msg.error { color: var(--red); }
+
+        /* —— Chips —— */
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+        .chip {
+            font-size: 0.76rem;
+            padding: 3px 9px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--bg-inset);
+            color: var(--text-dim);
+        }
+
+        .chip strong { color: var(--text); }
+        .chip.immune { border-color: var(--lime); color: var(--lime); }
+        .chip.danger { border-color: var(--red); color: var(--red); }
+        .chip.amber { border-color: var(--amber); color: var(--amber); }
+
+        /* —— Standings —— */
+        table.standings { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+
+        table.standings th {
+            text-align: left;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-mute);
+            font-weight: 500;
+            padding: 6px 8px;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            background: var(--bg-elevated);
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        table.standings th.sorted { color: var(--amber); }
+        table.standings td { padding: 6px 8px; border-bottom: 1px solid var(--bg-card); }
+        table.standings td.num { font-family: var(--mono); text-align: right; }
+        table.standings tr.out td { color: var(--text-mute); }
+        table.standings tr.winner td { background: var(--lime-dim); }
+
+        .pill {
+            display: inline-block;
+            font-size: 0.68rem;
+            padding: 1px 7px;
+            border-radius: 999px;
+            border: 1px solid var(--border-strong);
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .pill.active { border-color: var(--lime); color: var(--lime); }
+        .pill.winner { border-color: var(--amber); color: var(--amber); }
+        .pill.jury { border-color: var(--cyan); color: var(--cyan); }
+
+        /* —— Challenge deck —— */
+        .deck-row {
+            display: grid;
+            grid-template-columns: 34px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 8px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-inset);
+            margin-bottom: 6px;
+            cursor: grab;
+        }
+
+        .deck-row.dragging { opacity: 0.4; }
+        .deck-row.drop-target { border-color: var(--amber); }
+        .deck-row.next { border-color: var(--amber); background: var(--amber-dim); }
+
+        .deck-round {
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            color: var(--text-mute);
+            text-align: center;
+        }
+
+        .deck-row.next .deck-round { color: var(--amber); }
+        .deck-row select { width: 100%; }
+        .deck-actions { display: flex; gap: 3px; }
+        .deck-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+        .deck-dirty { font-size: 0.76rem; color: var(--amber); margin-right: auto; }
+
+        /* —— Vote board —— */
+        .vote-progress {
+            height: 8px;
+            border-radius: 999px;
+            background: var(--bg-inset);
+            border: 1px solid var(--border);
+            overflow: hidden;
+            margin: 8px 0 10px;
+        }
+
+        .vote-progress span { display: block; height: 100%; background: var(--amber); }
+
+        .tally-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 34px;
+            align-items: center;
+            gap: 8px;
+            padding: 3px 0;
+            font-size: 0.82rem;
+        }
+
+        .tally-bar {
+            height: 6px;
+            border-radius: 999px;
+            background: var(--red-dim);
+            border: 1px solid var(--red);
+        }
+
+        .tally-count { font-family: var(--mono); text-align: right; font-size: 0.78rem; }
+
+        .ballot-list {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            color: var(--text-dim);
+            margin-top: 6px;
+            line-height: 1.6;
+        }
+
+        .vote-block { padding: 10px 0; border-bottom: 1px solid var(--bg-card); }
+        .vote-block:last-child { border-bottom: none; }
+
+        .vote-block h3 {
+            font-size: 0.76rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-mute);
+            margin-bottom: 4px;
+        }
+
+        /* —— Timeline —— */
+        .timeline-entry {
+            display: grid;
+            grid-template-columns: 30px minmax(0, 1fr);
+            gap: 8px;
+            padding: 5px 0;
+            border-bottom: 1px solid var(--bg-card);
+            font-size: 0.82rem;
+        }
+
+        .timeline-entry:last-child { border-bottom: none; }
+
+        .timeline-round {
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--text-mute);
+            padding-top: 2px;
+        }
+
+        .timeline-entry.good .timeline-text { color: var(--lime); }
+        .timeline-entry.bad .timeline-text { color: var(--red); }
+        .timeline-entry.big .timeline-text { color: var(--amber); font-weight: 600; }
+
+        /* —— Relationships —— */
+        .rel-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 54px;
+            gap: 8px;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--bg-card);
+        }
+
+        .rel-row:last-child { border-bottom: none; }
+        .rel-pair { font-size: 0.82rem; }
+        .rel-signals { font-size: 0.72rem; color: var(--text-mute); }
+
+        .rel-score {
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            text-align: right;
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+
+        .rel-score.bond { color: var(--lime); background: var(--lime-dim); }
+        .rel-score.friction { color: var(--red); background: var(--red-dim); }
+
+        /* —— Rooms and secret feed —— */
+        .room-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            background: var(--bg-inset);
+        }
+
+        .room-card .members { font-size: 0.82rem; }
+        .room-card .meta { font-size: 0.72rem; color: var(--text-mute); }
+
+        .secret-feed {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            line-height: 1.55;
+            max-height: 300px;
+            overflow-y: auto;
+            background: var(--bg-inset);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
+
+        .secret-entry { padding: 2px 0; }
+        .secret-entry .who { color: var(--amber); }
+        .secret-entry.system { color: var(--text-mute); }
+
+        /* —— Active challenge —— */
+        .challenge-live {
+            border: 1px solid var(--amber);
+            border-radius: 8px;
+            background: var(--amber-dim);
+            padding: 10px 12px;
+            margin-bottom: 10px;
+        }
+
+        .challenge-live .title { font-weight: 600; }
+        .challenge-live .meta { font-size: 0.76rem; color: var(--text-dim); }
+
+        .join-card {
+            font-family: var(--mono);
+            font-size: 0.76rem;
+            color: var(--cyan);
+            padding: 8px 20px;
+        }
+
+        /* —— Tribal Council console —— */
+        .council {
+            margin: 16px 20px 0;
+            border: 1px solid var(--amber);
+            border-radius: var(--radius);
+            background: var(--bg-elevated);
+            overflow: hidden;
+        }
+
+        .council-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            padding: 12px 16px;
+            background: var(--amber-dim);
+            border-bottom: 1px solid var(--amber);
+        }
+
+        .council-head h2 { font-size: 1rem; color: var(--amber); }
+
+        .council-head .who {
+            font-size: 0.78rem;
+            color: var(--text-dim);
+        }
+
+        .council-head .council-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+        .council-body {
+            display: grid;
+            grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+            gap: 16px;
+            padding: 14px 16px;
+            align-items: start;
+        }
+
+        @media (max-width: 1000px) {
+            .council-body { grid-template-columns: minmax(0, 1fr); }
+        }
+
+        .field-label {
+            display: block;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+            margin-bottom: 5px;
+        }
+
+        textarea {
+            width: 100%;
+            background: var(--bg-inset);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font: inherit;
+            font-size: 0.85rem;
+            resize: vertical;
+            min-height: 70px;
+        }
+
+        .ask-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+        .ask-row .spacer { margin-left: auto; }
+
+        .preset-questions { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+
+        .preset-questions button {
+            text-align: left;
+            font-size: 0.78rem;
+            padding: 5px 9px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--bg-inset);
+            color: var(--text-dim);
+            font-family: inherit;
+            cursor: pointer;
+        }
+
+        .preset-questions button:hover { color: var(--text); border-color: var(--border-strong); }
+
+        /* Ask-target picker */
+        .target-picker { display: flex; flex-wrap: wrap; gap: 5px; }
+
+        .target-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.78rem;
+            padding: 4px 9px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--bg-inset);
+            color: var(--text-dim);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .target-chip input { margin: 0; accent-color: var(--amber); }
+        .target-chip.on { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+        .target-chip.jury { border-style: dashed; }
+        .quick-picks { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+
+        .quick-picks button {
+            font-size: 0.72rem;
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border-strong);
+            background: transparent;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .quick-picks button:hover { color: var(--text); }
+
+        /* Council transcript */
+        .transcript { max-height: 460px; overflow-y: auto; }
+
+        .qa-block {
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--amber);
+            border-radius: 8px;
+            padding: 9px 11px;
+            margin-bottom: 8px;
+            background: var(--bg-inset);
+        }
+
+        .qa-block .prompt { font-weight: 600; font-size: 0.87rem; }
+
+        .qa-block .asked-of {
+            font-size: 0.72rem;
+            color: var(--text-mute);
+            margin-top: 2px;
+        }
+
+        .qa-answer {
+            display: grid;
+            grid-template-columns: 110px minmax(0, 1fr);
+            gap: 8px;
+            padding: 5px 0;
+            font-size: 0.83rem;
+            border-top: 1px solid var(--bg-card);
+            margin-top: 6px;
+        }
+
+        .qa-answer .speaker { color: var(--lime); font-weight: 600; }
+        .qa-answer.waiting .speaker { color: var(--amber); }
+        .qa-answer.waiting .said { color: var(--text-mute); font-style: italic; }
+
+        /* —— Conversation requests —— */
+        .talk-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            background: var(--bg-inset);
+        }
+
+        .talk-card.pending { border-color: var(--amber); }
+        .talk-card.declined { border-color: var(--red); }
+        .talk-card .ask { font-size: 0.83rem; }
+        .talk-card .pitch { font-size: 0.76rem; color: var(--text-dim); font-style: italic; }
+        .talk-card .answers { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+
+        .answer-chip {
+            font-size: 0.72rem;
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border-strong);
+            color: var(--text-dim);
+        }
+
+        .answer-chip.yes { border-color: var(--lime); color: var(--lime); }
+        .answer-chip.no { border-color: var(--red); color: var(--red); }
+        .answer-chip.waiting { border-color: var(--amber); color: var(--amber); }
+
+        /* —— Diagnostics —— */
+        .problem-row {
+            display: grid;
+            grid-template-columns: 96px minmax(0, 1fr);
+            gap: 8px;
+            padding: 5px 0;
+            border-bottom: 1px solid var(--bg-card);
+            font-size: 0.8rem;
+        }
+
+        .problem-row:last-child { border-bottom: none; }
+
+        .problem-row .stage {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--amber);
+        }
+
+        .problem-row .detail {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--text-mute);
+        }
+
+        .agent-grid { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+        .diag-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <h1>Survivor</h1>
+            <span class="tag">control room</span>
+        </div>
+        <nav class="view-nav">
+            <a href="/colony">Colony</a>
+            <a href="/games">Games</a>
+            <a href="/survivor" class="active" aria-current="page">Survivor</a>
+        </nav>
+        <span id="msStatus" class="status-pill offline">mindserver offline</span>
+    </header>
+
+    <section id="seasonHud" class="hud" hidden>
+        <div class="hud-round">
+            <span class="round" id="hudRound">Round 1</span>
+            <span class="phase" id="hudPhase">challenge</span>
+        </div>
+        <div class="hud-stats">
+            <div class="hud-stat">
+                <span class="label">Remaining</span>
+                <span class="value" id="hudRemaining">—</span>
+            </div>
+            <div class="hud-stat">
+                <span class="label">Phase ends</span>
+                <span class="value" id="hudCountdown">—</span>
+            </div>
+            <div class="hud-stat">
+                <span class="label">Immunity</span>
+                <span class="value" id="hudImmunity">—</span>
+            </div>
+            <div class="hud-stat">
+                <span class="label">Jury</span>
+                <span class="value" id="hudJury">—</span>
+            </div>
+        </div>
+        <span id="hudPaused" class="hud-badge" hidden>Paused</span>
+        <div class="hud-actions">
+            <button type="button" id="pauseBtn" class="btn btn-ghost">Pause</button>
+            <button type="button" id="advanceBtn" class="btn btn-amber">Advance phase</button>
+            <a id="watchLiveLink" class="btn btn-ghost" href="/live.html" target="_blank" rel="noopener">Live wall</a>
+            <button type="button" id="cancelSeasonBtn" class="btn btn-danger">Cancel season</button>
+        </div>
+    </section>
+
+    <div id="statusMsg" class="status-msg"></div>
+    <div id="joinCard" class="join-card" hidden></div>
+
+    <section id="startPanel" class="start-panel">
+        <h2>No season running</h2>
+        <p class="games-sub" id="startBlurb">Pick a scenario and cast to begin a Survivor season.</p>
+        <div class="start-row">
+            <select id="scenarioSelect" aria-label="Survivor scenario"></select>
+            <button type="button" id="startSeasonBtn" class="btn btn-amber" disabled>Loading cast…</button>
+            <button type="button" id="startCheapTestBtn" class="btn btn-primary" disabled>
+                Cheap 4-bot test
+            </button>
+            <label class="target-chip" title="Leave this off to host Tribal Council yourself: it stays open until you close it.">
+                <input type="checkbox" id="councilAutoAdvance">
+                Run councils on a timer
+            </label>
+        </div>
+    </section>
+
+    <section id="councilRoom" class="council" hidden>
+        <div class="council-head">
+            <h2 id="councilTitle">Tribal Council</h2>
+            <span class="who" id="councilWho"></span>
+            <div class="council-actions">
+                <button type="button" id="councilCloseBtn" class="btn btn-amber">
+                    Close council and open voting
+                </button>
+            </div>
+        </div>
+        <div class="council-body">
+            <div>
+                <label class="field-label" for="questionText">Your question, as host</label>
+                <textarea id="questionText"
+                    placeholder="Somebody is going home tonight. Why should it not be you?"></textarea>
+                <div class="ask-row">
+                    <label class="field-label" style="margin:0">Ask</label>
+                    <span class="spacer"></span>
+                    <button type="button" id="askBtn" class="btn btn-primary">Ask them</button>
+                </div>
+                <div class="quick-picks">
+                    <button type="button" data-pick="all">Everyone</button>
+                    <button type="button" data-pick="vulnerable">Only the vulnerable</button>
+                    <button type="button" data-pick="none">Clear</button>
+                </div>
+                <div class="target-picker" id="targetPicker"></div>
+                <div class="preset-questions" id="presetQuestions"></div>
+            </div>
+            <div>
+                <label class="field-label">On the record this council</label>
+                <div class="transcript" id="councilTranscript"></div>
+            </div>
+        </div>
+    </section>
+
+    <main id="controlGrid" class="control-grid" hidden>
+        <div class="col">
+            <section class="card" style="margin-bottom:14px">
+                <div class="card-head">
+                    <h2>Standings</h2>
+                    <span class="count" id="standingsCount"></span>
+                </div>
+                <div class="card-body flush scroll-body">
+                    <table class="standings">
+                        <thead>
+                            <tr id="standingsHead"></tr>
+                        </thead>
+                        <tbody id="standingsBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="card" style="margin-bottom:14px">
+                <div class="card-head">
+                    <h2>Tribes</h2>
+                </div>
+                <div class="card-body">
+                    <div class="chips" id="tribeChips"></div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-head">
+                    <h2>Boot order and jury</h2>
+                    <span class="count" id="bootCount"></span>
+                </div>
+                <div class="card-body scroll-body" id="bootOrder"></div>
+            </section>
+        </div>
+
+        <div class="col">
+            <section class="card" style="margin-bottom:14px">
+                <div class="card-head">
+                    <h2>Vote board</h2>
+                    <span class="count" id="voteCount"></span>
+                </div>
+                <div class="card-body" id="voteLive"></div>
+                <div class="card-body scroll-body" id="voteHistory" style="border-top:1px solid var(--border)"></div>
+            </section>
+
+            <section class="card" style="margin-bottom:14px">
+                <div class="card-head">
+                    <h2>Challenge deck</h2>
+                    <span class="count">drag to reorder</span>
+                </div>
+                <div class="card-body">
+                    <div id="deckRows"></div>
+                    <div class="deck-foot">
+                        <span class="deck-dirty" id="deckDirty" hidden>Unsaved order</span>
+                        <select id="deckAddSelect" aria-label="Challenge to add"></select>
+                        <button type="button" id="deckAddBtn" class="btn btn-ghost">Add</button>
+                        <button type="button" id="deckRevertBtn" class="btn btn-ghost" disabled>Revert</button>
+                        <button type="button" id="deckSaveBtn" class="btn btn-amber" disabled>Save order</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-head">
+                    <h2>Challenge history</h2>
+                    <span class="count" id="challengeCount"></span>
+                </div>
+                <div class="card-body scroll-body" id="challengeHistory"></div>
+            </section>
+        </div>
+
+        <div class="col">
+            <section class="card" style="margin-bottom:14px">
+                <div class="card-head">
+                    <h2>Current happenings</h2>
+                    <span class="count" id="timelineCount"></span>
+                </div>
+                <div class="card-body">
+                    <div id="activeChallenge"></div>
+                    <div class="scroll-body" id="timeline"></div>
+                </div>
+            </section>
+
+            <section class="card" style="margin-bottom:14px">
+                <div class="card-head">
+                    <h2>Relationships</h2>
+                    <span class="count" id="relCount"></span>
+                </div>
+                <div class="card-body scroll-body" id="relationships"></div>
+            </section>
+
+            <section class="card" style="margin-bottom:14px">
+                <div class="card-head">
+                    <h2>Who is talking to whom</h2>
+                    <span class="count" id="roomCount"></span>
+                </div>
+                <div class="card-body">
+                    <div id="talkRequests"></div>
+                    <div id="rooms"></div>
+                    <div class="secret-feed" id="secretFeed"></div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-head">
+                    <h2>Diagnostics</h2>
+                    <span class="count" id="problemCount"></span>
+                </div>
+                <div class="card-body">
+                    <div class="agent-grid" id="agentGrid"></div>
+                    <div class="scroll-body" id="problems"></div>
+                    <div class="diag-actions">
+                        <button type="button" id="holdPhaseBtn" class="btn btn-ghost">
+                            Hold phase (no clock)
+                        </button>
+                        <button type="button" id="rushPhaseBtn" class="btn btn-ghost">
+                            End phase in 5s
+                        </button>
+                        <button type="button" id="copyDiagBtn" class="btn btn-ghost">
+                            Copy diagnostics
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script src="/survivor.js"></script>
+</body>
+</html>

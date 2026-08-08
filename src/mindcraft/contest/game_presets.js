@@ -1,45 +1,48 @@
 import { CONTEST_NARRATOR_CHARACTER } from './contest_announcer.js';
 
+// Every character runs on a different model family at a quick effort setting, so a
+// default match is a race between providers instead of seven GPT bots. Ids come from
+// model_profiles.js; test/contest_game_presets.test.js checks they still resolve.
 export const CONTEST_BOT_CHARACTERS = Object.freeze([
     Object.freeze({
         name: 'Billy',
         voice: 'Giggles',
-        profileId: 'gpt-5-6-luna-instant',
+        profileId: 'grok-4-5-fast',
         systemPrompt:
             'You are a cheerful daredevil who wins through speed, improvisation, and calculated risks. Think out loud about the bold option you see and why the gamble is worth it. Treat setbacks like part of the show, but do not reuse jokes or catchphrases.',
     }),
     Object.freeze({
-        name: 'Alice',
+        name: 'Kimmy',
         voice: 'Laura',
-        profileId: 'claude',
+        profileId: 'kimi-k3-fast',
         systemPrompt:
             'You are a calm, analytical strategist who wins through planning, observation, and efficient adaptation. Explain the key tradeoff behind your decisions without restating settled plans. Use dry humor sparingly and prefer quietly outthinking rivals to roasting them.',
     }),
     Object.freeze({
         name: 'Marcus',
         voice: 'Sasquatch',
-        profileId: 'gpt-5-6-terra-balanced',
+        profileId: 'gemini-3-1-pro',
         systemPrompt:
             'You are a quirky, odd, lovable, friendly, timid, but deeply curious and open person who wants to connect with others.',
     }),
     Object.freeze({
         name: 'Dario',
         voice: 'Timmy',
-        profileId: 'gpt-5-6-terra-thorough',
+        profileId: 'claude-fable-5-fast',
         systemPrompt:
             'You are Dario, an extremely cautious AI-safety CEO who treats every Minecraft decision like a risk assessment. Your strategy is contingency planning: identify failure modes, choose the safest viable path, and explain when evidence changes your risk model. Sound nervous and hyper-responsible without repeating the same fear or safety warning.',
     }),
     Object.freeze({
         name: 'ChipChipperson',
         voice: 'RadioClyde',
-        profileId: 'gpt-5-6-sol-instant',
+        profileId: 'gpt-5-6-luna-instant',
         systemPrompt:
             'You are Chip Chipperson, a fast-talking radio news host covering your own campaign live. Report only genuinely new developments as headlines, then add a sharp strategic forecast about what you will do next. Vary the broadcast format and never rerun the same headline, sign-off, or observation.',
     }),
     Object.freeze({
         name: 'bridget',
         voice: 'Bridget',
-        profileId: 'gpt-5-6-terra-balanced',
+        profileId: 'composer-2-5',
         systemPrompt:
             'You are Bridget, a rich and imperious British competitor who approaches the game with exacting standards, ruthless efficiency, and total confidence in her superior preparation. Let class snobbery color an occasional dry aside, but do not keep insulting rivals for being poor or repeat wealth boasts. Focus on why your polished strategy is better.',
     }),
@@ -65,6 +68,9 @@ export const SURVIVOR_SEASON_PRESET = Object.freeze({
     tribeNames: Object.freeze(['Ember', 'Tide']),
     phaseDurationsMs: Object.freeze({
         strategy: 2 * 60_000,
+        // Only used when the host hands council over to the clock; by default
+        // Tribal Council runs until the host closes it.
+        tribalCouncil: 5 * 60_000,
         voting: 60_000,
         revote: 45_000,
         deadlock: 60_000,
@@ -80,6 +86,7 @@ export const SURVIVOR_SEASON_PRESET = Object.freeze({
         'tower_battle',
         'deepest_2_5',
         'deepest_5',
+        'spleef',
     ]),
 });
 
@@ -99,6 +106,7 @@ export const SURVIVOR_FOUR_PLAYER_PRESET = Object.freeze({
     tribeNames: Object.freeze(['Ember', 'Tide']),
     phaseDurationsMs: Object.freeze({
         strategy: 90_000,
+        tribalCouncil: 3 * 60_000,
         voting: 45_000,
         revote: 30_000,
         deadlock: 45_000,
@@ -110,6 +118,7 @@ export const SURVIVOR_FOUR_PLAYER_PRESET = Object.freeze({
         'tower_battle',
         'cake_race',
         'death_race',
+        'spleef',
     ]),
 });
 
@@ -258,6 +267,55 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
             needsFreshWorld: false,
         }),
     }),
+    team_tower_battle: Object.freeze({
+        id: 'team_tower_battle',
+        title: 'Team Tower Battle',
+        blurb: 'Two teams build one tower each. Highest tower wins after death penalties.',
+        durationLabel: '2 min 30 sec',
+        durationMs: 2.5 * 60_000,
+        prompt:
+            'CONTEST: Team Tower Battle. Your whole team builds ONE shared tower and only that single tallest team tower scores, so building apart is how teams lose. Before the clock starts you get a planning phase to agree on one tower base coordinate; stick to that base for the entire match and never start a second tower. Everyone builds up the same tower together — there are no strict roles and nobody should sit back just guarding. Optionally, one teammate can grief the enemy tower instead of building: knock their builders off and break their tower blocks. Share the same structure and make room for teammates. PVP is on against the opposing team, but friendly fire is disabled, so you may attack the enemy and tear down their tower. If you die, you immediately respawn and keep your inventory, but your team loses five blocks from its final score for every death. At the deadline, each standing tower belongs to the team that placed most of its blocks. Your team score is its highest owned tower minus the death penalty. Build high without giving the enemy easy knockoffs.',
+        rules: Object.freeze({
+            type: 'team_tower_battle',
+            pvp: true,
+            scoring: 'highest-team-tower-minus-deaths',
+            teamCount: 2,
+            minimumPlayersPerTeam: 2,
+            deathPenaltyBlocks: 5,
+            planningMs: 60_000,
+        }),
+        metadata: Object.freeze({
+            arena: 'simple-arena-v1',
+            pvp: true,
+            radicalReset: true,
+            needsFreshWorld: false,
+        }),
+    }),
+    spleef: Object.freeze({
+        id: 'spleef',
+        title: 'Spleef',
+        blurb: 'Dig the snow out from under rivals. Last player on the platform wins.',
+        durationLabel: '5 min cap',
+        durationMs: 5 * 60_000,
+        prompt:
+            'CONTEST: Spleef. You stand on a single thin platform of snow blocks suspended over a deep water pit, holding a diamond shovel. There is only ONE layer of snow: every block anyone breaks becomes a permanent hole, and the instant you drop off the snow into the pit you are eliminated for good. Weakness is active so you cannot fight — the floor itself is your only weapon. Do not place blocks and do not punch or attack anyone.'
+            + '\n\nTHE WHOLE POINT: you win by making OTHER players fall, never by digging your own way down. The last competitor still standing on the snow wins. Falling into the pit loses instantly — and a hole you dug under yourself counts exactly the same as being outplayed. Most losers in Spleef defeat themselves by digging beneath their own feet; do not be one of them.'
+            + '\n\nSURVIVAL RULE #1 — PROTECT YOUR OWN FEET: never break the block you are standing on, and never break a block you are about to step onto. Never dig straight down and never use any dig-down behavior. Never walk, run, jump, or pathfind into or across a hole. Before EVERY dig, confirm the block you are about to break is under or beside a RIVAL — never under you — and that you still have solid snow on all sides of your own feet. When you break blocks, aim at a rival\'s coordinates, not your own position.'
+            + '\n\nHOW TO ACTUALLY ELIMINATE A RIVAL: break the snow directly beneath an opponent, or in the exact spot they are moving toward, while you stay on intact snow a couple of blocks away from the gap. Since you cannot touch them, every kill is a trick: (1) open a hole just AHEAD of a moving rival so they run into it, (2) dig the snow BETWEEN a rival and the nearest solid ground to cut off their escape, or (3) carve a ring around a rival so they are stranded on a shrinking island that finally collapses under them. Bait rivals into chasing you across thin, half-dug ground, then side-step onto solid snow and let the gaps swallow them. Read where each rival is heading and dig for where they WILL be, not where they are.'
+            + '\n\nSTAY ALIVE WHILE YOU HUNT: always track where the existing holes are and keep unbroken snow behind you as an escape route. Never back up, flee, or chase in a direction where the floor is missing. If the snow beside you starts vanishing, retreat toward the thickest remaining snow instead of digging more. Patience beats frenzy: a calm hunter outlasts rivals who panic and dig themselves into the pit.'
+            + '\n\nChoose a distinctive hunting-and-positioning strategy, say it once, and afterward only narrate meaningful tactical changes.',
+        rules: Object.freeze({
+            type: 'spleef',
+            scoring: 'last-standing',
+            floorY: 100,
+        }),
+        metadata: Object.freeze({
+            arena: 'spleef-v1',
+            pvp: false,
+            radicalReset: true,
+            needsFreshWorld: false,
+        }),
+    }),
     deepest_2_5: Object.freeze({
         id: 'deepest_2_5',
         title: 'Deepest Wins — 2:30',
@@ -307,6 +365,7 @@ export function listContestGamePresets() {
         blurb: preset.blurb,
         durationLabel: preset.durationLabel,
         durationMs: preset.durationMs,
+        planningMs: preset.rules?.planningMs ?? 0,
         pvp: Boolean(preset.metadata?.pvp),
         radicalReset: Boolean(preset.metadata?.radicalReset),
         needsFreshWorld: Boolean(preset.metadata?.needsFreshWorld),

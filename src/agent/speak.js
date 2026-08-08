@@ -11,6 +11,30 @@ let speakingQueue = []; // each item: {text, isSystem, volume, audioData, ready}
 let isSpeaking = false;
 let speechGeneration = 0;
 let activePlayer = null;
+// Global mute for host TTS. When muted, new lines are dropped entirely (no
+// TTS request, no playback) so muting also saves ElevenLabs credits.
+let muted = false;
+
+/** Whether host TTS is currently muted. */
+export function isMuted() {
+    return muted;
+}
+
+/**
+ * Mute or unmute host TTS. Muting also stops whatever is playing now and
+ * drops the queue, so the next line does not sneak through after the toggle.
+ * Returns the resulting mute state.
+ */
+export function setMuted(next) {
+    muted = !!next;
+    if (muted) clearSpeechQueue();
+    return muted;
+}
+
+/** Flip the mute state and return the new value. */
+export function toggleMuted() {
+    return setMuted(!muted);
+}
 
 /**
  * Drop speech that has not played yet and stop the line currently playing.
@@ -86,6 +110,7 @@ export async function generateSpeech(text, speak_model, botName) {
  * (e.g. for recordings) instead of paying for a second TTS request.
  */
 export function playSpeech({ text, model, botName, volume = 100, audioPromise = null }) {
+    if (muted) return;
     const spec = parseModelSpec(model, botName);
     const item = {
         text,

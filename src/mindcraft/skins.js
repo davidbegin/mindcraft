@@ -6,7 +6,7 @@ import { createCanvas, Image } from 'canvas';
 // Generates deterministic 64x64 Minecraft skins so every bot is visually unique
 // and its LLM model is identifiable at a glance:
 //  - a solid model-family color band wraps the chest and both arms, with the
-//    model's short word (MINI/SOL/TERA/LUNA) spelled out across the front
+//    model's short word (MINI/SOL/OPUS/KIMI/...) spelled out across the front
 //  - the model provider's logo is drawn on the back of the torso
 //  - hair, headband, pants, and skin tone are derived from the bot's name
 
@@ -18,10 +18,17 @@ export const LOGOS_DIR = path.resolve(__dirname, '../../assets/model-logos');
 export const SKINS_MOUNT = '/skins';
 
 const MODEL_FAMILIES = [
-    { match: /mini/i,  key: 'mini',  word: 'MINI', color: '#2fd3c9', mcColor: 'aqua' },
-    { match: /sol/i,   key: 'sol',   word: 'SOL',  color: '#ffb32b', mcColor: 'gold' },
-    { match: /terra/i, key: 'terra', word: 'TERA', color: '#5fc953', mcColor: 'green' },
-    { match: /luna/i,  key: 'luna',  word: 'LUNA', color: '#c77dff', mcColor: 'light_purple' },
+    { match: /mini/i,     key: 'mini',     word: 'MINI', color: '#2fd3c9', mcColor: 'aqua' },
+    { match: /sol/i,      key: 'sol',      word: 'SOL',  color: '#ffb32b', mcColor: 'gold' },
+    { match: /terra/i,    key: 'terra',    word: 'TERRA', color: '#5fc953', mcColor: 'green' },
+    { match: /luna/i,     key: 'luna',     word: 'LUNA', color: '#c77dff', mcColor: 'light_purple' },
+    { match: /composer/i, key: 'composer', word: 'COMP', color: '#cfd3dc', mcColor: 'gray' },
+    { match: /opus/i,     key: 'opus',     word: 'OPUS', color: '#d97757', mcColor: 'red' },
+    { match: /fable/i,    key: 'fable',    word: 'FABL', color: '#e2b6ff', mcColor: 'dark_purple' },
+    { match: /grok/i,     key: 'grok',     word: 'GROK', color: '#1d9bf0', mcColor: 'blue' },
+    { match: /gemini/i,   key: 'gemini',   word: 'GEM',  color: '#4285f4', mcColor: 'dark_aqua' },
+    { match: /kimi/i,     key: 'kimi',     word: 'KIMI', color: '#6f7bff', mcColor: 'dark_blue' },
+    { match: /glm/i,      key: 'glm',      word: 'GLM',  color: '#2f9e44', mcColor: 'dark_green' },
 ];
 
 // Maps model names (and API providers as a fallback) to the company whose
@@ -109,6 +116,13 @@ const FONT = {
     7: ['###', '..#', '.#.', '.#.', '.#.'],
     8: ['###', '#.#', '###', '#.#', '###'],
     9: ['###', '#.#', '###', '..#', '##.'],
+};
+
+// Narrow glyphs let five-letter family names use one letter on each arm and
+// three on the torso without abbreviating the model name.
+const NARROW_FONT = {
+    E: ['##', '#.', '##', '#.', '##'],
+    R: ['##', '#.', '##', '##', '#.'],
 };
 
 const SKIN_TONES = ['#f2c79c', '#e6ac73', '#c98d5a', '#a06a3d', '#8d5524', '#ffd9b3'];
@@ -281,12 +295,21 @@ export function renderSkin(name, model) {
         });
     };
     const drawWordRow = (letters, x, width, y, color) => {
-        const glyphs = letters.split('').map(c => FONT[c]).filter(Boolean);
-        const total = glyphs.reduce((s, g) => s + g[0].length, 0) + Math.max(0, glyphs.length - 1);
+        let glyphs = letters.split('').map(c => FONT[c]).filter(Boolean);
+        let spacing = 1;
+        let total = glyphs.reduce((s, g) => s + g[0].length, 0) + Math.max(0, glyphs.length - 1);
+        if (total > width) {
+            glyphs = letters.split('').map(c => NARROW_FONT[c] || FONT[c]).filter(Boolean);
+            total = glyphs.reduce((s, g) => s + g[0].length, 0) + Math.max(0, glyphs.length - 1);
+        }
+        if (total > width) {
+            spacing = 0;
+            total = glyphs.reduce((s, g) => s + g[0].length, 0);
+        }
         let cx = x + Math.max(0, Math.floor((width - total) / 2));
         for (const g of glyphs) {
             drawBitmap(g, cx, y, color);
-            cx += g[0].length + 1;
+            cx += g[0].length + spacing;
         }
     };
 
@@ -458,4 +481,16 @@ export function ensureSkin(name, model) {
         word: info.word,    // short word drawn on the chest
         color: info.color,  // family color, for UI badges
     };
+}
+
+/**
+ * Replaces any stale or hand-authored profile skin with one derived from the
+ * model that will actually run. Call this at the agent-registration boundary
+ * so every creation and restart uses model-authoritative branding.
+ */
+export function synchronizeProfileSkin(profile) {
+    if (!profile?.name) throw new Error('Cannot generate a skin without an agent name');
+    if (!profile.model) throw new Error(`Cannot generate a skin for ${profile.name} without a model`);
+    profile.skin = ensureSkin(profile.name, profile.model);
+    return profile.skin;
 }

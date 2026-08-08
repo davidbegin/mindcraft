@@ -1,0 +1,656 @@
+// Roster picker shared by the games dashboard and the Survivor control room.
+// It owns its own modal markup so a page only has to describe the game it wants
+// to start; see game_setup.css for the styles.
+(function () {
+    const AGENT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
+    const MAX_SYSTEM_PROMPT = 4000;
+    const MIN_DURATION_MINUTES = 0.5;
+    const MAX_DURATION_MINUTES = 60;
+    const START_TIMEOUT_MS = 180_000;
+
+    function esc(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function sanitizeMinecraftName(value) {
+        return String(value || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 16);
+    }
+
+    function nextUniqueMinecraftName(baseName, reserved) {
+        const cleaned = sanitizeMinecraftName(baseName) || 'bot';
+        const base = cleaned.length >= 3 ? cleaned : `${cleaned}bot`.slice(0, 16);
+        if (!reserved.has(base) && AGENT_NAME_PATTERN.test(base)) return base;
+        for (let suffix = 2; suffix < 1000; suffix++) {
+            const suffixText = String(suffix);
+            const candidate = `${base.slice(0, 16 - suffixText.length)}${suffixText}`;
+            if (!reserved.has(candidate) && AGENT_NAME_PATTERN.test(candidate)) return candidate;
+        }
+        throw new Error(`Could not generate a unique name for ${baseName}`);
+    }
+
+    // Mirrors autoVoiceName() in src/agent/tts_voices.js for bots the server has
+    // never seen, so the "Auto" option shows the voice they will actually get.
+    function autoVoiceFor(name, pool) {
+        if (!pool?.length) return '';
+        const text = String(name || 'bot');
+        let hash = 5381;
+        for (let i = 0; i < text.length; i++) {
+            hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
+        }
+        return pool[hash % pool.length].name;
+    }
+
+    const MODAL_HTML = `
+        <div class="modal game-setup-modal">
+            <div class="modal-header">
+                <h2 data-el="title">Set up game</h2>
+                <button type="button" class="btn btn-danger" data-action="close">Close</button>
+            </div>
+            <div class="modal-body">
+                <div class="game-setup-teams" data-el="teams" hidden>
+                    <label>Team 1
+                        <input type="text" maxlength="16" spellcheck="false" data-team-name="0">
+                    </label>
+                    <label>Team 2
+                        <input type="text" maxlength="16" spellcheck="false" data-team-name="1">
+                    </label>
+                </div>
+                <div class="game-setup-participants" data-el="participants"></div>
+                <div class="game-setup-voice-status" data-el="voiceStatus"></div>
+                <div class="game-setup-actions">
+                    <button type="button" class="btn btn-ghost" data-action="add">+ Add participant</button>
+                </div>
+                <div class="game-setup-duration" data-el="duration">
+                    <label data-el="durationLabel">Duration (minutes)</label>
+                    <input type="number" min="0.5" max="60" step="0.5" inputmode="decimal" data-el="durationInput">
+                    <span class="games-sub">0.5–60 minutes</span>
+                </div>
+                <div class="game-setup-duration" data-el="fields" hidden></div>
+                <div class="game-setup-prompt">
+                    <label data-el="promptLabel">Match-wide system prompt (optional)</label>
+                    <textarea maxlength="4000" rows="4" spellcheck="true" data-el="systemPrompt"
+                        placeholder="Extra instructions for every temporary contest bot…"></textarea>
+                    <div class="game-setup-prompt-count"><span data-el="promptCount">0</span>/4000</div>
+                </div>
+                <div class="game-setup-error error" data-el="error"></div>
+                <div class="launch-debug-report" data-el="debug" hidden>
+                    <div class="launch-debug-report-head">
+                        <strong>Debug report for Cursor</strong>
+                        <div class="launch-debug-report-actions">
+                            <button type="button" class="btn btn-primary" data-action="copy-report">Copy for Cursor</button>
+                        </div>
+                    </div>
+                    <textarea readonly spellcheck="false" data-el="debugText"
+                        aria-label="Launch failure debug report"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="footer-left" data-el="footer">Pick profiles and unique Minecraft names, then start.</div>
+                <div class="footer-actions">
+                    <button type="button" class="btn btn-ghost" data-action="cancel">Cancel</button>
+                    <button type="button" class="btn btn-primary" data-action="submit">Start game</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    window.createGameSetup = function createGameSetup(options = {}) {
+        const socket = options.socket;
+        if (!socket) throw new Error('createGameSetup requires a socket');
+        const getProfiles = options.getProfiles || (() => []);
+        const getReservedNames = options.getReservedNames || (() => []);
+        const onStatus = options.onStatus || (() => {});
+        const onBusyChange = options.onBusyChange || (() => {});
+        const onLaunchReport = options.onLaunchReport || (() => {});
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.innerHTML = MODAL_HTML;
+        document.body.appendChild(backdrop);
+
+        const el = name => backdrop.querySelector(`[data-el="${name}"]`);
+        const action = name => backdrop.querySelector(`[data-action="${name}"]`);
+
+        let config = null;
+        let participants = [];
+        let voices = null;
+        let previewAudio = null;
+        let busy = false;
+        let lastReport = '';
+        let teamNames = [];
+
+        function configuredProfiles() {
+            return getProfiles().filter(profile => profile?.id && profile.configured !== false);
+        }
+
+        // The catalog lists a model family's effort presets together, fastest first, so
+        // walking it in order fills a roster with one model at six speeds. Taking one
+        // profile per family in turn instead gives every slot a different model and picks
+        // its quickest setting first.
+        function profilesByFamily(profiles) {
+            const families = new Map();
+            for (const profile of profiles) {
+                const family = profile.family || profile.id;
+                if (!families.has(family)) families.set(family, []);
+                families.get(family).push(profile);
+            }
+            const lists = [...families.values()];
+            const ordered = [];
+            for (let round = 0; ordered.length < profiles.length; round++) {
+                for (const list of lists) {
+                    if (round < list.length) ordered.push(list[round]);
+                }
+            }
+            return ordered;
+        }
+
+        function reservedNames(exceptIndex = -1) {
+            const names = new Set(getReservedNames());
+            participants.forEach((participant, index) => {
+                if (index === exceptIndex) return;
+                const name = sanitizeMinecraftName(participant.name);
+                if (name) names.add(name);
+            });
+            return names;
+        }
+
+        function setError(message) {
+            el('error').textContent = message || '';
+        }
+
+        function setVoiceStatus(message, isError = false) {
+            const node = el('voiceStatus');
+            node.textContent = message || '';
+            node.classList.toggle('error', Boolean(isError));
+        }
+
+        function setBusy(next) {
+            busy = next;
+            action('submit').disabled = next;
+            onBusyChange(next);
+        }
+
+        function effectiveVoice(participant) {
+            if (participant.voice) return participant.voice;
+            if (!voices) return null;
+            return voices.config?.bots?.[participant.name]
+                || voices.config?.default_voice
+                || autoVoiceFor(participant.name, voices.pool);
+        }
+
+        function voiceOptionsHtml(participant) {
+            if (!voices) return '<option value="">Loading voices…</option>';
+            const automatic = effectiveVoice({ ...participant, voice: null });
+            return [
+                `<option value="" ${participant.voice ? '' : 'selected'}>Auto — ${esc(automatic)}</option>`,
+                ...voices.pool.map(voice =>
+                    `<option value="${esc(voice.name)}" ${participant.voice === voice.name ? 'selected' : ''}>${esc(voice.name)} — ${esc(voice.description)}</option>`
+                ),
+            ].join('');
+        }
+
+        function nameHint(name) {
+            if (!name) return 'Name required (3–16 letters, numbers, or underscores)';
+            if (!AGENT_NAME_PATTERN.test(name)) return 'Use 3–16 letters, numbers, or underscores';
+            return null;
+        }
+
+        function playPreview(voice, botName, button) {
+            if (!voice) return;
+            if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+            button.disabled = true;
+            button.textContent = '…';
+            setVoiceStatus('Generating preview…');
+            socket.timeout(20_000).emit('preview-voice', { voice, botName }, (err, res) => {
+                button.disabled = !voices?.previewAvailable;
+                button.textContent = '▶';
+                if (err || !res?.success) {
+                    setVoiceStatus(
+                        `Preview failed: ${err ? 'no response from the server' : res?.error || 'unknown error'}`,
+                        true
+                    );
+                    return;
+                }
+                setVoiceStatus('');
+                previewAudio = new Audio(`data:audio/mpeg;base64,${res.audio}`);
+                previewAudio.play().catch(error =>
+                    setVoiceStatus(`Could not play audio: ${error.message}`, true)
+                );
+            });
+        }
+
+        function renderParticipants() {
+            const box = el('participants');
+            const profiles = configuredProfiles();
+            box.replaceChildren();
+
+            participants.forEach((participant, index) => {
+                const row = document.createElement('div');
+                row.className = `game-setup-row${config?.teams ? ' has-teams' : ''}`;
+                const reserved = reservedNames(index);
+                const duplicate = AGENT_NAME_PATTERN.test(participant.name || '')
+                    && reserved.has(participant.name);
+                const hint = nameHint(participant.name) || (duplicate ? 'Name is already taken' : 'Minecraft-safe name');
+                const invalid = Boolean(nameHint(participant.name)) || duplicate;
+                const profileOptions = profiles.map(profile => {
+                    const label = `${profile.name} — ${profile.model}${profile.provider ? ` (${profile.provider})` : ''}`;
+                    return `<option value="${esc(profile.id)}"${profile.id === participant.profileId ? ' selected' : ''}>${esc(label)}</option>`;
+                }).join('');
+                const teamOptions = teamNames.map(name =>
+                    `<option value="${esc(name)}"${participant.team === name ? ' selected' : ''}>${esc(name)}</option>`
+                ).join('');
+
+                row.innerHTML = `
+                    <select data-field="profileId" aria-label="Participant profile">${profileOptions || '<option value="">No profiles</option>'}</select>
+                    <input type="text" data-field="name" maxlength="16" spellcheck="false"
+                        class="${invalid ? 'invalid' : ''}"
+                        value="${esc(participant.name || '')}" aria-label="Participant name">
+                    ${config?.teams
+                        ? `<select data-field="team" aria-label="Team for ${esc(participant.name || `participant ${index + 1}`)}">${teamOptions}</select>`
+                        : ''}
+                    <div class="game-setup-voice">
+                        <select data-field="voice" aria-label="Voice for ${esc(participant.name || `participant ${index + 1}`)}"
+                            ${voices ? '' : 'disabled'}>${voiceOptionsHtml(participant)}</select>
+                        <button type="button" class="btn btn-ghost btn-preview" data-action="preview-voice"
+                            ${voices?.previewAvailable ? '' : 'disabled'}
+                            title="${voices?.previewAvailable ? 'Preview this voice' : 'Voice preview unavailable'}">▶</button>
+                    </div>
+                    <button type="button" class="btn btn-ghost" data-action="remove" ${participants.length <= 1 ? 'disabled' : ''}>Remove</button>
+                    <div class="name-hint ${invalid ? 'error' : ''}">${esc(hint)}</div>
+                    <textarea data-field="systemPrompt" class="personality-prompt" maxlength="${MAX_SYSTEM_PROMPT}"
+                        rows="3" aria-label="System prompt for ${esc(participant.name || `participant ${index + 1}`)}"
+                        placeholder="Give this bot a personality…">${esc(participant.systemPrompt || '')}</textarea>
+                `;
+
+                row.querySelector('[data-field="profileId"]').addEventListener('change', event => {
+                    const profile = profiles.find(item => item.id === event.target.value);
+                    participants[index].profileId = event.target.value;
+                    if (profile) {
+                        participants[index].name = nextUniqueMinecraftName(
+                            profile.name || profile.id || 'bot',
+                            reservedNames(index)
+                        );
+                    }
+                    renderParticipants();
+                });
+
+                const nameInput = row.querySelector('[data-field="name"]');
+                nameInput.addEventListener('input', event => {
+                    const input = event.target;
+                    const cursor = input.selectionStart;
+                    const cleaned = sanitizeMinecraftName(input.value);
+                    participants[index].name = cleaned;
+                    if (input.value !== cleaned) {
+                        input.value = cleaned;
+                        const nextCursor = Math.min(cursor, cleaned.length);
+                        input.setSelectionRange(nextCursor, nextCursor);
+                    }
+                    const takenNow = AGENT_NAME_PATTERN.test(cleaned) && reservedNames(index).has(cleaned);
+                    const problem = nameHint(cleaned) || (takenNow ? 'Name is already taken' : null);
+                    input.classList.toggle('invalid', Boolean(problem));
+                    const hintNode = row.querySelector('.name-hint');
+                    hintNode.classList.toggle('error', Boolean(problem));
+                    hintNode.textContent = problem || 'Minecraft-safe name';
+                    const automatic = row.querySelector('[data-field="voice"] option[value=""]');
+                    if (automatic && !participants[index].voice) {
+                        automatic.textContent = `Auto — ${effectiveVoice(participants[index])}`;
+                    }
+                });
+
+                row.querySelector('[data-field="voice"]').addEventListener('change', event => {
+                    participants[index].voice = event.target.value || null;
+                });
+                row.querySelector('[data-field="team"]')?.addEventListener('change', event => {
+                    participants[index].team = event.target.value;
+                });
+
+                row.querySelector('[data-field="systemPrompt"]').addEventListener('input', event => {
+                    participants[index].systemPrompt = event.target.value;
+                });
+
+                row.querySelector('[data-action="preview-voice"]').addEventListener('click', event => {
+                    playPreview(
+                        effectiveVoice(participants[index]),
+                        participants[index].name,
+                        event.currentTarget
+                    );
+                });
+
+                row.querySelector('[data-action="remove"]').addEventListener('click', () => {
+                    if (participants.length <= 1) return;
+                    participants.splice(index, 1);
+                    renderParticipants();
+                });
+
+                box.appendChild(row);
+            });
+
+            action('add').disabled = profiles.length === 0;
+        }
+
+        function renderTeams() {
+            const box = el('teams');
+            box.hidden = !config?.teams;
+            if (!config?.teams) return;
+            box.querySelectorAll('[data-team-name]').forEach((input, index) => {
+                input.value = teamNames[index] || '';
+                input.oninput = event => {
+                    const oldName = teamNames[index];
+                    const nextName = event.target.value.slice(0, 16);
+                    teamNames[index] = nextName;
+                    participants.forEach(participant => {
+                        if (participant.team === oldName) participant.team = nextName;
+                    });
+                    renderParticipants();
+                };
+            });
+        }
+
+        function renderFields() {
+            const box = el('fields');
+            box.replaceChildren();
+            const fields = config?.fields || [];
+            box.hidden = fields.length === 0;
+            for (const field of fields) {
+                const label = document.createElement('label');
+                label.textContent = field.label;
+                label.htmlFor = `gameSetupField-${field.id}`;
+                const input = document.createElement('input');
+                input.id = `gameSetupField-${field.id}`;
+                input.type = 'number';
+                input.dataset.fieldId = field.id;
+                if (field.min != null) input.min = String(field.min);
+                if (field.max != null) input.max = String(field.max);
+                if (field.step != null) input.step = String(field.step);
+                input.value = String(field.value ?? '');
+                box.append(label, input);
+            }
+        }
+
+        function fieldValues() {
+            const values = {};
+            for (const input of el('fields').querySelectorAll('input[data-field-id]')) {
+                values[input.dataset.fieldId] = Number(input.value);
+            }
+            return values;
+        }
+
+        function loadVoices() {
+            setVoiceStatus(voices ? '' : 'Loading voice choices…');
+            socket.timeout(10_000).emit('get-voices', (err, res) => {
+                if (!config) return;
+                if (err || !res?.success) {
+                    setVoiceStatus(
+                        err ? 'Could not load voices from the server.' : res?.error || 'Could not load voices.',
+                        true
+                    );
+                    renderParticipants();
+                    return;
+                }
+                voices = res;
+                setVoiceStatus(res.previewAvailable
+                    ? 'Choose a voice and press ▶ to hear a sample.'
+                    : 'Voice previews require ELEVENLABS_API_KEY.');
+                renderParticipants();
+            });
+        }
+
+        function showReport(report, visible = true) {
+            lastReport = String(report || '');
+            el('debugText').value = lastReport;
+            el('debug').hidden = !(visible && lastReport);
+            onLaunchReport(lastReport);
+        }
+
+        function fetchLastReport() {
+            socket.timeout(8000).emit('diagnostics-report', (err, res) => {
+                if (err || !res?.success || !res.report) return;
+                showReport(res.report, Boolean(config));
+            });
+        }
+
+        function validate() {
+            const profileIds = new Set(configuredProfiles().map(profile => profile.id));
+            if (!config) return 'No game selected';
+            if (!participants.length) return 'Add at least one participant';
+            if (config.minParticipants && participants.length < config.minParticipants) {
+                return config.minParticipantsError
+                    || `This game needs at least ${config.minParticipants} bots`;
+            }
+            const seen = new Set();
+            const taken = new Set(getReservedNames());
+            for (let i = 0; i < participants.length; i++) {
+                const participant = participants[i];
+                const name = String(participant.name || '').trim();
+                if (!AGENT_NAME_PATTERN.test(name)) {
+                    return `Participant ${i + 1} name must be 3–16 letters, numbers, or underscores`;
+                }
+                if (seen.has(name)) return `Participant names must be unique: ${name}`;
+                if (taken.has(name)) return `A bot named ${name} is already online. Stop it first.`;
+                if (!participant.profileId || !profileIds.has(participant.profileId)) {
+                    return `Participant ${i + 1} needs a configured profile`;
+                }
+                if (String(participant.systemPrompt || '').length > MAX_SYSTEM_PROMPT) {
+                    return `Participant ${i + 1} system prompt must be ${MAX_SYSTEM_PROMPT} characters or fewer`;
+                }
+                seen.add(name);
+            }
+            if (config.teams) {
+                if (teamNames.length !== 2 || teamNames.some(name =>
+                    !/^[A-Za-z0-9_ ]{1,16}$/.test(String(name || '').trim())
+                )) {
+                    return 'Team names must be 1-16 letters, numbers, spaces, or underscores';
+                }
+                if (teamNames[0].trim().toLowerCase() === teamNames[1].trim().toLowerCase()) {
+                    return 'Team names must be different';
+                }
+                const minimum = config.teams.minimumPlayersPerTeam ?? 2;
+                for (const name of teamNames) {
+                    const count = participants.filter(participant => participant.team === name).length;
+                    if (count < minimum) return `Team ${name} needs at least ${minimum} players`;
+                }
+            }
+            if (el('systemPrompt').value.length > MAX_SYSTEM_PROMPT) {
+                return `System prompt must be ${MAX_SYSTEM_PROMPT} characters or fewer`;
+            }
+            if (config.duration !== null) {
+                const minutes = Number(el('durationInput').value);
+                if (!Number.isFinite(minutes)
+                    || minutes < MIN_DURATION_MINUTES
+                    || minutes > MAX_DURATION_MINUTES) {
+                    return `Duration must be between ${MIN_DURATION_MINUTES} and ${MAX_DURATION_MINUTES} minutes`;
+                }
+            }
+            return config.validate?.({ participants, fields: fieldValues(), teamNames }) || null;
+        }
+
+        function submit() {
+            if (busy) return;
+            const problem = validate();
+            if (problem) {
+                setError(problem);
+                return;
+            }
+            const submittedTeamNames = config.teams
+                ? teamNames.map(name => name.trim())
+                : null;
+            const request = config.buildRequest({
+                participants: participants.map(({ profileId, name, voice, systemPrompt, team }) => ({
+                    profileId,
+                    name,
+                    voice: voice || null,
+                    systemPrompt: String(systemPrompt || '').trim(),
+                    ...(config.teams ? {
+                        team: submittedTeamNames[teamNames.indexOf(team)] || String(team || '').trim(),
+                    } : {}),
+                })),
+                systemPrompt: String(el('systemPrompt').value || '').trim(),
+                durationMs: Number(el('durationInput').value) * 60_000,
+                fields: fieldValues(),
+                teamNames: submittedTeamNames,
+            });
+            const started = config;
+
+            setBusy(true);
+            setError('');
+            el('debug').hidden = true;
+            onStatus('Provisioning temporary contest bots…');
+            el('footer').textContent = 'Starting… creating temporary contest bots.';
+
+            // Phases the server runs before it answers (a team planning window,
+            // for instance) are added on top of the provisioning budget.
+            const timeoutMs = START_TIMEOUT_MS + Math.max(0, Number(request.extraTimeoutMs) || 0);
+            socket.timeout(timeoutMs).emit(request.event, request.payload, (err, result) => {
+                setBusy(false);
+                if (err) {
+                    const message = 'Start game timed out or MindServer did not respond. Copy the debug report for Cursor if one is available.';
+                    setError(message);
+                    onStatus(message, true);
+                    el('footer').textContent = 'Timed out waiting for MindServer.';
+                    fetchLastReport();
+                    return;
+                }
+                if (!result?.success) {
+                    const message = result?.error || 'Failed to start the game';
+                    setError(message);
+                    onStatus(message, true);
+                    el('footer').textContent = 'Fix the error and try again.';
+                    if (result?.report) showReport(result.report);
+                    else fetchLastReport();
+                    return;
+                }
+                close();
+                started.onStarted?.(result);
+            });
+        }
+
+        function close() {
+            backdrop.style.display = 'none';
+            config = null;
+            participants = [];
+            teamNames = [];
+            setError('');
+            setVoiceStatus('');
+            el('debug').hidden = true;
+            if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+        }
+
+        function open(nextConfig) {
+            if (busy) return;
+            const profiles = configuredProfiles();
+            if (!profiles.length) {
+                onStatus('No configured model profiles available', true);
+                return;
+            }
+            config = nextConfig;
+            participants = (nextConfig.participants || []).map(participant => ({ ...participant }));
+            teamNames = nextConfig.teams
+                ? [...(nextConfig.teams.defaultNames || ['Ember', 'Tide'])].slice(0, 2)
+                : [];
+            if (nextConfig.teams) {
+                participants.forEach((participant, index) => {
+                    if (!teamNames.includes(participant.team)) {
+                        participant.team = teamNames[index % teamNames.length];
+                    }
+                });
+            }
+            el('title').textContent = nextConfig.title || 'Set up game';
+            el('footer').textContent = nextConfig.footer || 'Pick profiles and unique Minecraft names, then start.';
+            action('submit').textContent = nextConfig.submitLabel || 'Start game';
+            el('duration').hidden = nextConfig.duration === null;
+            el('durationInput').value = String(nextConfig.duration?.minutes ?? 1);
+            el('systemPrompt').value = '';
+            el('promptCount').textContent = '0';
+            renderFields();
+            renderTeams();
+            setError('');
+            el('debug').hidden = true;
+            renderParticipants();
+            backdrop.style.display = 'flex';
+            loadVoices();
+        }
+
+        action('add').addEventListener('click', () => {
+            const profiles = configuredProfiles();
+            if (!profiles.length) return;
+            const used = new Set(participants.map(participant => participant.profileId));
+            const rotation = profilesByFamily(profiles);
+            const profile = rotation.find(item => !used.has(item.id)) || rotation[0];
+            participants.push({
+                profileId: profile.id,
+                name: nextUniqueMinecraftName(profile.name || profile.id || 'bot', reservedNames()),
+                voice: null,
+                systemPrompt: '',
+                ...(config?.teams
+                    ? { team: teamNames[participants.length % teamNames.length] }
+                    : {}),
+            });
+            renderParticipants();
+        });
+        action('close').addEventListener('click', () => { if (!busy) close(); });
+        action('cancel').addEventListener('click', () => { if (!busy) close(); });
+        action('submit').addEventListener('click', submit);
+        action('copy-report').addEventListener('click', async event => {
+            if (!lastReport) return;
+            const button = event.currentTarget;
+            const label = button.textContent;
+            try {
+                await navigator.clipboard.writeText(lastReport);
+                button.textContent = 'Copied!';
+                setTimeout(() => { button.textContent = label; }, 1500);
+            } catch (error) {
+                const textarea = el('debugText');
+                textarea.focus();
+                textarea.select();
+                onStatus(`Could not copy automatically: ${error.message}`, true);
+            }
+        });
+        el('systemPrompt').addEventListener('input', event => {
+            el('promptCount').textContent = String(event.target.value.length);
+        });
+
+        return {
+            open,
+            close,
+            isOpen: () => Boolean(config),
+            isBusy: () => busy,
+            setFooter: text => { el('footer').textContent = text; },
+            setStatusMessage: setError,
+            showReport,
+            defaultParticipantsFor(characters, count) {
+                const profiles = configuredProfiles();
+                if (!profiles.length) return [];
+                const rotation = profilesByFamily(profiles);
+                const reserved = new Set(getReservedNames());
+                const rows = [];
+                const total = count || characters?.length || Math.min(2, profiles.length);
+                // A cast can be larger than the character list (Survivor seats eleven), so
+                // the unnamed slots take families the characters left unused before any
+                // family repeats at a slower effort.
+                const usedFamilies = new Set();
+                for (let i = 0; i < total; i++) {
+                    const character = characters?.[i] || null;
+                    const profile = profiles.find(item => item.id === character?.profileId)
+                        || rotation.find(item => !usedFamilies.has(item.family || item.id))
+                        || rotation[i % rotation.length];
+                    usedFamilies.add(profile.family || profile.id);
+                    const name = character
+                        ? sanitizeMinecraftName(character.name)
+                        : nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
+                    reserved.add(name);
+                    rows.push({
+                        profileId: profile.id,
+                        name,
+                        voice: character?.voice || null,
+                        systemPrompt: character?.systemPrompt || '',
+                    });
+                }
+                return rows;
+            },
+        };
+    };
+})();

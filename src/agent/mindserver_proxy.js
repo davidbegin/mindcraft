@@ -129,6 +129,10 @@ class MindServerProxy {
                     callback?.({ success: true, status: 'paused' });
                     return;
                 }
+                if (directive.endConversations === true && convoManager.inConversation()) {
+                    convoManager.forceEndCurrentConversation();
+                    convoManager.endAllConversations();
+                }
                 if (convoManager.inConversation()) {
                     this.agent.self_prompter.setPromptPaused(directive.prompt);
                     callback?.({ success: true, status: 'queued_during_conversation' });
@@ -142,21 +146,95 @@ class MindServerProxy {
             }
         });
 
-        this.socket.on('survivor-room-invite', async (invite) => {
-            if (!this.agent || !invite?.roomId) return;
-            const members = Array.isArray(invite.memberIds) ? invite.memberIds.join(', ') : invite.ownerId;
-            const pitch = invite.pitch ? ` Their opening pitch: "${invite.pitch}"` : '';
-            this.agent.privateSurvivorResponse = { roomId: invite.roomId };
+        // Somebody wants to pull this bot aside. Saying no is a legitimate answer,
+        // so the prompt offers both doors and never nudges toward accepting.
+        // Somebody wants to pull this bot aside. Saying no is a legitimate answer,
+        // so the prompt offers both doors and never nudges toward accepting.
+        this.socket.on('survivor-talk-request', (invite, callback) => {
+            if (!this.agent || !invite?.requestId) {
+                callback?.({ success: false, error: 'Agent is not ready for a chat request' });
+                return;
+            }
+            const others = (invite.inviteeIds || []).filter(id => id !== this.name);
+            // Ack on receipt, not on completion: thinking about the offer takes a
+            // model call, and the server only needs to know it landed.
+            callback?.({ success: true });
+            this.agent.handleMessage(
+                'system',
+                `PRIVATE CHAT REQUEST from ${invite.requesterId}.`
+                + (others.length > 0 ? ` They also asked ${others.join(', ')}.` : '')
+                + (invite.pitch ? ` They say: "${invite.pitch}"` : '')
+                + `\nAccept with !acceptPrivateChat("${invite.requestId}") or refuse with `
+                + `!declinePrivateChat("${invite.requestId}", "your reason"). `
+                + 'Refusing is a real move: it tells them where they stand and keeps you out '
+                + 'of their plan. Decide based on whether talking helps your game. '
+                + 'Answer promptly — the offer expires. Never mention this in public chat.'
+            ).catch(error => console.error('Survivor chat request failed:', error));
+        });
+
+        this.socket.on('survivor-talk-resolved', (outcome, callback) => {
+            if (!this.agent || !outcome?.requestId) {
+                callback?.({ success: false, error: 'Agent is not ready' });
+                return;
+            }
+            const accepted = outcome.accepterIds || [];
+            const declined = outcome.declinerIds || [];
+            const reasons = Object.entries(outcome.reasons || {})
+                .map(([id, reason]) => `${id}: "${reason}"`)
+                .join('; ');
+            const lines = [outcome.withId
+                ? `You are now in a private room with ${outcome.withId}.`
+                : `Your private chat request resolved: ${accepted.length > 0
+                    ? `${accepted.join(', ')} agreed to talk.`
+                    : 'nobody agreed to talk.'}`];
+            if (declined.length > 0 && !outcome.withId) {
+                lines.push(`Turned you down: ${declined.join(', ')}.${reasons ? ` (${reasons})` : ''}`);
+                lines.push('Being frozen out is information. Assume they are working together.');
+            }
+            if (accepted.length > 0) {
+                lines.push('Use !sendPrivateMessage("...") to talk. Nothing here is public.');
+            }
+            callback?.({ success: true });
+            this.agent.privateSurvivorResponse = outcome.roomId ? { roomId: outcome.roomId } : null;
+            this.agent.handleMessage('system', lines.join('\n'))
+                .catch(error => console.error('Survivor chat outcome failed:', error))
+                .finally(() => { this.agent.privateSurvivorResponse = null; });
+        });
+
+        // The host asked this bot something in front of everyone.
+        this.socket.on('survivor-council-question', (question, callback) => {
+            if (!this.agent || !question?.prompt) {
+                callback?.({ success: false, error: 'Agent is not ready for a council question' });
+                return;
+            }
+            const also = (question.targetIds || []).filter(id => id !== this.name);
+            callback?.({ success: true });
+            this.agent.handleMessage(
+                'system',
+                `TRIBAL COUNCIL — the host asks you, in public: "${question.prompt}"`
+                + (also.length > 0 ? `\nHe asked ${also.join(', ')} the same thing.` : '')
+                + '\nAnswer now with !answerCouncil("your answer"). Every player hears it, '
+                + 'including the jurors who will choose the winner, and they will hold you to it. '
+                + 'Do not cast a vote yet; voting opens only after council closes.'
+            ).catch(error => console.error('Survivor council question failed:', error));
+        });
+
+        // Another bot answered in public. This is how the public record actually
+        // reaches everyone's memory instead of living only on the server.
+        this.socket.on('survivor-council-answer', async (entry, callback) => {
             try {
-                await this.agent.handleMessage(
+                if (!this.agent || !entry?.answer) {
+                    callback?.({ success: false, error: 'Agent is not ready' });
+                    return;
+                }
+                await this.agent.history.add(
                     'system',
-                    `PRIVATE SURVIVOR ROOM INVITE from ${invite.ownerId}. `
-                    + `Room ${invite.roomId}; current members: ${members}.${pitch} `
-                    + `Use !joinPrivateGroup("${invite.roomId}") to join, or ignore it. `
-                    + 'Do not discuss this invitation in public chat.'
+                    `AT TRIBAL COUNCIL, asked "${entry.prompt}", ${entry.playerId} answered: `
+                    + `"${entry.answer}"\nRemember this. You may change who you vote for because of it.`
                 );
-            } finally {
-                this.agent.privateSurvivorResponse = null;
+                callback?.({ success: true });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
             }
         });
 
@@ -188,11 +266,13 @@ class MindServerProxy {
                 ...(settings.game_session || {}),
                 contestType: config?.contestType ?? null,
                 winItem: config?.winItem ?? null,
+                floorY: Number.isFinite(config?.floorY) ? config.floorY : null,
                 survivorChallengeId: config?.challengeId ?? null,
             };
             if (this.agent) {
                 this.agent._contestDeathReported = false;
                 this.agent._contestWinReported = false;
+                this.agent._contestEliminatedReported = false;
             }
         });
 
@@ -432,19 +512,39 @@ export function reportContestWinItem(itemName, position = null) {
     });
 }
 
-export function reportContestDeath() {
+export function reportContestDeath(payload = {}) {
     const socket = serverProxy.getSocket();
     if (!socket?.connected) {
         return Promise.reject(new Error('MindServer is not connected'));
     }
     return new Promise((resolve, reject) => {
-        socket.timeout(10000).emit('contest-death', {}, (error, result) => {
+        socket.timeout(10000).emit('contest-death', payload, (error, result) => {
             if (error) {
                 reject(new Error('Contest death report timed out'));
                 return;
             }
             if (!result?.success) {
                 reject(new Error(result?.error || 'Contest death report failed'));
+                return;
+            }
+            resolve(result.data);
+        });
+    });
+}
+
+export function reportContestEliminated(payload = {}) {
+    const socket = serverProxy.getSocket();
+    if (!socket?.connected) {
+        return Promise.reject(new Error('MindServer is not connected'));
+    }
+    return new Promise((resolve, reject) => {
+        socket.timeout(10000).emit('contest-eliminated', payload, (error, result) => {
+            if (error) {
+                reject(new Error('Contest elimination report timed out'));
+                return;
+            }
+            if (!result?.success) {
+                reject(new Error(result?.error || 'Contest elimination report failed'));
                 return;
             }
             resolve(result.data);

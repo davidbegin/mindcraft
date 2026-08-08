@@ -39,6 +39,16 @@ test('formats the countdown and game-specific scores', () => {
         ),
         '40.5 blocks deep'
     );
+    assert.equal(
+        formatContestScore(
+            runningContest({ rules: { type: 'team_tower_battle' } }),
+            {
+                score: 17,
+                details: { towerHeight: 27, deathPenalty: 10 },
+            }
+        ),
+        '27 - 10 = 17 blocks'
+    );
 });
 
 test('announces a game and maintains a bossbar with timer and leader', async () => {

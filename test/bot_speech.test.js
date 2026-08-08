@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    getAudibleChatText,
     getHumanCommandAcknowledgement,
     getSpokenChatText,
     isGameOperationalMessage,
@@ -13,6 +14,20 @@ test('voices conversational text while excluding robot command syntax', () => {
         'On my way!'
     );
     assert.equal(getSpokenChatText('!goToPlayer("Alex", 3)'), '');
+});
+
+test('replaces spoken coordinates with the fixed meeting line', () => {
+    const coordinateLines = [
+        'Meet me at x: 12, y: 64, z: -5.',
+        'The base is X 12 Z -5.',
+        'Head to (12, 64, -5).',
+        'My coords are 12 64 -5.',
+        'Meet near 12 64 -5.',
+    ];
+    for (const line of coordinateLines) {
+        assert.equal(getAudibleChatText(line), 'Meet me at the spot.');
+    }
+    assert.equal(getAudibleChatText('Meet me by the oak tree.'), 'Meet me by the oak tree.');
 });
 
 test('guarantees humans an audible reply when a model emits only a command', () => {

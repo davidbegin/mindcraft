@@ -8,7 +8,28 @@ export function buildContestStartAnnouncement(contest) {
     return `${title} starting. Three. Two. One. Go!`;
 }
 
+export function buildPlanningAnnouncement(contest, planningMs) {
+    const title = String(contest?.title || 'Game').trim();
+    const seconds = Math.max(1, Math.round(Number(planningMs) / 1000));
+    return `${title}. Teams, you have ${seconds} seconds to plan. `
+        + 'Agree on one shared tower and who does what. No building until the countdown.';
+}
+
 export function buildContestResultAnnouncement(contest) {
+    if (contest?.rules?.type === 'team_tower_battle') {
+        const winningTeams = [...new Set(
+            (contest.results || [])
+                .filter(result => result.rank === 1)
+                .map(result => result.details?.teamName)
+                .filter(Boolean)
+        )];
+        if (winningTeams.length === 1) {
+            return `And the winning team is... ${winningTeams[0]}! ${winningTeams[0]} wins!`;
+        }
+        if (winningTeams.length > 1) {
+            return `The game ends in a tie between ${winningTeams.join(' and ')}!`;
+        }
+    }
     const winners = Array.isArray(contest?.winnerIds) ? contest.winnerIds.filter(Boolean) : [];
     if (winners.length === 0) return 'Game over. There was no winner.';
     if (winners.length === 1) {
@@ -46,6 +67,11 @@ export class ContestAnnouncer {
         this.speak = options.speak;
         this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
         this.startDelayMs = options.startDelayMs ?? 5000;
+    }
+
+    // The manager owns the planning clock, so this only speaks the callout.
+    async announcePlanning(contest, options = {}) {
+        await this.speak(buildPlanningAnnouncement(contest, options.planningMs));
     }
 
     async announceStart(contest) {

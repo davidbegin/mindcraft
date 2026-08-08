@@ -20,6 +20,14 @@ export function appendSystemPromptAddendum(prompt, addendum) {
     return `${prompt}\n\nGAME SESSION SYSTEM ADDENDUM\n${extra}`;
 }
 
+export function appendSpeechStylePrompt(prompt) {
+    return `${prompt}\n\nSPOKEN RESPONSE STYLE\n`
+        + 'Keep player-facing dialogue to one short sentence, usually no more than 10 words. '
+        + 'Skip routine narration, setup, and repeated observations. '
+        + 'Never say numeric coordinates aloud. When directing someone to coordinates, say exactly: '
+        + '"Meet me at the spot." Coordinates may still appear inside commands.';
+}
+
 export class Prompter {
     constructor(agent, profile) {
         this.agent = agent;
@@ -245,6 +253,7 @@ export class Prompter {
 
             let prompt = this.profile.conversing;
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
+            prompt = appendSpeechStylePrompt(prompt);
             prompt = appendSystemPromptAddendum(
                 prompt,
                 settings.game_session?.systemPrompt

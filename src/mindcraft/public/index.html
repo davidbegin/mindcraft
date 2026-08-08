@@ -6,6 +6,8 @@
     <title>Mindcraft Spy</title>
     <script src="/socket.io/socket.io.js"></script>
     <script src="/bot_voice.js"></script>
+    <script src="/game_setup.js"></script>
+    <link rel="stylesheet" href="/game_setup.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -688,10 +690,6 @@
         .voice-hint {
             color: var(--text-mute);
             font-size: 0.75rem;
-            white-space: nowrap;
-        }
-        .btn-preview {
-            padding: 5px 10px;
             white-space: nowrap;
         }
         .voices-add {
@@ -1731,63 +1729,6 @@
         }
         .contest-status-msg.error { color: var(--red); }
         .survivor-panel { margin-top: 14px; border-color: rgba(240, 180, 41, 0.35); }
-        .survivor-columns {
-            display: grid;
-            grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-            gap: 14px;
-            margin-top: 12px;
-        }
-        .survivor-columns h3 { margin: 0 0 8px; font-size: 0.9rem; }
-        .survivor-secret-feed {
-            min-height: 130px;
-            max-height: 320px;
-            overflow: auto;
-            padding: 10px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--bg-inset);
-            color: var(--text-dim);
-            font-family: var(--mono);
-            font-size: 0.78rem;
-            white-space: pre-wrap;
-        }
-        .survivor-secret-entry { margin-bottom: 8px; }
-        .launch-debug-report {
-            margin-top: 12px;
-            border: 1px solid var(--border, #333);
-            border-radius: 8px;
-            padding: 10px 12px;
-            background: rgba(0, 0, 0, 0.2);
-        }
-        .launch-debug-report[hidden] { display: none !important; }
-        .launch-debug-report-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            margin-bottom: 8px;
-        }
-        .launch-debug-report-head strong { font-size: 0.9rem; }
-        .launch-debug-report-actions {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-        .launch-debug-report textarea {
-            width: 100%;
-            min-height: 140px;
-            max-height: 240px;
-            resize: vertical;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-            font-size: 0.75rem;
-            line-height: 1.35;
-            color: var(--text);
-            background: rgba(0, 0, 0, 0.35);
-            border: 1px solid var(--border, #333);
-            border-radius: 6px;
-            padding: 8px;
-            box-sizing: border-box;
-        }
 
         .contest-join {
             margin-top: 12px;
@@ -1815,150 +1756,6 @@
             flex-wrap: wrap;
             gap: 8px;
             margin-top: 10px;
-        }
-
-        .game-setup-modal {
-            width: min(900px, 94vw);
-            height: auto;
-            max-height: min(88vh, 760px);
-        }
-
-        .game-setup-participants {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
-
-        .game-setup-row {
-            display: grid;
-            grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.8fr) minmax(0, 1.35fr) auto;
-            gap: 8px;
-            align-items: center;
-            padding: 10px;
-            border-radius: 10px;
-            border: 1px solid var(--border);
-            background: var(--bg-inset);
-        }
-
-        .game-setup-row select,
-        .game-setup-row input[type="text"],
-        .game-setup-row textarea,
-        .game-setup-prompt textarea {
-            width: 100%;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            color: var(--text);
-            border-radius: 6px;
-            padding: 7px 9px;
-            font: inherit;
-        }
-
-        .game-setup-row select:focus,
-        .game-setup-row input[type="text"]:focus,
-        .game-setup-row textarea:focus,
-        .game-setup-prompt textarea:focus {
-            outline: none;
-            border-color: var(--border-strong);
-        }
-
-        .game-setup-row input.invalid {
-            border-color: var(--red);
-        }
-
-        .game-setup-voice {
-            display: flex;
-            gap: 6px;
-            min-width: 0;
-        }
-
-        .game-setup-voice select {
-            min-width: 0;
-        }
-
-        .game-setup-voice-status {
-            min-height: 18px;
-            margin: 0 0 8px;
-            font-size: 0.78rem;
-            color: var(--text-mute);
-        }
-
-        .game-setup-voice-status.error {
-            color: var(--red);
-        }
-
-        .game-setup-row .name-hint {
-            grid-column: 1 / -1;
-            font-size: 0.75rem;
-            color: var(--text-mute);
-        }
-
-        .game-setup-row .name-hint.error {
-            color: var(--red);
-        }
-
-        .game-setup-row .personality-prompt {
-            grid-column: 1 / -1;
-            min-height: 72px;
-            resize: vertical;
-            font-family: var(--mono);
-            font-size: 0.82rem;
-            line-height: 1.4;
-        }
-
-        .game-setup-actions {
-            display: flex;
-            justify-content: flex-start;
-            margin-bottom: 14px;
-        }
-
-        .game-setup-prompt {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .game-setup-duration {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 14px;
-        }
-
-        .game-setup-duration label,
-        .game-setup-prompt label {
-            font-size: 0.85rem;
-            color: var(--text-dim);
-        }
-
-        .game-setup-duration input {
-            width: 100px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            color: var(--text);
-            border-radius: 6px;
-            padding: 7px 9px;
-            font: inherit;
-        }
-
-        .game-setup-duration input:focus {
-            outline: none;
-            border-color: var(--border-strong);
-        }
-
-        .game-setup-prompt textarea {
-            resize: vertical;
-            min-height: 96px;
-            font-family: var(--mono);
-            font-size: 0.82rem;
-            line-height: 1.4;
-        }
-
-        .game-setup-prompt-count {
-            align-self: flex-end;
-            font-size: 0.75rem;
-            color: var(--text-mute);
-            font-family: var(--mono);
         }
 
         .contest-participant-chips {
@@ -2096,6 +1893,7 @@
         <nav class="view-nav" aria-label="Main views">
             <a href="/colony" id="viewColonyBtn" class="active" data-view="colony">Colony</a>
             <a href="/games" id="viewGamesBtn" data-view="games">Games</a>
+            <a href="/survivor" id="viewSurvivorBtn">Survivor</a>
         </nav>
         <span id="msStatus" class="status-pill offline">mindserver offline</span>
         <div class="topbar-meta">
@@ -2154,32 +1952,7 @@
                             Two tribes, team immunity challenges, private alliances, secret votes, a merge at ten, and a final-three jury.
                         </div>
                     </div>
-                    <div class="contest-live-row">
-                        <select id="survivorScenario" aria-label="Survivor scenario"></select>
-                        <button id="startSurvivorBtn" class="btn btn-amber" type="button" disabled>Loading cast…</button>
-                    </div>
-                </div>
-                <div id="survivorLive" hidden>
-                    <div id="survivorPhase" class="contest-live-row"></div>
-                    <div id="survivorTribes" class="contest-participant-chips"></div>
-                    <div id="survivorVoteProgress" class="contest-live-row"></div>
-                    <div class="contest-live-row">
-                        <button id="survivorPauseBtn" class="btn btn-ghost" type="button">Pause</button>
-                        <button id="survivorAdvanceBtn" class="btn btn-amber" type="button">Advance phase</button>
-                        <select id="survivorNextChallenge" aria-label="Next Survivor challenge"></select>
-                        <button id="survivorSetChallengeBtn" class="btn btn-ghost" type="button">Set next challenge</button>
-                        <button id="survivorCancelBtn" class="btn btn-danger" type="button">Cancel season</button>
-                    </div>
-                    <div class="survivor-columns">
-                        <section>
-                            <h3>Boot order and jury</h3>
-                            <div id="survivorBootOrder" class="contest-results"></div>
-                        </section>
-                        <section>
-                            <h3>Operator secret feed</h3>
-                            <div id="survivorSecretFeed" class="survivor-secret-feed"></div>
-                        </section>
-                    </div>
+                    <a class="btn btn-amber" href="/survivor">Open control room</a>
                 </div>
             </div>
             <div id="contestLive" class="contest-live idle">
@@ -2380,60 +2153,6 @@
         </div>
     </div>
 
-    <div id="gameSetupModal" class="modal-backdrop">
-        <div class="modal game-setup-modal">
-            <div class="modal-header">
-                <h2 id="gameSetupTitle">Set up game</h2>
-                <button type="button" id="closeGameSetupBtn" class="btn btn-danger">Close</button>
-            </div>
-            <div class="modal-body">
-                <div id="gameSetupParticipants" class="game-setup-participants"></div>
-                <div id="gameSetupVoiceStatus" class="game-setup-voice-status"></div>
-                <div class="game-setup-actions">
-                    <button type="button" id="gameSetupAddParticipantBtn" class="btn btn-ghost">+ Add participant</button>
-                </div>
-                <div class="game-setup-duration">
-                    <label for="gameSetupDurationMinutes">Duration (minutes)</label>
-                    <input id="gameSetupDurationMinutes" type="number" min="0.5" max="60" step="0.5"
-                        inputmode="decimal" aria-describedby="gameSetupDurationHint">
-                    <span id="gameSetupDurationHint" class="games-sub">0.5–60 minutes</span>
-                </div>
-                <div id="survivorSetupOptions" class="game-setup-duration" hidden>
-                    <label for="survivorMergeAt">Merge remaining</label>
-                    <input id="survivorMergeAt" type="number" min="4" max="10" step="1" value="10">
-                    <label for="survivorStrategyMinutes">Strategy min</label>
-                    <input id="survivorStrategyMinutes" type="number" min="0.5" max="10" step="0.5" value="2">
-                    <label for="survivorVoteMinutes">Vote min</label>
-                    <input id="survivorVoteMinutes" type="number" min="0.5" max="5" step="0.5" value="1">
-                </div>
-                <div class="game-setup-prompt">
-                    <label for="gameSetupSystemPrompt">Match-wide system prompt (optional)</label>
-                    <textarea id="gameSetupSystemPrompt" maxlength="4000" rows="4"
-                        placeholder="Extra instructions for every temporary contest bot…"
-                        spellcheck="true"></textarea>
-                    <div class="game-setup-prompt-count"><span id="gameSetupPromptCount">0</span>/4000</div>
-                </div>
-                <div id="gameSetupError" class="contest-status-msg error"></div>
-                <div id="gameSetupDebug" class="launch-debug-report" hidden>
-                    <div class="launch-debug-report-head">
-                        <strong>Debug report for Cursor</strong>
-                        <div class="launch-debug-report-actions">
-                            <button type="button" id="copyGameSetupReportBtn" class="btn btn-primary">Copy for Cursor</button>
-                        </div>
-                    </div>
-                    <textarea id="gameSetupDebugText" readonly spellcheck="false" aria-label="Launch failure debug report"></textarea>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <div class="footer-left" id="gameSetupFooter">Pick profiles and unique Minecraft names, then start.</div>
-                <div class="footer-actions">
-                    <button type="button" id="cancelGameSetupBtn" class="btn btn-ghost">Cancel</button>
-                    <button type="button" id="submitGameSetupBtn" class="btn btn-primary">Start game</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <script>
         const socket = io({ path: '/socket.io' });
         const voiceMonitor = initBotVoice(socket, {
@@ -2466,16 +2185,12 @@
         let contestBusy = false;
         let contestJoin = null;
         let survivorState = null;
-        let survivorPreset = null;
         let survivorScenarios = [];
-        const survivorSecretEvents = [];
         let lastLaunchReport = '';
         let currentView = 'colony';
         let contestClockTimer = null;
         let highlightReelTimer = null;
         let highlightContestId = null;
-        let gameSetupGameId = null;
-        let gameSetupParticipants = [];
         let focusedAgent = null;
         let lastStates = {};
 
@@ -2940,13 +2655,10 @@
         function unlockContestBusyOnDisconnect(reason) {
             if (!contestBusy) return;
             contestBusy = false;
-            const submitBtn = document.getElementById('submitGameSetupBtn');
-            if (submitBtn) submitBtn.disabled = false;
             const message = reason || 'Lost connection to MindServer during start';
-            setGameSetupError(message);
+            gameSetup.setStatusMessage(message);
+            gameSetup.setFooter('Connection lost. Fix the server connection and try again.');
             setContestStatus(message, true);
-            const footer = document.getElementById('gameSetupFooter');
-            if (footer) footer.textContent = 'Connection lost. Fix the server connection and try again.';
             renderGameCards();
             fetchLastLaunchReport();
         }
@@ -2983,11 +2695,6 @@
         socket.on('colony-update', renderColonyState);
         socket.on('contest-update', renderContestState);
         socket.on('survivor-update', renderSurvivorState);
-        socket.on('survivor-secret-event', event => {
-            survivorSecretEvents.push(event);
-            if (survivorSecretEvents.length > 200) survivorSecretEvents.shift();
-            renderSurvivorSecretFeed();
-        });
         socket.on('tower-atlas-update', atlas => {
             if (contestState) contestState.towerAtlas = atlas;
             const active = contestState?.activeContest
@@ -3077,157 +2784,36 @@
             });
         }
 
+        // The Survivor season has its own page at /survivor; this panel only
+        // reports whether one is running.
         function loadSurvivorState() {
             socket.emit('survivor-status', result => {
                 if (!result?.success) return;
-                survivorPreset = result.preset || survivorPreset;
-                if (Array.isArray(result.scenarios) && result.scenarios.length) {
-                    survivorScenarios = result.scenarios;
-                    renderSurvivorScenarios();
-                }
+                survivorScenarios = Array.isArray(result.scenarios) ? result.scenarios : [];
                 renderSurvivorState(result.data);
             });
-        }
-
-        function selectedSurvivorScenario() {
-            const select = document.getElementById('survivorScenario');
-            return survivorScenarios.find(item => item.scenarioId === select?.value)
-                || survivorScenarios[0]
-                || survivorPreset;
-        }
-
-        function renderSurvivorScenarios() {
-            const select = document.getElementById('survivorScenario');
-            if (!select) return;
-            const previous = select.value;
-            select.innerHTML = survivorScenarios.map(scenario =>
-                `<option value="${esc(scenario.scenarioId)}">${esc(scenario.title)} · ${esc(scenario.castSize)} bots</option>`
-            ).join('');
-            if (previous && survivorScenarios.some(item => item.scenarioId === previous)) {
-                select.value = previous;
-            }
-            renderSurvivorScenarioSummary();
-        }
-
-        function renderSurvivorScenarioSummary() {
-            const summary = document.getElementById('survivorSummary');
-            const scenario = selectedSurvivorScenario();
-            if (summary && scenario?.blurb) summary.textContent = scenario.blurb;
-        }
-
-        function renderSurvivorReadiness(state) {
-            const readiness = state?.readiness;
-            const footer = document.getElementById('gameSetupFooter');
-            if (!readiness || !footer) return;
-            const pending = (readiness.pending || []).join(', ');
-            footer.textContent =
-                `Waiting for bots to join Minecraft: ${readiness.ready}/${readiness.total} in game.`
-                + (pending ? ` Still missing: ${pending}.` : '');
-            setContestStatus(
-                `Survivor ${readiness.stage}: ${readiness.ready}/${readiness.total} bots in game`
-            );
         }
 
         function renderSurvivorState(state) {
             survivorState = state || null;
-            renderSurvivorReadiness(state);
             const panel = document.getElementById('survivorPanel');
-            const live = document.getElementById('survivorLive');
-            const start = document.getElementById('startSurvivorBtn');
+            const summary = document.getElementById('survivorSummary');
             const game = state?.game;
-            const active = Boolean(game && game.status === 'running');
-            panel?.classList.toggle('idle', !active);
-            if (live) live.hidden = !game;
-            const scenarioSelect = document.getElementById('survivorScenario');
-            if (start) {
-                start.hidden = Boolean(state && game?.status !== 'completed');
-                start.textContent = game?.status === 'completed' ? 'Start new season' : 'Set up season';
-                start.disabled = contestBusy;
-                if (scenarioSelect) scenarioSelect.hidden = start.hidden;
+            panel?.classList.toggle('idle', game?.status !== 'running');
+            if (!summary) return;
+            if (game?.status === 'running') {
+                const remaining = game.participantIds.filter(id => game.players[id]?.active).length;
+                summary.textContent =
+                    `Season in progress — round ${game.round}, ${String(game.phase).replaceAll('_', ' ')}, `
+                    + `${remaining} of ${game.participantIds.length} still in.`;
+                return;
             }
-            if (!game) return;
-
-            const activeIds = game.participantIds.filter(id => game.players[id]?.active);
-            const deadline = state.phaseDeadlineAt
-                ? ` · ${formatCountdown(state.phaseDeadlineAt)}`
-                : '';
-            document.getElementById('survivorPhase').innerHTML = `
-                <strong>Round ${esc(game.round)} · ${esc(String(game.phase).replaceAll('_', ' '))}</strong>
-                <span>${esc(activeIds.length)} remain${esc(deadline)}</span>
-                ${game.immunityIds?.length ? `<span>Immune: ${esc(game.immunityIds.join(', '))}</span>` : ''}
-                ${state.challengeContestId ? `<span>Challenge: ${esc(game.challenge?.id || 'running')}</span>` : ''}
-            `;
-            const tribeBox = document.getElementById('survivorTribes');
-            tribeBox.innerHTML = game.merged
-                ? `<span class="contest-participant-chip"><strong>Individual play</strong>: ${esc(activeIds.join(', ') || 'none')}</span>`
-                : game.tribeNames.map(tribe => {
-                    const members = (game.tribes[tribe] || []).filter(id => game.players[id]?.active);
-                    return `<span class="contest-participant-chip"><strong>${esc(tribe)}</strong>: ${esc(members.join(', ') || 'none')}</span>`;
-                }).join('');
-
-            const received = Number(game.ballotCount || 0);
-            const expected = game.eligibleVoterIds?.length || 0;
-            const voteBox = document.getElementById('survivorVoteProgress');
-            voteBox.innerHTML = expected
-                ? `<span>Secret ballots received: <strong>${received}/${expected}</strong></span>
-                   <span>Eligible targets: ${esc((game.eligibleTargetIds || []).join(', '))}</span>`
-                : `<span>Jury: ${esc(game.juryIds?.join(', ') || 'not formed')}</span>
-                   <span>Final ${esc(game.finalistCount || 3)}: ${esc(game.finalistIds?.join(', ') || 'not reached')}</span>`;
-            const reveal = [...(game.events || [])].reverse().find(event =>
-                event.type === 'vote.revealed' || event.type === 'jury.vote.revealed'
-            );
-            if (reveal && reveal.round === game.round) {
-                const revealedBallots = Object.entries(reveal.ballots || {})
-                    .map(([voter, target]) => `${voter} → ${target}`)
-                    .join(' · ');
-                voteBox.innerHTML += `<span><strong>Revealed:</strong> ${esc(revealedBallots)}</span>`;
+            if (game?.status === 'completed') {
+                summary.textContent = `Last season won by ${game.winnerIds?.join(', ') || 'nobody'}.`;
+                return;
             }
-
-            const boots = document.getElementById('survivorBootOrder');
-            boots.innerHTML = (game.bootOrder || []).map((id, index) => `
-                <div class="contest-result-row">
-                    <span class="rank">${index + 1}</span>
-                    <strong>${esc(id)}</strong>
-                    <span>${game.players[id]?.jury ? 'jury' : 'pre-merge'}</span>
-                </div>
-            `).join('') || '<div class="games-sub">Nobody voted out yet.</div>';
-            const challengeSelect = document.getElementById('survivorNextChallenge');
-            if (challengeSelect && challengeSelect.options.length === 0) {
-                challengeSelect.innerHTML = contestGames.map(game =>
-                    `<option value="${esc(game.id)}">${esc(game.title)}</option>`
-                ).join('');
-            }
-            document.getElementById('survivorPauseBtn').textContent = state.paused ? 'Resume' : 'Pause';
-            document.getElementById('survivorPauseBtn').disabled = game.phase === 'challenge';
-            document.getElementById('survivorAdvanceBtn').disabled = game.phase === 'challenge';
-            renderSurvivorSecretFeed();
-        }
-
-        function renderSurvivorSecretFeed() {
-            const feed = document.getElementById('survivorSecretFeed');
-            if (!feed) return;
-            feed.innerHTML = survivorSecretEvents.map(event => {
-                if (event.type === 'room.message') {
-                    return `<div class="survivor-secret-entry"><strong>${esc(event.senderId)}</strong>
-                        → [${esc((event.memberIds || []).join(', '))}]: ${esc(event.message)}</div>`;
-                }
-                if (event.type === 'room.created') {
-                    return `<div class="survivor-secret-entry">${esc(event.ownerId)} invited
-                        ${esc((event.invitedIds || []).join(', '))} to ${esc(event.roomId)}</div>`;
-                }
-                return `<div class="survivor-secret-entry">${esc(String(event.type || 'event').replaceAll('.', ' '))}</div>`;
-            }).join('') || 'Private strategy messages will appear here for operators only.';
-            feed.scrollTop = feed.scrollHeight;
-        }
-
-        function survivorControl(action, payload = {}) {
-            socket.timeout(30000).emit('survivor-control', { action, ...payload }, (err, result) => {
-                if (err || !result?.success) {
-                    setContestStatus(err ? 'Survivor control timed out' : result?.error || 'Survivor control failed', true);
-                    return;
-                }
-                renderSurvivorState(result.data);
-            });
+            summary.textContent = survivorScenarios[0]?.blurb
+                || 'Two tribes, team immunity challenges, private alliances, secret votes, a merge at ten, and a final-three jury.';
         }
 
         function renderContestJoinCard() {
@@ -3265,6 +2851,7 @@
             if (status === 'provisioning') return 'Provisioning temporary contest bots…';
             if (status === 'preparing') return 'Preparing arena…';
             if (status === 'recording') return 'Starting synchronized recording…';
+            if (status === 'planning') return 'Teams are planning their tower…';
             if (status === 'announcing-start') return 'Announcing match start…';
             if (status === 'running') return 'Contest running';
             if (status === 'failed') return 'Launch failed';
@@ -3277,28 +2864,22 @@
             const message = launchProgressMessage(gameSession);
             if (!message) return;
             setContestStatus(message, Boolean(gameSession.error));
-            const footer = document.getElementById('gameSetupFooter');
-            if (footer) footer.textContent = message;
+            gameSetup.setFooter(message);
         }
 
         function setLaunchReport(report, { showInModal = false, showInContest = true } = {}) {
             lastLaunchReport = String(report || '');
-            const setupText = document.getElementById('gameSetupDebugText');
             const contestText = document.getElementById('contestLaunchDebugText');
-            const setupPanel = document.getElementById('gameSetupDebug');
             const contestPanel = document.getElementById('contestLaunchDebug');
             const copyLastBtn = document.getElementById('copyLaunchReportBtn');
-            if (setupText) setupText.value = lastLaunchReport;
+            if (showInModal && lastLaunchReport) gameSetup.showReport(lastLaunchReport);
             if (contestText) contestText.value = lastLaunchReport;
-            if (setupPanel) setupPanel.hidden = !(showInModal && lastLaunchReport);
             if (contestPanel) contestPanel.hidden = !(showInContest && lastLaunchReport);
             if (copyLastBtn) copyLastBtn.hidden = !lastLaunchReport;
         }
 
         function hideLaunchDebugPanels() {
-            const setupPanel = document.getElementById('gameSetupDebug');
             const contestPanel = document.getElementById('contestLaunchDebug');
-            if (setupPanel) setupPanel.hidden = true;
             if (contestPanel) contestPanel.hidden = true;
         }
 
@@ -3316,8 +2897,7 @@
                 }
                 setContestStatus('Launch report copied — paste it into Cursor');
             } catch (error) {
-                const textarea = document.getElementById('contestLaunchDebugText')
-                    || document.getElementById('gameSetupDebugText');
+                const textarea = document.getElementById('contestLaunchDebugText');
                 if (textarea) {
                     textarea.hidden = false;
                     textarea.focus();
@@ -3330,7 +2910,7 @@
         function fetchLastLaunchReport() {
             socket.timeout(8000).emit('diagnostics-report', (err, res) => {
                 if (err || !res?.success || !res.report) return;
-                setLaunchReport(res.report, { showInModal: Boolean(contestBusy || gameSetupGameId), showInContest: true });
+                setLaunchReport(res.report, { showInModal: gameSetup.isOpen(), showInContest: true });
             });
         }
 
@@ -3355,7 +2935,7 @@
             const sessionBusy = Boolean(
                 gameSession
                 && gameSession.status !== 'failed'
-                && (gameSession.status !== 'awaiting-next-game' || podiumRemaining > 0)
+                && gameSession.status !== 'awaiting-next-game'
             );
             const blocked = contestBusy
                 || Boolean(active && ['running', 'draft', 'judging'].includes(active.status))
@@ -3372,9 +2952,14 @@
 
                 const canStart = !blocked && profileCount > 0;
                 let label = 'Set up game';
-                if (podiumRemaining > 0) label = `Podium ${formatCountdown(gameSession.podiumHoldUntil)}`;
-                else if (blocked) label = contestBusy || sessionBusy ? 'Starting…' : 'In progress';
-                else if (gameSession?.status === 'awaiting-next-game') label = 'Set up next game';
+                if (blocked) label = contestBusy || sessionBusy ? 'Starting…' : 'In progress';
+                else if (gameSession?.status === 'awaiting-next-game') {
+                    // The podium hold no longer blocks setup; the countdown is
+                    // just a hint that a ceremony is still running.
+                    label = podiumRemaining > 0
+                        ? `Set up next game · podium ${formatCountdown(gameSession.podiumHoldUntil)}`
+                        : 'Set up next game';
+                }
                 else if (profileCount === 0) label = 'No profiles';
 
                 card.innerHTML = `
@@ -3401,7 +2986,24 @@
 
         function renderContestResults(contest) {
             const box = document.getElementById('contestResults');
-            const results = contest?.results || [];
+            let results = contest?.results || [];
+            if (contest?.rules?.type === 'team_tower_battle') {
+                const byTeam = new Map();
+                for (const result of results) {
+                    const teamName = result.details?.teamName;
+                    if (teamName && !byTeam.has(teamName)) {
+                        byTeam.set(teamName, { ...result, participantId: teamName });
+                    }
+                }
+                results = [...byTeam.values()]
+                    .sort((left, right) => right.score - left.score)
+                    .map((result, index, rows) => ({
+                        ...result,
+                        rank: index > 0 && result.score === rows[index - 1].score
+                            ? rows[index - 1].rank
+                            : index + 1,
+                    }));
+            }
             if (!results.length) {
                 box.hidden = true;
                 box.replaceChildren();
@@ -3419,6 +3021,8 @@
                 )?.value;
                 const score = result.score == null
                     ? 'DQ'
+                    : contest?.rules?.type === 'team_tower_battle'
+                        ? `${result.details?.towerHeight || 0} - ${result.details?.deathPenalty || 0} = ${result.score} blocks`
                     : Number.isFinite(height)
                         ? `${result.score} blocks tall`
                         : Number.isFinite(elapsedMs)
@@ -3438,7 +3042,7 @@
             const skyline = document.getElementById('towerSkyline');
             const list = document.getElementById('towerAtlasList');
             const isLiveTowerContest = activeContest?.status === 'running'
-                && activeContest.rules?.type === 'tower_battle'
+                && ['tower_battle', 'team_tower_battle'].includes(activeContest.rules?.type)
                 && atlas?.contestId === activeContest.id;
             if (!isLiveTowerContest) {
                 panel.hidden = true;
@@ -3454,8 +3058,12 @@
                 const height = Math.max(0, Number(item.height) || 0);
                 const percentage = height > 0 ? Math.max(3, (height / maxHeight) * 88) : 2;
                 const color = colors[index % colors.length];
+                const score = Number(item.score);
+                const title = Number.isFinite(score) && score !== height
+                    ? `${item.participantId} · ${height} tall · ${item.deathPenalty || 0} penalty · ${score} final`
+                    : `${item.participantId} · ${height} blocks tall`;
                 return `
-                    <div class="tower-column" title="${esc(item.participantId)} · ${esc(String(height))} blocks tall">
+                    <div class="tower-column" title="${esc(title)}">
                         <span class="tower-height-label">${esc(String(height))}</span>
                         <div class="tower-bar" style="height:${percentage.toFixed(1)}%;--tower-color:${color}"></div>
                     </div>
@@ -3463,7 +3071,11 @@
             }).join('');
             list.innerHTML = standings.map(item => {
                 const height = Math.max(0, Number(item.height) || 0);
-                const leader = item.rank === 1 && height > 0;
+                const leader = item.rank === 1;
+                const score = Number.isFinite(Number(item.score)) ? Number(item.score) : height;
+                const scoreLabel = Number(item.deathPenalty) > 0
+                    ? `${height} - ${item.deathPenalty} = ${score}`
+                    : `${score}`;
                 return `
                     <div class="tower-standing${leader ? ' leader' : ''}"
                         title="${esc(String(item.blocksStanding || 0))} tracked blocks · ${esc(item.measuredFrom || 'scanning')}">
@@ -3471,7 +3083,7 @@
                         <span class="tower-standing-name">
                             <i class="tower-report-dot${item.reporting ? ' live' : ''}"></i>${esc(item.participantId)}
                         </span>
-                        <span class="tower-standing-height">${esc(String(height))} blk</span>
+                        <span class="tower-standing-height">${esc(scoreLabel)} blk</span>
                     </div>
                 `;
             }).join('');
@@ -3497,10 +3109,12 @@
                 chip.className = 'contest-participant-chip';
                 const model = participant.model || 'Unknown model';
                 const voice = participant.voice || 'Voice not recorded';
+                const team = participant.team ? ` · Team: ${esc(participant.team)}` : '';
                 chip.innerHTML = `
                     <strong>${esc(participant.name || 'Unknown character')}</strong>
                     · ${esc(model)}
                     · Voice: ${esc(voice)}
+                    ${team}
                 `;
                 box.appendChild(chip);
             }
@@ -3767,7 +3381,7 @@
                 || active?.metadata?.gameSession?.participants
                 || null;
             const provisioning = gameSession
-                && ['provisioning', 'preparing', 'recording', 'announcing-start'].includes(gameSession.status);
+                && ['provisioning', 'preparing', 'recording', 'planning', 'announcing-start'].includes(gameSession.status);
 
             if (provisioning && !active) {
                 hideHighlightReel();
@@ -3840,7 +3454,17 @@
                 showHighlightReel(latestDone);
                 live.classList.toggle('idle', latestDone.status !== 'completed');
                 title.textContent = `${latestDone.title} · ${latestDone.status}`;
-                const winners = (latestDone.winnerIds || []).join(', ') || 'none';
+                const winningTeams = latestDone.rules?.type === 'team_tower_battle'
+                    ? [...new Set(
+                        (latestDone.results || [])
+                            .filter(result => result.rank === 1)
+                            .map(result => result.details?.teamName)
+                            .filter(Boolean)
+                    )]
+                    : [];
+                const winners = (winningTeams.length > 0
+                    ? winningTeams
+                    : latestDone.winnerIds || []).join(', ') || 'none';
                 const elapsedMs = latestDone.winnerIds?.length
                     ? latestDone.submissions?.[latestDone.winnerIds[0]]?.payload?.elapsedMs
                     : null;
@@ -3899,500 +3523,82 @@
             if (copyLastBtn) copyLastBtn.hidden = !lastLaunchReport;
         }
 
-        function configuredGameProfiles() {
-            return availableProfiles.filter(profile => profile?.id && profile.configured !== false);
-        }
-
-        function sanitizeMinecraftName(value) {
-            return String(value || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 16);
-        }
-
-        function nextUniqueMinecraftName(baseName, reserved) {
-            const cleaned = sanitizeMinecraftName(baseName) || 'bot';
-            const base = cleaned.length >= 3 ? cleaned : `${cleaned}bot`.slice(0, 16);
-            if (!reserved.has(base) && AGENT_NAME_PATTERN.test(base)) return base;
-            for (let suffix = 2; suffix < 1000; suffix++) {
-                const suffixText = String(suffix);
-                const candidate = `${base.slice(0, 16 - suffixText.length)}${suffixText}`;
-                if (!reserved.has(candidate) && AGENT_NAME_PATTERN.test(candidate)) return candidate;
-            }
-            throw new Error(`Could not generate a unique name for ${baseName}`);
-        }
-
-        // A name belongs to a bot only while that bot is online. Leftovers from
-        // finished matches are replaced automatically, so a roster can always be
-        // replayed with the same names.
-        function namesInUse() {
-            return currentAgents
+        const gameSetup = window.createGameSetup({
+            socket,
+            getProfiles: () => availableProfiles,
+            // A name belongs to a bot only while that bot is online. Leftovers
+            // from finished matches are replaced automatically, so a roster can
+            // always be replayed with the same names.
+            getReservedNames: () => currentAgents
                 .filter(agent => (agent.in_game || agent.socket_connected) && !agent.gameSession)
-                .map(agent => agent.name);
-        }
-
-        function reservedGameNames(exceptIndex = -1) {
-            const names = new Set(namesInUse());
-            gameSetupParticipants.forEach((participant, index) => {
-                if (index === exceptIndex) return;
-                const name = sanitizeMinecraftName(participant.name);
-                if (name) names.add(name);
-            });
-            return names;
-        }
-
-        function setGameSetupError(message) {
-            const el = document.getElementById('gameSetupError');
-            if (!el) return;
-            el.textContent = message || '';
-        }
-
-        function setGameSetupVoiceStatus(message, isError = false) {
-            const el = document.getElementById('gameSetupVoiceStatus');
-            if (!el) return;
-            el.textContent = message || '';
-            el.classList.toggle('error', Boolean(isError));
-        }
-
-        function effectiveGameVoice(participant) {
-            if (participant.voice) return participant.voice;
-            if (!voicesState) return null;
-            return voicesState.config.bots[participant.name]
-                || voicesState.config.default_voice
-                || autoVoiceFor(participant.name);
-        }
-
-        function gameVoiceOptionsHtml(participant) {
-            if (!voicesState) return '<option value="">Loading voices…</option>';
-            const automatic = effectiveGameVoice({ ...participant, voice: null });
-            return [
-                `<option value="" ${participant.voice ? '' : 'selected'}>Auto — ${esc(automatic)}</option>`,
-                ...voicesState.pool.map(voice =>
-                    `<option value="${esc(voice.name)}" ${participant.voice === voice.name ? 'selected' : ''}>${esc(voice.name)} — ${esc(voice.description)}</option>`
-                ),
-            ].join('');
-        }
-
-        function loadGameSetupVoices() {
-            setGameSetupVoiceStatus(voicesState ? '' : 'Loading voice choices…');
-            socket.timeout(10000).emit('get-voices', (err, res) => {
-                if (!gameSetupGameId) return;
-                if (err || !res?.success) {
-                    setGameSetupVoiceStatus(
-                        err ? 'Could not load voices from the server.' : res?.error || 'Could not load voices.',
-                        true
-                    );
-                    renderGameSetupParticipants();
-                    return;
-                }
-                voicesState = res;
-                setGameSetupVoiceStatus(
-                    res.previewAvailable ? 'Choose a voice and press ▶ to hear a sample.' : 'Voice previews require ELEVENLABS_API_KEY.'
-                );
-                renderGameSetupParticipants();
-            });
-        }
-
-        function updateGameSetupPromptCount() {
-            const textarea = document.getElementById('gameSetupSystemPrompt');
-            const count = document.getElementById('gameSetupPromptCount');
-            if (!textarea || !count) return;
-            count.textContent = String(textarea.value.length);
-        }
-
-        function defaultGameSetupParticipants(gameId) {
-            const profiles = configuredGameProfiles();
-            const reserved = new Set(namesInUse());
-            const scenario = gameId === 'survivor' ? selectedSurvivorScenario() : null;
-            const game = gameId === 'survivor'
-                ? { defaultCharacters: scenario?.defaultCharacters || [] }
-                : contestGames.find(item => item.id === gameId);
-            const characters = Array.isArray(game?.defaultCharacters)
-                ? game.defaultCharacters
-                : [];
-            const count = gameId === 'survivor'
-                ? Number(scenario?.castSize) || characters.length || 4
-                : characters.length || Math.min(2, profiles.length);
-            const rows = [];
-            for (let i = 0; i < count; i++) {
-                const character = characters[i] || null;
-                const profile = profiles.find(item => item.id === character?.profileId)
-                    || profiles[i % profiles.length];
-                const name = character
-                    ? sanitizeMinecraftName(character.name)
-                    : nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
-                reserved.add(name);
-                rows.push({
-                    profileId: profile.id,
-                    name,
-                    voice: character?.voice || null,
-                    systemPrompt: character?.systemPrompt || '',
-                });
-            }
-            return rows;
-        }
-
-        function renderGameSetupParticipants() {
-            const box = document.getElementById('gameSetupParticipants');
-            const addBtn = document.getElementById('gameSetupAddParticipantBtn');
-            const profiles = configuredGameProfiles();
-            if (!box) return;
-            box.replaceChildren();
-
-            gameSetupParticipants.forEach((participant, index) => {
-                const row = document.createElement('div');
-                row.className = 'game-setup-row';
-                const nameValid = AGENT_NAME_PATTERN.test(participant.name || '');
-                const reserved = reservedGameNames(index);
-                const duplicate = nameValid && reserved.has(participant.name);
-                const hint = !participant.name
-                    ? 'Name required (3–16 letters, numbers, or underscores)'
-                    : !nameValid
-                        ? 'Use 3–16 letters, numbers, or underscores'
-                        : duplicate
-                            ? 'Name is already taken'
-                            : 'Minecraft-safe name';
-
-                const options = profiles.map(profile => {
-                    const label = `${profile.name} — ${profile.model}${profile.provider ? ` (${profile.provider})` : ''}`;
-                    const selected = profile.id === participant.profileId ? ' selected' : '';
-                    return `<option value="${esc(profile.id)}"${selected}>${esc(label)}</option>`;
-                }).join('');
-
-                row.innerHTML = `
-                    <select data-field="profileId" aria-label="Participant profile">${options || '<option value="">No profiles</option>'}</select>
-                    <input type="text" data-field="name" maxlength="16" spellcheck="false"
-                        class="${nameValid && !duplicate ? '' : 'invalid'}"
-                        value="${esc(participant.name || '')}" aria-label="Participant name">
-                    <div class="game-setup-voice">
-                        <select data-field="voice" aria-label="Voice for ${esc(participant.name || `participant ${index + 1}`)}"
-                            ${voicesState ? '' : 'disabled'}>${gameVoiceOptionsHtml(participant)}</select>
-                        <button type="button" class="btn btn-ghost btn-preview" data-action="preview-voice"
-                            ${voicesState?.previewAvailable ? '' : 'disabled'}
-                            title="${voicesState?.previewAvailable ? 'Preview this voice' : 'Voice preview unavailable'}">▶</button>
-                    </div>
-                    <button type="button" class="btn btn-ghost" data-action="remove" ${gameSetupParticipants.length <= 1 ? 'disabled' : ''}>Remove</button>
-                    <div class="name-hint ${nameValid && !duplicate ? '' : 'error'}">${esc(hint)}</div>
-                    <textarea data-field="systemPrompt" class="personality-prompt" maxlength="${MAX_GAME_SYSTEM_PROMPT}"
-                        rows="3" aria-label="System prompt for ${esc(participant.name || `participant ${index + 1}`)}"
-                        placeholder="Give this bot a personality…">${esc(participant.systemPrompt || '')}</textarea>
-                `;
-
-                row.querySelector('[data-field="profileId"]').addEventListener('change', (event) => {
-                    const profileId = event.target.value;
-                    const profile = profiles.find(item => item.id === profileId);
-                    gameSetupParticipants[index].profileId = profileId;
-                    if (profile) {
-                        const reservedNames = reservedGameNames(index);
-                        gameSetupParticipants[index].name = nextUniqueMinecraftName(
-                            profile.name || profile.id || 'bot',
-                            reservedNames
-                        );
-                    }
-                    renderGameSetupParticipants();
-                });
-
-                row.querySelector('[data-field="name"]').addEventListener('input', (event) => {
-                    const input = event.target;
-                    const cursor = input.selectionStart;
-                    const cleaned = sanitizeMinecraftName(input.value);
-                    gameSetupParticipants[index].name = cleaned;
-                    if (input.value !== cleaned) {
-                        input.value = cleaned;
-                        const nextCursor = Math.min(cursor, cleaned.length);
-                        input.setSelectionRange(nextCursor, nextCursor);
-                    }
-                    const nameValid = AGENT_NAME_PATTERN.test(cleaned);
-                    const reserved = reservedGameNames(index);
-                    const duplicate = nameValid && reserved.has(cleaned);
-                    input.classList.toggle('invalid', !(nameValid && !duplicate));
-                    const hint = row.querySelector('.name-hint');
-                    if (hint) {
-                        hint.classList.toggle('error', !(nameValid && !duplicate));
-                        hint.textContent = !cleaned
-                            ? 'Name required (3–16 letters, numbers, or underscores)'
-                            : !nameValid
-                                ? 'Use 3–16 letters, numbers, or underscores'
-                                : duplicate
-                                    ? 'Name is already taken'
-                                    : 'Minecraft-safe name';
-                    }
-                    const automaticOption = row.querySelector('[data-field="voice"] option[value=""]');
-                    if (automaticOption && !participant.voice) {
-                        automaticOption.textContent = `Auto — ${effectiveGameVoice(participant)}`;
-                    }
-                });
-
-                row.querySelector('[data-field="voice"]').addEventListener('change', (event) => {
-                    gameSetupParticipants[index].voice = event.target.value || null;
-                });
-
-                row.querySelector('[data-field="systemPrompt"]').addEventListener('input', (event) => {
-                    gameSetupParticipants[index].systemPrompt = event.target.value;
-                });
-
-                row.querySelector('[data-action="preview-voice"]').addEventListener('click', (event) => {
-                    const voice = effectiveGameVoice(gameSetupParticipants[index]);
-                    playVoicePreview(
-                        voice,
-                        gameSetupParticipants[index].name,
-                        event.currentTarget,
-                        setGameSetupVoiceStatus
-                    );
-                });
-
-                row.querySelector('[data-action="remove"]').addEventListener('click', () => {
-                    if (gameSetupParticipants.length <= 1) return;
-                    gameSetupParticipants.splice(index, 1);
-                    renderGameSetupParticipants();
-                });
-
-                box.appendChild(row);
-            });
-
-            if (addBtn) {
-                addBtn.disabled = profiles.length === 0;
-            }
-        }
+                .map(agent => agent.name),
+            onStatus: setContestStatus,
+            onBusyChange: (busy) => {
+                contestBusy = busy;
+                renderGameCards();
+            },
+            onLaunchReport: (report) => setLaunchReport(report, { showInContest: true }),
+        });
 
         function openGameSetup(gameId) {
             if (contestBusy) return;
-            if (
-                gameId === 'survivor'
-                && !Array.isArray(survivorPreset?.defaultCharacters)
-            ) {
-                setContestStatus('Loading the canonical Survivor cast. Try again in a moment.');
-                loadSurvivorState();
-                return;
-            }
-            const profiles = configuredGameProfiles();
-            if (!profiles.length) {
-                setContestStatus('No configured model profiles available', true);
-                return;
-            }
-            const scenario = gameId === 'survivor' ? selectedSurvivorScenario() : null;
-            const game = gameId === 'survivor'
-                ? {
-                    id: 'survivor',
-                    title: scenario?.title || 'Survivor Bot Season',
-                    durationMs: 60_000,
-                }
-                : contestGames.find(item => item.id === gameId);
-            gameSetupGameId = gameId;
-            gameSetupParticipants = defaultGameSetupParticipants(gameId);
-            document.getElementById('gameSetupTitle').textContent = `Set up ${game?.title || gameId}`;
-            document.getElementById('gameSetupDurationMinutes').value =
-                String((game?.durationMs || 60_000) / 60_000);
-            document.querySelector('.game-setup-duration').hidden = gameId === 'survivor';
-            document.getElementById('survivorSetupOptions').hidden = gameId !== 'survivor';
-            document.getElementById('survivorMergeAt').value =
-                String(scenario?.mergeAt || 10);
-            if (scenario) {
-                document.getElementById('survivorStrategyMinutes').value =
-                    String((scenario.phaseDurationsMs?.strategy || 120_000) / 60_000);
-                document.getElementById('survivorVoteMinutes').value =
-                    String((scenario.phaseDurationsMs?.voting || 60_000) / 60_000);
-            }
-            document.getElementById('gameSetupSystemPrompt').value = '';
-            updateGameSetupPromptCount();
-            setGameSetupError('');
-            hideLaunchDebugPanels();
-            document.getElementById('gameSetupFooter').textContent =
-                gameId === 'survivor'
-                    ? `The roster persists through immunity challenges, Tribal Councils, and a final ${scenario?.finalistCount || 3} judged by the jury.`
-                    : 'After the match, bots remain on their podiums for at least five minutes and wait for the next game.';
-            renderGameSetupParticipants();
-            document.getElementById('gameSetupModal').style.display = 'flex';
-            loadGameSetupVoices();
-        }
-
-        function closeGameSetup() {
-            document.getElementById('gameSetupModal').style.display = 'none';
-            gameSetupGameId = null;
-            gameSetupParticipants = [];
-            document.querySelector('.game-setup-duration').hidden = false;
-            document.getElementById('survivorSetupOptions').hidden = true;
-            setGameSetupError('');
-            setGameSetupVoiceStatus('');
-            const setupPanel = document.getElementById('gameSetupDebug');
-            if (setupPanel) setupPanel.hidden = true;
-            if (previewAudio) { previewAudio.pause(); previewAudio = null; }
-        }
-
-        function validateGameSetup() {
-            const profiles = configuredGameProfiles();
-            const profileIds = new Set(profiles.map(profile => profile.id));
-            if (!gameSetupGameId) return 'No game selected';
-            if (!gameSetupParticipants.length) return 'Add at least one participant';
-            if (gameSetupGameId === 'survivor') {
-                const minimumPlayers = Number(selectedSurvivorScenario()?.minimumPlayers || 4);
-                const mergeAt = Number(document.getElementById('survivorMergeAt')?.value || 10);
-                if (!Number.isInteger(mergeAt) || mergeAt < 4 || mergeAt > 10) {
-                    return 'Survivor merge count must be from 4 to 10';
-                }
-                if (gameSetupParticipants.length < minimumPlayers) {
-                    return `Survivor needs at least ${minimumPlayers} starting bots`;
-                }
-            }
-            const seenNames = new Set();
-            const taken = new Set(namesInUse());
-            for (let i = 0; i < gameSetupParticipants.length; i++) {
-                const participant = gameSetupParticipants[i];
-                const name = String(participant.name || '').trim();
-                if (!AGENT_NAME_PATTERN.test(name)) {
-                    return `Participant ${i + 1} name must be 3–16 letters, numbers, or underscores`;
-                }
-                if (seenNames.has(name)) {
-                    return `Participant names must be unique: ${name}`;
-                }
-                if (taken.has(name)) {
-                    return `A bot named ${name} is already online. Stop it first.`;
-                }
-                if (!participant.profileId || !profileIds.has(participant.profileId)) {
-                    return `Participant ${i + 1} needs a configured profile`;
-                }
-                if (String(participant.systemPrompt || '').length > MAX_GAME_SYSTEM_PROMPT) {
-                    return `Participant ${i + 1} system prompt must be ${MAX_GAME_SYSTEM_PROMPT} characters or fewer`;
-                }
-                seenNames.add(name);
-            }
-            const prompt = document.getElementById('gameSetupSystemPrompt')?.value || '';
-            if (prompt.length > MAX_GAME_SYSTEM_PROMPT) {
-                return `System prompt must be ${MAX_GAME_SYSTEM_PROMPT} characters or fewer`;
-            }
-            if (gameSetupGameId !== 'survivor') {
-                const durationMinutes = Number(document.getElementById('gameSetupDurationMinutes')?.value);
-                if (!Number.isFinite(durationMinutes)
-                    || durationMinutes < MIN_GAME_DURATION_MINUTES
-                    || durationMinutes > MAX_GAME_DURATION_MINUTES) {
-                    return `Duration must be between ${MIN_GAME_DURATION_MINUTES} and ${MAX_GAME_DURATION_MINUTES} minutes`;
-                }
-            }
-            return null;
-        }
-
-        function submitGameSetup() {
-            if (contestBusy) return;
-            const validationError = validateGameSetup();
-            if (validationError) {
-                setGameSetupError(validationError);
-                return;
-            }
-            const gameId = gameSetupGameId;
-            const participants = gameSetupParticipants.map(({ profileId, name, voice, systemPrompt }) => ({
-                profileId,
-                name,
-                voice: voice || null,
-                systemPrompt: String(systemPrompt || '').trim(),
-            }));
-            const systemPrompt = String(document.getElementById('gameSetupSystemPrompt')?.value || '').trim();
-            const durationMs =
-                Number(document.getElementById('gameSetupDurationMinutes').value) * 60_000;
-
-            contestBusy = true;
-            setGameSetupError('');
-            hideLaunchDebugPanels();
-            setContestStatus('Provisioning temporary contest bots…');
-            document.getElementById('gameSetupFooter').textContent = 'Starting… creating temporary contest bots.';
-            document.getElementById('submitGameSetupBtn').disabled = true;
-            renderGameCards();
-
-            const eventName = gameId === 'survivor' ? 'survivor-start' : 'contest-start-game';
-            const request = gameId === 'survivor'
-                ? {
-                    participants,
-                    systemPrompt,
-                    scenarioId: selectedSurvivorScenario()?.scenarioId,
-                    mergeAt: Number(document.getElementById('survivorMergeAt').value),
-                    phaseDurationsMs: {
-                        strategy: Number(document.getElementById('survivorStrategyMinutes').value) * 60_000,
-                        voting: Number(document.getElementById('survivorVoteMinutes').value) * 60_000,
-                    },
-                }
-                : { gameId, participants, systemPrompt, durationMs };
-            socket.timeout(CONTEST_START_TIMEOUT_MS).emit(eventName, request, (err, result) => {
-                contestBusy = false;
-                document.getElementById('submitGameSetupBtn').disabled = false;
-                if (err) {
-                    const message = 'Start game timed out or MindServer did not respond. Copy the debug report for Cursor if one is available.';
-                    setGameSetupError(message);
-                    setContestStatus(message, true);
-                    document.getElementById('gameSetupFooter').textContent = 'Timed out waiting for MindServer.';
-                    fetchLastLaunchReport();
-                    renderGameCards();
-                    return;
-                }
-                if (!result?.success) {
-                    const message = result?.error || 'Failed to start contest';
-                    setGameSetupError(message);
-                    setContestStatus(message, true);
-                    document.getElementById('gameSetupFooter').textContent = 'Fix the error and try again.';
-                    if (result?.report) {
-                        setLaunchReport(result.report, { showInModal: true, showInContest: true });
-                    } else {
-                        fetchLastLaunchReport();
+            const game = contestGames.find(item => item.id === gameId);
+            const isTeamTower = gameId === 'team_tower_battle';
+            gameSetup.open({
+                gameId,
+                title: `Set up ${game?.title || gameId}`,
+                footer: 'After the match, bots remain on their podiums for at least five minutes and wait for the next game.',
+                participants: gameSetup.defaultParticipantsFor(
+                    game?.defaultCharacters,
+                    isTeamTower ? 8 : undefined
+                ),
+                minParticipants: isTeamTower ? 4 : undefined,
+                teams: isTeamTower ? {
+                    defaultNames: ['Ember', 'Tide'],
+                    minimumPlayersPerTeam: 2,
+                } : null,
+                duration: { minutes: (game?.durationMs || 60_000) / 60_000 },
+                fields: isTeamTower ? [{
+                    id: 'planningSeconds',
+                    label: 'Team planning time before the clock starts (seconds)',
+                    min: 0,
+                    max: 300,
+                    step: 15,
+                    value: Math.round((game?.planningMs || 60_000) / 1000),
+                }] : [],
+                validate: ({ fields }) => {
+                    if (!isTeamTower) return null;
+                    const seconds = Number(fields.planningSeconds);
+                    return Number.isFinite(seconds) && seconds >= 0 && seconds <= 300
+                        ? null
+                        : 'Planning time must be between 0 and 300 seconds';
+                },
+                buildRequest: ({ participants, systemPrompt, durationMs, teamNames, fields }) => {
+                    const planningMs = isTeamTower ? Number(fields.planningSeconds) * 1000 : 0;
+                    return {
+                        event: 'contest-start-game',
+                        extraTimeoutMs: planningMs,
+                        payload: {
+                            gameId,
+                            participants,
+                            systemPrompt,
+                            durationMs,
+                            ...(isTeamTower ? { teamNames, planningMs } : {}),
+                        },
+                    };
+                },
+                onStarted: (result) => {
+                    hideLaunchDebugPanels();
+                    setContestStatus(`Started ${result.data?.contest?.title || result.data?.gameSession?.title || gameId}`);
+                    if (result.data?.join) {
+                        contestJoin = result.data.join;
+                        renderContestJoinCard();
                     }
-                    renderGameCards();
-                    return;
-                }
-                hideLaunchDebugPanels();
-                closeGameSetup();
-                setContestStatus(`Started ${result.data?.contest?.title || result.data?.gameSession?.title || gameId}`);
-                if (result.data?.join) {
-                    contestJoin = result.data.join;
-                    renderContestJoinCard();
-                }
-                if (gameId === 'survivor') loadSurvivorState();
-                else loadContestState();
-                renderGameCards();
+                    loadContestState();
+                },
             });
         }
 
-        document.getElementById('gameSetupAddParticipantBtn').addEventListener('click', () => {
-            const profiles = configuredGameProfiles();
-            if (!profiles.length) return;
-            const used = new Set(gameSetupParticipants.map(p => p.profileId));
-            const profile = profiles.find(item => !used.has(item.id)) || profiles[0];
-            const reserved = reservedGameNames();
-            gameSetupParticipants.push({
-                profileId: profile.id,
-                name: nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved),
-                voice: null,
-                systemPrompt: '',
-            });
-            renderGameSetupParticipants();
-        });
-
-        document.getElementById('closeGameSetupBtn').addEventListener('click', () => {
-            if (!contestBusy) closeGameSetup();
-        });
-        document.getElementById('cancelGameSetupBtn').addEventListener('click', () => {
-            if (!contestBusy) closeGameSetup();
-        });
-        document.getElementById('submitGameSetupBtn').addEventListener('click', submitGameSetup);
-        document.getElementById('startSurvivorBtn').addEventListener('click', () => {
-            openGameSetup('survivor');
-        });
-        document.getElementById('survivorScenario').addEventListener(
-            'change',
-            renderSurvivorScenarioSummary
-        );
-        document.getElementById('survivorPauseBtn').addEventListener('click', () => {
-            survivorControl(survivorState?.paused ? 'resume' : 'pause');
-        });
-        document.getElementById('survivorAdvanceBtn').addEventListener('click', () => {
-            survivorControl('advance');
-        });
-        document.getElementById('survivorSetChallengeBtn').addEventListener('click', () => {
-            survivorControl('set-next-challenge', {
-                gameId: document.getElementById('survivorNextChallenge').value,
-            });
-        });
-        document.getElementById('survivorCancelBtn').addEventListener('click', () => {
-            if (window.confirm('Cancel the active Survivor season and disconnect its bots?')) {
-                survivorControl('cancel', { reason: 'Cancelled from the operator UI' });
-            }
-        });
-        document.getElementById('copyGameSetupReportBtn')?.addEventListener('click', (event) => {
-            copyLaunchReportToClipboard(event.currentTarget);
-        });
         document.getElementById('copyContestLaunchReportBtn')?.addEventListener('click', (event) => {
             copyLaunchReportToClipboard(event.currentTarget);
         });
@@ -4416,10 +3622,6 @@
         document.getElementById('hideContestLaunchDebugBtn')?.addEventListener('click', () => {
             const panel = document.getElementById('contestLaunchDebug');
             if (panel) panel.hidden = true;
-        });
-        document.getElementById('gameSetupSystemPrompt').addEventListener('input', updateGameSetupPromptCount);
-        document.getElementById('gameSetupModal').addEventListener('click', (event) => {
-            if (event.target === event.currentTarget && !contestBusy) closeGameSetup();
         });
 
         document.getElementById('warpSpectatorsBtn').addEventListener('click', () => {
@@ -4575,7 +3777,6 @@
                 status.classList.remove('error');
                 updateQuickCreateState();
                 if (currentView === 'games') renderGameCards();
-                if (gameSetupGameId) renderGameSetupParticipants();
             });
         }
 

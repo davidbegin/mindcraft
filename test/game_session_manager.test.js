@@ -4,11 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { appendSystemPromptAddendum } from '../src/models/prompter.js';
+import {
+    appendSpeechStylePrompt,
+    appendSystemPromptAddendum,
+} from '../src/models/prompter.js';
 import { ContestCoordinator } from '../src/mindcraft/contest/contest_coordinator.js';
 import {
     GameSessionManager,
+    resolvePlanningMs,
     validateGameParticipants,
+    validateTeamSetup,
 } from '../src/mindcraft/contest/game_session_manager.js';
 import {
     filterRecordingManifest,
@@ -17,6 +22,7 @@ import {
 import {
     buildGameSystemPrompt,
     buildParticipantGameDirective,
+    buildTeamPlanningDirective,
 } from '../src/mindcraft/contest/game_content.js';
 
 const profiles = [
@@ -99,6 +105,10 @@ async function withManager(run, overrides = {}, coordinatorOverrides = {}) {
                 calls.push(['announce-start', contest.id]);
                 return Promise.resolve();
             },
+            announcePlanning: (contest, options) => {
+                calls.push(['announce-planning', contest.id, options?.planningMs]);
+                return Promise.resolve();
+            },
             announceResult: contest => {
                 calls.push(['announce-result', contest.id, contest.winnerIds]);
                 return Promise.resolve();
@@ -107,7 +117,7 @@ async function withManager(run, overrides = {}, coordinatorOverrides = {}) {
                 calls.push(['announce-visual-result', contest.id, contest.winnerIds]);
                 return Promise.resolve();
             },
-            sleep: async () => {},
+            sleep: async ms => { calls.push(['sleep', ms]); },
             ...overrides,
         });
         await run({ manager, coordinator, calls });
@@ -239,7 +249,7 @@ test('provisions, records, and holds competitors on podiums until cleanup', asyn
     });
 });
 
-test('requires five podium minutes before an explicit next-game start cleans up', async () => {
+test('an explicit next-game start ends the podium ceremony early', async () => {
     let now = 1_000;
     let nextId = 0;
     await withManager(async ({ manager, coordinator, calls }) => {
@@ -253,17 +263,10 @@ test('requires five podium minutes before an explicit next-game start cleans up'
 
         assert.equal(manager.view().status, 'awaiting-next-game');
         assert.equal(manager.view().podiumHoldUntil, 301_000);
-        await assert.rejects(
-            manager.start(request),
-            /Wait 300 more seconds/
-        );
-        assert.equal(
-            calls.some(([type]) => type === 'destroy'),
-            false,
-            'an early next-game request leaves podium competitors in place'
-        );
 
-        now = 301_000;
+        // Still well inside the five-minute hold. The operator can start the
+        // next game anyway: it cleans up the medalists and launches immediately
+        // instead of forcing a wait.
         const next = await manager.start(request);
         assert.equal(next.contest.id, 'game-2');
         const oldDestroyIndex = calls.findIndex(
@@ -272,8 +275,8 @@ test('requires five podium minutes before an explicit next-game start cleans up'
         const newCreateIndex = calls.findIndex(
             ([type], index) => type === 'create' && index > oldDestroyIndex
         );
-        assert.ok(oldDestroyIndex >= 0);
-        assert.ok(newCreateIndex > oldDestroyIndex);
+        assert.ok(oldDestroyIndex >= 0, 'the podium competitor is cleaned up');
+        assert.ok(newCreateIndex > oldDestroyIndex, 'the next game provisions after cleanup');
 
         await coordinator.cancelContest('game-2', 'test complete');
         await manager.syncWithContestView(coordinator.view());
@@ -394,6 +397,207 @@ test('frees names held by leftover bots instead of refusing the roster', async (
     });
 });
 
+test('team tower persists assignments and gives agents teammate and enemy context', async () => {
+    const teamPreset = {
+        ...preset,
+        id: 'team_tower_battle',
+        rules: {
+            type: 'team_tower_battle',
+            minimumPlayersPerTeam: 2,
+            deathPenaltyBlocks: 5,
+        },
+    };
+    let arenaOptions;
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'team_tower_battle',
+            teamNames: ['Ember', 'Tide'],
+            participants: [
+                { profileId: 'fast', name: 'alice', team: 'Ember' },
+                { profileId: 'smart', name: 'amy', team: 'Ember' },
+                { profileId: 'fast', name: 'bob', team: 'Tide' },
+                { profileId: 'smart', name: 'ben', team: 'Tide' },
+            ],
+        });
+
+        const contest = coordinator.snapshot().contests['game-1'];
+        assert.deepEqual(contest.metadata.gameSession.teams, {
+            Ember: ['alice', 'amy'],
+            Tide: ['bob', 'ben'],
+        });
+        assert.equal(manager.view().participants[0].team, 'Ember');
+        const aliceSettings = calls.find(
+            ([type, settings]) => type === 'create' && settings.profile.name === 'alice'
+        )[1].game_session;
+        assert.deepEqual(aliceSettings.teammateIds, ['amy']);
+        assert.deepEqual(aliceSettings.enemyIds, ['bob', 'ben']);
+        assert.deepEqual(aliceSettings.rivalIds, ['bob', 'ben']);
+        assert.deepEqual(arenaOptions.teamNames, ['Ember', 'Tide']);
+        const directive = calls.find(
+            ([type, name]) => type === 'directive' && name === 'alice'
+        )[2];
+        assert.match(directive, /YOUR TEAM: Ember/);
+        assert.match(directive, /teammates are amy/);
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        getPreset: () => teamPreset,
+        prepareArena: async (_game, _participants, options) => {
+            arenaOptions = options;
+            return { center: { x: 1, y: 2, z: 3 } };
+        },
+    });
+});
+
+test('team tower plans before the clock starts and points every teammate at one tower', async () => {
+    const teamPreset = {
+        ...preset,
+        id: 'team_tower_battle',
+        title: 'Team Tower Battle',
+        rules: {
+            type: 'team_tower_battle',
+            minimumPlayersPerTeam: 2,
+            planningMs: 60_000,
+        },
+    };
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'team_tower_battle',
+            teamNames: ['Ember', 'Tide'],
+            planningMs: 45_000,
+            participants: [
+                { profileId: 'fast', name: 'alice', team: 'Ember' },
+                { profileId: 'smart', name: 'amy', team: 'Ember' },
+                { profileId: 'fast', name: 'bob', team: 'Tide' },
+                { profileId: 'smart', name: 'ben', team: 'Tide' },
+            ],
+        });
+
+        const types = calls.map(([type]) => type);
+        const announcePlanningIndex = types.indexOf('announce-planning');
+        const planningSleepIndex = calls.findIndex(
+            ([type, ms]) => type === 'sleep' && ms === 45_000
+        );
+        const announceStartIndex = types.indexOf('announce-start');
+        assert.ok(announcePlanningIndex >= 0, 'the narrator opens the planning phase');
+        assert.equal(calls[announcePlanningIndex][2], 45_000);
+        assert.ok(
+            planningSleepIndex > announcePlanningIndex,
+            'the planning window is held open after the callout'
+        );
+        assert.ok(
+            planningSleepIndex < announceStartIndex,
+            'planning finishes before the start countdown'
+        );
+
+        const directives = calls.filter(([type]) => type === 'directive');
+        const planningDirectives = directives.filter(([, , prompt]) => /PLANNING PHASE/.test(prompt));
+        assert.equal(planningDirectives.length, 4);
+        assert.ok(
+            planningDirectives.every(call => calls.indexOf(call) < planningSleepIndex),
+            'bots get their planning brief before the planning window elapses'
+        );
+
+        const alicePlanning = planningDirectives.find(([, name]) => name === 'alice')[2];
+        assert.match(alicePlanning, /about 45 seconds/);
+        assert.match(alicePlanning, /YOUR TEAM: Ember/);
+        assert.match(alicePlanning, /alice is the team captain/);
+        assert.match(alicePlanning, /You are the captain/);
+        assert.match(alicePlanning, /one exact x z coordinate/);
+        assert.match(alicePlanning, /do NOT place or break blocks/);
+        const amyPlanning = planningDirectives.find(([, name]) => name === 'amy')[2];
+        assert.match(amyPlanning, /alice is the team captain/);
+        assert.match(amyPlanning, /confirm the agreed spot without saying its numbers/);
+        const bobPlanning = planningDirectives.find(([, name]) => name === 'bob')[2];
+        assert.match(bobPlanning, /bob is the team captain/);
+
+        const startDirectives = directives.filter(([, , prompt]) => !/PLANNING PHASE/.test(prompt));
+        assert.equal(startDirectives.length, 4);
+        assert.ok(
+            startDirectives.every(([, , , options]) => options?.endConversations === true),
+            'planning chatter is cut off so the match goal takes effect immediately'
+        );
+        const aliceStart = startDirectives.find(([, name]) => name === 'alice')[2];
+        assert.match(aliceStart, /single tower base your team agreed on during planning/);
+        assert.match(aliceStart, /never start a second one/);
+        assert.match(aliceStart, /alice is your captain/);
+
+        assert.equal(
+            coordinator.snapshot().contests['game-1'].metadata.gameSession.planningMs,
+            45_000
+        );
+        assert.deepEqual(
+            coordinator.snapshot().contests['game-1'].metadata.gameSession.captainByTeam,
+            { Ember: 'alice', Tide: 'bob' }
+        );
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        getPreset: () => teamPreset,
+    });
+});
+
+test('planning time falls back to the preset and can be turned off', async () => {
+    const teamPreset = {
+        ...preset,
+        id: 'team_tower_battle',
+        rules: { type: 'team_tower_battle', minimumPlayersPerTeam: 2, planningMs: 60_000 },
+    };
+    assert.equal(resolvePlanningMs(undefined, teamPreset), 60_000);
+    assert.equal(resolvePlanningMs(0, teamPreset), 0);
+    assert.equal(resolvePlanningMs(30_000, teamPreset), 30_000);
+    assert.equal(resolvePlanningMs(undefined, preset), 0);
+    assert.throws(() => resolvePlanningMs(-1, teamPreset), /cannot be negative/);
+    assert.throws(() => resolvePlanningMs(11 * 60_000, teamPreset), /10 minutes or less/);
+
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'team_tower_battle',
+            teamNames: ['Ember', 'Tide'],
+            planningMs: 0,
+            participants: [
+                { profileId: 'fast', name: 'alice', team: 'Ember' },
+                { profileId: 'smart', name: 'amy', team: 'Ember' },
+                { profileId: 'fast', name: 'bob', team: 'Tide' },
+                { profileId: 'smart', name: 'ben', team: 'Tide' },
+            ],
+        });
+
+        assert.equal(calls.filter(([type]) => type === 'announce-planning').length, 0);
+        assert.equal(
+            calls.filter(([type, , prompt]) => type === 'directive' && /PLANNING PHASE/.test(prompt)).length,
+            0
+        );
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        getPreset: () => teamPreset,
+    });
+});
+
+test('a planning brief tells a non-captain who to follow and who to stay quiet around', () => {
+    const directive = buildTeamPlanningDirective({
+        title: 'Team Tower Battle',
+        planningMs: 45_000,
+        participantName: 'amy',
+        teamId: 'Ember',
+        teammateIds: ['alice'],
+        enemyIds: ['bob', 'ben'],
+        captainId: 'alice',
+    });
+    assert.match(directive, /The match has NOT started/);
+    assert.match(directive, /only your team's single tallest tower counts/);
+    assert.match(directive, /!startConversation with alice/);
+    assert.match(directive, /The opposing team is bob, ben/);
+    assert.match(directive, /!endConversation/);
+    assert.match(directive, /Meet me at the spot/);
+    assert.doesNotMatch(directive, /Say the numbers out loud/);
+    assert.doesNotMatch(directive, /You are the captain/);
+});
+
 test('a refused second game leaves the running bots alone', async () => {
     const reclaimed = [];
     await withManager(async ({ manager, coordinator }) => {
@@ -457,12 +661,53 @@ test('participant validation rejects catalog, name, and collision errors', () =>
     );
 });
 
+test('team setup requires two distinct teams with two assigned players each', () => {
+    const participants = [
+        { name: 'alice', team: 'Ember' },
+        { name: 'amy', team: 'Ember' },
+        { name: 'bob', team: 'Tide' },
+        { name: 'ben', team: 'Tide' },
+    ];
+    assert.deepEqual(
+        validateTeamSetup(participants, ['Ember', 'Tide']),
+        {
+            teamNames: ['Ember', 'Tide'],
+            teamByParticipant: {
+                alice: 'Ember',
+                amy: 'Ember',
+                bob: 'Tide',
+                ben: 'Tide',
+            },
+            teams: {
+                Ember: ['alice', 'amy'],
+                Tide: ['bob', 'ben'],
+            },
+        }
+    );
+    assert.throws(
+        () => validateTeamSetup(participants, ['Ember', 'ember']),
+        /must be different/
+    );
+    assert.throws(
+        () => validateTeamSetup(participants.slice(0, 3), ['Ember', 'Tide']),
+        /needs at least 2/
+    );
+});
+
 test('system addendum remains separate and optional', () => {
     assert.equal(appendSystemPromptAddendum('Base prompt', ''), 'Base prompt');
     assert.equal(
         appendSystemPromptAddendum('Base prompt', '  Be dramatic.  '),
         'Base prompt\n\nGAME SESSION SYSTEM ADDENDUM\nBe dramatic.'
     );
+});
+
+test('speech style prompt requires concise coordinate-free dialogue', () => {
+    const prompt = appendSpeechStylePrompt('Base prompt');
+    assert.match(prompt, /one short sentence/);
+    assert.match(prompt, /no more than 10 words/);
+    assert.match(prompt, /Never say numeric coordinates aloud/);
+    assert.match(prompt, /Meet me at the spot/);
 });
 
 test('game content prompt prioritizes unique strategy talk over repetitive roasting', () => {

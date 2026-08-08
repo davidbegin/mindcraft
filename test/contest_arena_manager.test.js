@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ContestArenaManager, getArenaJoinInfo, parseOnlinePlayers } from '../src/mindcraft/contest/arena_manager.js';
+import {
+    ContestArenaManager,
+    buildContestTeamCommands,
+    getArenaJoinInfo,
+    parseOnlinePlayers,
+} from '../src/mindcraft/contest/arena_manager.js';
 import { getContestGamePreset } from '../src/mindcraft/contest/game_presets.js';
 
 function listReply(names) {
@@ -220,6 +225,43 @@ test('builds a blank tower arena with equal kits and no diamond ore', async () =
         assert.ok(commands.includes(`give ${name} cobblestone 256`));
         assert.ok(commands.includes(`give ${name} wooden_sword 1`));
     }
+});
+
+test('team tower preserves inventory, splits spawns, and disables friendly fire', async () => {
+    const commands = [];
+    const participants = ['alice', 'amy', 'bob', 'ben'];
+    const options = {
+        spectators: [],
+        teamNames: ['Ember', 'Tide'],
+        teamByParticipant: {
+            alice: 'Ember',
+            amy: 'Ember',
+            bob: 'Tide',
+            ben: 'Tide',
+        },
+    };
+    const manager = new ContestArenaManager({
+        runCommand: async command => {
+            commands.push(command);
+            if (command === 'list') return listReply(participants);
+            return 'ok';
+        },
+    });
+    await manager.prepare(
+        getContestGamePreset('team_tower_battle'),
+        participants,
+        options
+    );
+
+    assert.ok(commands.includes('gamerule keepInventory true'));
+    assert.ok(commands.includes('team modify mcgame_1 friendlyFire false'));
+    assert.ok(commands.includes('team modify mcgame_2 friendlyFire false'));
+    assert.ok(commands.includes('team modify mcgame_1 collisionRule pushOtherTeams'));
+    assert.ok(commands.includes('team join mcgame_1 alice'));
+    assert.ok(commands.includes('team join mcgame_2 bob'));
+    assert.ok(commands.some(command => command === 'tp alice 99982 101 99998'));
+    assert.ok(commands.some(command => command === 'tp bob 100018 101 99998'));
+    assert.ok(buildContestTeamCommands(participants, options).length > 0);
 });
 
 test('builds a blank self-destruct plain with no hazards, mobs, or kit', async () => {

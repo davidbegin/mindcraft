@@ -1,15 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync } from 'fs';
 import path from 'path';
 import {
     renderSkin, modelInfo, hashName, detectProvider, logoBitmap, LOGOS_DIR,
+    SKINS_DIR, synchronizeProfileSkin,
 } from '../src/mindcraft/skins.js';
+import { CURSOR_FAMILIES } from '../src/mindcraft/model_profiles.js';
 
 test('modelInfo maps model families to words, colors, and teams', () => {
     assert.equal(modelInfo('gpt-5.4-mini').word, 'MINI');
     assert.equal(modelInfo('gpt-5.4-mini').mcColor, 'aqua');
     assert.equal(modelInfo({ api: 'cursor', model: 'gpt-5.6-sol' }).word, 'SOL');
+    assert.equal(modelInfo('gpt-5.6-terra').word, 'TERRA');
     assert.equal(modelInfo('gpt-5.6-terra').teamId, 'model_terra');
     assert.equal(modelInfo('gpt-5.6-luna').mcColor, 'light_purple');
     assert.equal(modelInfo('gpt-5.6-sol').provider, 'openai');
@@ -17,6 +20,20 @@ test('modelInfo maps model families to words, colors, and teams', () => {
     const other = modelInfo('claude-4');
     assert.equal(other.word, 'CLAU');
     assert.equal(other.mcColor, 'white');
+});
+
+test('every Cursor model family reads differently on the chest', () => {
+    const models = CURSOR_FAMILIES.map(family => family.model);
+    for (const model of models) {
+        assert.notEqual(modelInfo(model).key, 'other', `${model} has no skin branding`);
+    }
+    const words = models.map(model => modelInfo(model).word);
+    const colors = models.map(model => modelInfo(model).mcColor);
+
+    assert.equal(new Set(words).size, models.length, `words collide: ${words}`);
+    assert.equal(new Set(colors).size, models.length, `colors collide: ${colors}`);
+    assert.equal(modelInfo('claude-opus-5').word, 'OPUS');
+    assert.equal(modelInfo('kimi-k3').teamId, 'model_kimi');
 });
 
 test('detectProvider identifies the model maker, not the serving API', () => {
@@ -97,6 +114,40 @@ test('renderSkin produces a 64x64 canvas, deterministic per name', () => {
     // Different bots on the same model still get distinct skins.
     const b = renderSkin('miner', 'gpt-5.4-mini');
     assert.notDeepEqual(a1.toBuffer('image/png'), b.toBuffer('image/png'));
+});
+
+test('synchronizeProfileSkin always replaces stale branding with the running model', () => {
+    const name = 'skin_sync_test';
+    const file = path.join(SKINS_DIR, `${name}.png`);
+    const profile = {
+        name,
+        model: { api: 'cursor', model: 'gpt-5.6-terra' },
+        skin: {
+            model: 'classic',
+            file: '/skins/wrong-model.png',
+            path: '/skins/wrong-model.png',
+            label: 'claude-opus-5',
+            word: 'OPUS',
+        },
+    };
+
+    try {
+        const skin = synchronizeProfileSkin(profile);
+        assert.equal(profile.skin, skin);
+        assert.equal(skin.label, 'gpt-5.6-terra');
+        assert.equal(skin.word, 'TERRA');
+        assert.equal(skin.file, `/skins/${name}.png`);
+        assert.ok(existsSync(file));
+    } finally {
+        rmSync(file, { force: true });
+    }
+});
+
+test('synchronizeProfileSkin fails closed when no model is configured', () => {
+    assert.throws(
+        () => synchronizeProfileSkin({ name: 'model_less', skin: { word: 'OPUS' } }),
+        /without a model/
+    );
 });
 
 test('hashName is stable and unsigned', () => {

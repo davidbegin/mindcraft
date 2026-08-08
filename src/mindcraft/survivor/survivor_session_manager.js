@@ -2,8 +2,12 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { validateGameParticipants } from '../contest/game_session_manager.js';
+import { ConversationRequestRegistry } from './conversation_requests.js';
 import { buildChallengeDeck, resolveTeamChallenge } from './survivor_challenges.js';
-import { MIN_SURVIVOR_PLAYERS } from './survivor_game.js';
+import { COUNCIL_PHASES, MIN_SURVIVOR_PLAYERS } from './survivor_game.js';
+import { JURY_LENS, buildPlayerBriefing } from './survivor_memory.js';
+import { buildSurvivorRelationships } from './survivor_relationships.js';
+import { buildSurvivorStandings } from './survivor_standings.js';
 
 function clone(value) {
     return value === null || value === undefined
@@ -11,83 +15,142 @@ function clone(value) {
         : JSON.parse(JSON.stringify(value));
 }
 
-function phasePrompt(state, playerId) {
+function phaseInstructions(state, playerId) {
     const player = state.players[playerId];
     const legalTargets = state.eligibleTargetIds.filter(id => id !== playerId);
-    const common = [
-        `SURVIVOR SEASON — ROUND ${state.round}.`,
-        state.merged
-            ? `You are ${playerId}. Every player is now an individual: there are no tribes.`
-            : `You are ${playerId}. Tribe: ${player.tribe}.`,
-        `Phase: ${state.phase}.`,
-        `Active players: ${state.participantIds.filter(id => state.players[id].active).join(', ')}.`,
-        `Jury: ${state.juryIds.join(', ') || 'none yet'}.`,
-    ];
     switch (state.phase) {
         case 'challenge':
-            common.push(
+            return [
                 state.merged
-                    ? 'Compete for individual immunity. Winning makes you ineligible to be voted out this round.'
-                    : 'Compete for your tribe. The losing tribe alone will attend Tribal Council.'
-            );
-            break;
+                    ? 'IMMUNITY CHALLENGE. Winning makes you the one player who cannot be voted out tonight.'
+                    : `IMMUNITY CHALLENGE for ${player.tribe}. The losing tribe goes to Tribal Council alone.`,
+                'How you behave while losing is remembered as long as how you behave while winning.',
+            ];
         case 'strategy':
             if (!state.merged && player.tribe !== state.councilTribe) {
-                common.push(
-                    `Your tribe is safe. ${state.councilTribe} will attend Tribal Council.`,
-                    'Give one concise public confessional about what the result means, then wait for the next challenge.'
-                );
-            } else {
-                common.push(
-                    `Immunity: ${state.immunityIds.join(', ') || 'none'}.`,
-                    'Talk publicly in concise confessionals so the audience understands your real reasoning.',
-                    'Use !invitePrivateGroup, !joinPrivateGroup, and !sendPrivateMessage for secret alliances of any size.',
-                    'Private claims may be truthful or deceptive. Do not reveal private messages publicly unless strategically useful.'
-                );
+                return [
+                    `Your tribe is safe. ${state.councilTribe} goes to Tribal Council.`,
+                    'Give one short public confessional about what the result means, then wait.',
+                ];
             }
-            break;
+            return [
+                `You are going to Tribal Council. Immunity: ${state.immunityIds.join(', ') || 'nobody'}.`,
+                `Vulnerable tonight: ${state.eligibleTargetIds.join(', ')}.`,
+                'This is your only window to work people before the vote. To pull players aside:',
+                '  !requestPrivateChat("Alice,Bob", "why they should hear you out") — asks them to step away with you.',
+                '  !acceptPrivateChat("request id") or !declinePrivateChat("request id", "reason") — you may refuse anyone.',
+                '  !sendPrivateMessage("...") — talks to everyone currently in your private room.',
+                'Refusing to talk is a real move, and so is being refused. Note who will not meet with you.',
+                'Lying in private is legal. Being caught lying is what costs you the jury, so weigh it.',
+                'Speak publicly in short confessionals too, so the audience follows your reasoning.',
+            ];
+        case 'tribal_council':
+            return [
+                'YOU ARE AT TRIBAL COUNCIL. Jeff Prompts is hosting and everything said here is PUBLIC.',
+                'DO NOT VOTE YET. Voting does not open until Jeff closes council.',
+                'When Jeff asks you something, answer with !answerCouncil("your answer").',
+                'Every other player hears your answer and will remember it — the jury included.',
+                'Answer so that the person you are about to vote out could still respect you afterwards.',
+                'Listen hard to what everyone else says. You are expected to change your mind here if',
+                'what comes out on the mat changes the picture. That is what council is for.',
+                `Vulnerable tonight: ${legalTargets.join(', ') || 'nobody'}.`,
+            ];
         case 'voting':
         case 'revote':
+            return [
+                'Council is closed. Vote now.',
+                'Before you do: reconsider everything that just came out on the mat. If someone',
+                'exposed a lie, panicked, or handed you a better target, change your vote accordingly.',
+                `Legal targets: ${legalTargets.join(', ')}.`,
+                'Cast exactly one secret ballot with !castSurvivorVote("Name"). Do not announce it.',
+            ];
         case 'jury_voting':
+            return [
+                `Vote for the winner: ${legalTargets.join(', ')}.`,
+                'Judge the game that was played, not how much you liked being voted out.',
+                'Cast your ballot with !castSurvivorVote("Name").',
+            ];
         case 'finalist_tiebreak':
-            common.push(
-                `Legal secret ballot targets: ${legalTargets.join(', ')}.`,
-                'Cast exactly one ballot with !castSurvivorVote("Name"). Do not announce the target before the reveal.'
-            );
-            break;
+            return [
+                `The jury deadlocked. You break the tie between ${legalTargets.join(' and ')}.`,
+                'Cast your ballot with !castSurvivorVote("Name").',
+            ];
         case 'deadlock':
-            common.push(
-                `The tied players are ${state.tiedIds.join(', ')}.`,
-                'Discuss this openly, then use !submitDeadlockDecision("Name"). The decision must be unanimous or the game goes to rocks.'
-            );
-            break;
+            return [
+                `The vote tied between ${state.tiedIds.join(' and ')} and neither can be voted again.`,
+                'Talk this out in public, then use !submitDeadlockDecision("Name").',
+                'It must be unanimous or everyone without immunity draws rocks.',
+            ];
         case 'jury_questioning':
-            common.push(
-                player.jury
-                    ? `Question the final ${state.finalistIds.length} (${state.finalistIds.join(', ')}) and decide who played the best game.`
-                    : `You are in the final ${state.finalistIds.length}. Explain your strategic game honestly and persuade the jury.`
-            );
-            break;
+            return player.jury
+                ? [
+                    `FINAL TRIBAL COUNCIL. The final ${state.finalistIds.length} are ${state.finalistIds.join(', ')}.`,
+                    'You are a juror. Jeff will put questions to you and to them; answer with !answerCouncil("...").',
+                    'Make them account for the moves they made, especially the one that took you out.',
+                ]
+                : [
+                    `FINAL TRIBAL COUNCIL. You are in the final ${state.finalistIds.length}.`,
+                    `Your jury is ${state.juryIds.join(', ')} — every one of them was voted out.`,
+                    'Answer Jeff with !answerCouncil("..."). This is the whole game.',
+                    'Claim your moves plainly. Jurors forgive a ruthless player who owns it and',
+                    'punish one who pretends they were carried along by fate.',
+                ];
         case 'fire_making': {
             const decidesSeason = state.finalistIds.length > 0
                 && state.tiedIds.every(id => state.finalistIds.includes(id));
-            common.push(
+            return [
                 state.tiedIds.includes(playerId)
                     ? `You are in the fire-making tiebreak. Prepare to compete.${decidesSeason ? ' The winner is the Sole Survivor.' : ''}`
-                    : `Watch the fire-making tiebreak between ${state.tiedIds.join(' and ')}.`
-            );
-            break;
+                    : `Watch the fire-making tiebreak between ${state.tiedIds.join(' and ')}.`,
+            ];
         }
         case 'completed':
-            common.push(`The winner is ${state.winnerIds.join(', ')}.`);
-            break;
+            return [`${state.winnerIds.join(', ')} is the Sole Survivor.`];
         case 'cancelled':
-            common.push('The season was cancelled.');
-            break;
+            return ['The season was cancelled.'];
         default:
-            break;
+            return [];
     }
-    return common.join('\n');
+}
+
+function phasePrompt(state, playerId, briefing = '') {
+    const player = state.players[playerId];
+    const activeIds = state.participantIds.filter(id => state.players[id].active);
+    const header = [
+        `SURVIVOR — ROUND ${state.round}. PHASE: ${state.phase.replaceAll('_', ' ')}.`,
+        state.merged
+            ? `You are ${playerId}. The tribes have merged; everyone plays for themselves.`
+            : `You are ${playerId}. Tribe: ${player.tribe}.`,
+        `Still in the game (${activeIds.length}): ${activeIds.join(', ')}.`,
+    ];
+    return [
+        header.join('\n'),
+        JURY_LENS,
+        briefing,
+        phaseInstructions(state, playerId).join('\n'),
+    ].filter(Boolean).join('\n\n');
+}
+
+export function councilQuestionPrompt(question, state) {
+    const others = question.targetIds.length > 1
+        ? ` Jeff asked this of ${question.targetIds.join(', ')}, so the others will answer too.`
+        : '';
+    return [
+        `TRIBAL COUNCIL — JEFF PROMPTS ASKS YOU: "${question.prompt}"`,
+        `Answer now, out loud, with !answerCouncil("your answer").${others}`,
+        'Everyone still in the game hears this, and so does the jury that decides the winner.',
+        state.phase === 'jury_questioning'
+            ? 'This is the final council; this answer is the last thing the jury hears from you.'
+            : 'Answer in a way the person you vote out tonight could still respect.',
+    ].join('\n');
+}
+
+export function councilAnswerBroadcast(entry) {
+    return [
+        `TRIBAL COUNCIL — Jeff asked ${entry.playerId}: "${entry.prompt}"`,
+        `${entry.playerId} answered: "${entry.answer}"`,
+        'Remember this. It is on the public record and you may use it when you vote.',
+    ].join('\n');
 }
 
 export class SurvivorSessionManager {
@@ -116,6 +179,13 @@ export class SurvivorSessionManager {
         this.clock = options.clock || (() => Date.now());
         this.random = options.random || Math.random;
         this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+        // Pushes to a single bot that are not phase directives: a request to
+        // talk, a council question, another player's public answer.
+        this.notifyAgent = options.notifyAgent || (() => {});
+        this.conversations = options.conversations || new ConversationRequestRegistry({
+            clock: this.clock,
+        });
+        this.conversations.clock = this.clock;
         this.onUpdate = options.onUpdate || (() => {});
         this.onEliminated = options.onEliminated || (() => {});
         this.onCompleted = options.onCompleted || (() => {});
@@ -125,8 +195,103 @@ export class SurvivorSessionManager {
         this.telemetry = options.telemetry || null;
         this.active = null;
         this.lastFailure = null;
+        // Private rooms close at every phase change, so alliances only stay
+        // visible if we keep our own record of who was in them.
+        this.roomHistoryLimit = options.roomHistoryLimit ?? 200;
+        this.secretEventLimit = options.secretEventLimit ?? 300;
+        this.roomHistory = [];
+        this.secretEventLog = [];
+        // Everything that went wrong, kept in the view so the control room can
+        // show it instead of burying it in the server console.
+        this.problemLimit = options.problemLimit ?? 60;
+        this.problems = [];
         this.sessionPath = path.join(this.coordinator.root, 'session.json');
         this._persistOperation = Promise.resolve();
+    }
+
+    // Called for every private-room event so a reloaded dashboard can replay the
+    // secret feed and so the relationship graph outlives the rooms themselves.
+    recordRoomEvent(event) {
+        if (!event?.type) return;
+        const state = this.coordinator.view();
+        const at = event.at ?? this.clock();
+        this.secretEventLog.push({ ...clone(event), at, round: state?.round ?? null });
+        if (this.secretEventLog.length > this.secretEventLimit) {
+            this.secretEventLog.splice(0, this.secretEventLog.length - this.secretEventLimit);
+        }
+        if (!event.roomId) return;
+
+        let entry = this.roomHistory.find(item => item.roomId === event.roomId);
+        if (!entry) {
+            entry = {
+                roomId: event.roomId,
+                round: state?.round ?? null,
+                phase: state?.phase ?? null,
+                ownerId: event.ownerId ?? null,
+                memberIds: [],
+                messageCount: 0,
+                messageCountBySender: {},
+                openedAt: at,
+                closedAt: null,
+            };
+            this.roomHistory.push(entry);
+            if (this.roomHistory.length > this.roomHistoryLimit) {
+                this.roomHistory.splice(0, this.roomHistory.length - this.roomHistoryLimit);
+            }
+        }
+        // memberIds is the union across the room's life: someone who talked and
+        // then walked out still built a relationship.
+        for (const memberId of event.memberIds || []) {
+            if (!entry.memberIds.includes(memberId)) entry.memberIds.push(memberId);
+        }
+        if (event.memberId && !entry.memberIds.includes(event.memberId)) {
+            entry.memberIds.push(event.memberId);
+        }
+        if (event.type === 'room.message' && event.senderId) {
+            entry.messageCount += 1;
+            entry.messageCountBySender[event.senderId] =
+                (entry.messageCountBySender[event.senderId] || 0) + 1;
+        }
+        if (event.type === 'room.closed') entry.closedAt = at;
+        // Rooms and relationships live in view(), and nothing else in this path
+        // changes session state, so push the refresh without re-persisting.
+        this.onUpdate(this.view());
+    }
+
+    // Conversation requests are secret in the same way rooms are: operators see
+    // everything, bots only see their own.
+    recordConversationEvent(event) {
+        if (!event?.type) return;
+        const state = this.coordinator.view();
+        this.secretEventLog.push({
+            ...clone(event),
+            at: event.at ?? this.clock(),
+            round: state?.round ?? null,
+        });
+        if (this.secretEventLog.length > this.secretEventLimit) {
+            this.secretEventLog.splice(0, this.secretEventLog.length - this.secretEventLimit);
+        }
+        this.onUpdate(this.view());
+    }
+
+    secretEvents() {
+        return clone(this.secretEventLog);
+    }
+
+    // A named failure the operator can act on, without aborting the season.
+    _problem(stage, error, detail = null) {
+        const entry = {
+            at: this.clock(),
+            stage,
+            message: error?.message || String(error),
+            detail: detail ?? null,
+        };
+        this.problems.push(entry);
+        if (this.problems.length > this.problemLimit) {
+            this.problems.splice(0, this.problems.length - this.problemLimit);
+        }
+        this._log('warn', `${stage}: ${entry.message}`, detail);
+        return entry;
     }
 
     _log(level, message, detail = null) {
@@ -191,6 +356,12 @@ export class SurvivorSessionManager {
         return {
             ...clone(this.active),
             game,
+            council: this.councilView(game),
+            upcomingChallenges: this.upcomingChallenges(),
+            standings: buildSurvivorStandings(game),
+            relationships: buildSurvivorRelationships(game, this.roomHistory),
+            conversationRequests: this.conversations.view(),
+            problems: clone(this.problems),
             rooms: this.rooms.view().map(room => ({
                 id: room.id,
                 ownerId: room.ownerId,
@@ -199,6 +370,49 @@ export class SurvivorSessionManager {
                 messageCount: room.messages.length,
             })),
         };
+    }
+
+    // The council in session, shaped for the host's console: which bots owe an
+    // answer to which question is the thing an operator watches.
+    councilView(game = this.coordinator.view()) {
+        const council = game?.council;
+        if (!council) return null;
+        return {
+            id: council.id,
+            kind: council.kind,
+            round: council.round,
+            open: COUNCIL_PHASES.includes(game.phase),
+            attendeeIds: [...council.attendeeIds],
+            askableIds: council.attendeeIds.filter(id =>
+                game.players[id]?.active || game.players[id]?.jury
+            ),
+            questions: council.questions.map(question => ({
+                ...clone(question),
+                pendingIds: question.targetIds.filter(id =>
+                    !question.answers.some(answer => answer.playerId === id)
+                ),
+            })),
+        };
+    }
+
+    // The deck is a flat list of preset ids; pairing the unplayed tail with the
+    // round each one lands on is what makes it reorderable in the UI.
+    upcomingChallenges() {
+        const deck = this.active?.challengeDeck || [];
+        if (deck.length === 0) return [];
+        const index = this.active?.challengeIndex ?? 0;
+        const round = this.coordinator.view()?.round ?? 1;
+        const remaining = deck.length - index;
+        // startNextChallenge picks with modulo, so a spent deck replays from the
+        // top rather than running out.
+        const slots = remaining > 0
+            ? Array.from({ length: remaining }, (_, offset) => index + offset)
+            : Array.from({ length: deck.length }, (_, offset) => (index + offset) % deck.length);
+        return slots.map((deckIndex, offset) => ({
+            gameId: deck[deckIndex],
+            round: round + offset,
+            deckIndex,
+        }));
     }
 
     async recover() {
@@ -217,6 +431,7 @@ export class SurvivorSessionManager {
         this.active = saved;
         this.active.status = 'running';
         this.rooms.closeAll('server-restarted');
+        this.conversations.cancelAll('server-restarted');
         this._log('info', `recovering season ${game.id} in phase '${game.phase}' with ${this.active.participantIds.length} bots`);
         const missing = this.active.participantIds.filter(id =>
             (game.players[id]?.active || game.players[id]?.jury) && !this.isAgentReady(id)
@@ -283,6 +498,9 @@ export class SurvivorSessionManager {
                         challengeId: preset.id,
                         contestType: preset.rules?.type ?? null,
                         winItem: preset.rules?.winItem ?? null,
+                        floorY: Number.isFinite(preset.rules?.floorY)
+                            ? preset.rules.floorY
+                            : null,
                     })
                 ));
                 const rejected = configs.filter(entry => entry.status === 'rejected').length;
@@ -336,6 +554,10 @@ export class SurvivorSessionManager {
             phaseDurationsMs[key] = value;
         }
         const participantIds = participants.map(participant => participant.name);
+        this.roomHistory = [];
+        this.secretEventLog = [];
+        this.problems = [];
+        this.conversations.cancelAll('new-season');
         const season = await this.coordinator.start({
             participantIds,
             mergeAt,
@@ -366,6 +588,9 @@ export class SurvivorSessionManager {
             phaseDeadlineAt: null,
             paused: false,
             phaseDurationsMs,
+            // Off by default: the host runs council by hand. Turn it on for
+            // unattended runs so a season can play itself through.
+            councilAutoAdvance: Boolean(request.councilAutoAdvance),
             readiness: null,
         };
         this._emit();
@@ -453,6 +678,9 @@ export class SurvivorSessionManager {
             challengeId: preset.id,
             contestType: preset.rules?.type ?? null,
             winItem: preset.rules?.winItem ?? null,
+            floorY: Number.isFinite(preset.rules?.floorY)
+                ? preset.rules.floorY
+                : null,
         })));
         await this._broadcastPhase();
         this._emit();
@@ -507,6 +735,7 @@ export class SurvivorSessionManager {
                 challengeId: null,
                 contestType: 'survivor',
                 winItem: null,
+                floorY: null,
             })));
             await this._afterStateChange(before, this.coordinator.view());
             return this.view();
@@ -516,11 +745,22 @@ export class SurvivorSessionManager {
     }
 
     async tick() {
-        if (!this.active || this.active.paused || !this.active.phaseDeadlineAt) return null;
+        if (!this.active || this.active.paused) return null;
+        await this._sweepConversationRequests();
+        // A null deadline means the host holds the phase. Zero is a real deadline.
+        if (this.active.phaseDeadlineAt == null) return null;
         if (this.clock() < this.active.phaseDeadlineAt) return null;
-        const state = this.coordinator.view();
+        return this.advancePhase();
+    }
+
+    // Whatever the current phase's natural next step is. tick() reaches this on
+    // the deadline; the host reaches it by pressing a button.
+    async advancePhase() {
+        const state = this._requireRunning();
         switch (state.phase) {
             case 'strategy':
+                return this._applyAndTransition('openCouncil', { openedAt: this.clock() });
+            case 'tribal_council':
                 return this._applyAndTransition('beginVoting');
             case 'voting':
             case 'revote':
@@ -540,6 +780,71 @@ export class SurvivorSessionManager {
         }
     }
 
+    // Jeff puts a question to one or more players. They answer publicly, and
+    // every other bot is told what was said so it lands in their memory.
+    async askCouncilQuestion(prompt, targetIds = null, askedBy = 'Jeff Prompts') {
+        const state = this._requireRunning();
+        if (!COUNCIL_PHASES.includes(state.phase)) {
+            throw new Error('Tribal Council is not in session');
+        }
+        const askable = this.councilView(state)?.askableIds || [];
+        const targets = Array.isArray(targetIds) && targetIds.length > 0
+            ? targetIds.map(id => String(id ?? '').trim()).filter(Boolean)
+            : askable;
+        const question = {
+            id: `q-${state.council.id}-${state.council.questions.length + 1}`,
+            prompt,
+            targetIds: targets,
+            askedBy,
+            askedAt: this.clock(),
+        };
+        await this.coordinator.apply('askCouncilQuestion', question);
+        const results = await Promise.allSettled(targets.map(id =>
+            this.notifyAgent(id, 'survivor-council-question', {
+                councilId: state.council.id,
+                questionId: question.id,
+                prompt: question.prompt,
+                targetIds: targets,
+                phase: state.phase,
+            })
+        ));
+        const undelivered = targets.filter((_, index) => results[index].status === 'rejected');
+        if (undelivered.length > 0) {
+            this._problem('council-question', new Error(
+                `Could not reach ${undelivered.join(', ')} with the question`
+            ), { questionId: question.id });
+        }
+        this._emit();
+        return { questionId: question.id, targetIds: targets, undelivered };
+    }
+
+    async _recordCouncilAnswer(playerId, answer, questionId = null) {
+        const state = this._requireRunning();
+        const result = await this.coordinator.apply(
+            'answerCouncilQuestion',
+            playerId,
+            answer,
+            questionId
+        );
+        const after = this.coordinator.view();
+        const question = after.council?.questions.find(item => item.id === result.questionId);
+        const entry = {
+            playerId,
+            answer: String(answer).trim(),
+            prompt: question?.prompt || '',
+            questionId: result.questionId,
+        };
+        // The public record only exists if the other bots actually hear it.
+        const audience = after.participantIds.filter(id =>
+            id !== playerId && (after.players[id].active || after.players[id].jury)
+        );
+        await Promise.allSettled(audience.map(id =>
+            this.notifyAgent(id, 'survivor-council-answer', entry)
+        ));
+        this._emit();
+        return { ...result, heardBy: audience.length, phase: state.phase };
+    }
+
     async handleAgentCommand(agentId, type, payload = {}) {
         const state = this._requireRunning();
         if (!state.participantIds.includes(agentId)) throw new Error('Agent is not in this season');
@@ -547,20 +852,48 @@ export class SurvivorSessionManager {
         switch (type) {
             case 'status':
                 return { success: true, data: this._privateStatus(agentId) };
-            case 'room-create': {
-                if (state.phase !== 'strategy') throw new Error('Private rooms open during strategy');
-                const room = this.rooms.create(
+            case 'talk-request': {
+                if (state.phase !== 'strategy') {
+                    throw new Error('You can only pull players aside during strategy');
+                }
+                const request = this.conversations.open(
                     agentId,
                     payload.inviteeIds,
                     this._strategyPlayerIds(),
-                    payload.pitch
+                    { pitch: payload.pitch }
                 );
-                return { success: true, data: room, message: `Created private room ${room.id}` };
+                await Promise.allSettled(request.inviteeIds.map(id =>
+                    this.notifyAgent(id, 'survivor-talk-request', {
+                        requestId: request.id,
+                        requesterId: request.requesterId,
+                        inviteeIds: request.inviteeIds,
+                        pitch: request.pitch,
+                        expiresAt: request.expiresAt,
+                    })
+                ));
+                this._emit();
+                return {
+                    success: true,
+                    data: { requestId: request.id, inviteeIds: request.inviteeIds },
+                    message: `Asked ${request.inviteeIds.join(', ')} to talk. Waiting on an answer.`,
+                };
             }
-            case 'room-join': {
-                if (state.phase !== 'strategy') throw new Error('Private rooms open during strategy');
-                const room = this.rooms.join(payload.roomId, agentId, this._strategyPlayerIds());
-                return { success: true, data: room, message: `Joined private room ${room.id}` };
+            case 'talk-respond': {
+                const accepted = Boolean(payload.accepted);
+                const outcome = this.conversations.respond(
+                    payload.requestId,
+                    agentId,
+                    accepted,
+                    payload.reason
+                );
+                if (outcome.settled) await this._resolveConversationRequest(payload.requestId);
+                this._emit();
+                return {
+                    success: true,
+                    message: accepted
+                        ? `You agreed to talk with ${outcome.request.requesterId}.`
+                        : `You refused to talk with ${outcome.request.requesterId}.`,
+                };
             }
             case 'room-leave':
                 this.rooms.leave(agentId);
@@ -569,6 +902,18 @@ export class SurvivorSessionManager {
                 if (state.phase !== 'strategy') throw new Error('Private rooms open during strategy');
                 const entry = this.rooms.send(agentId, payload.message);
                 return { success: true, data: { id: entry.id }, message: 'Private message sent' };
+            }
+            case 'council-answer': {
+                const result = await this._recordCouncilAnswer(
+                    agentId,
+                    payload.answer,
+                    payload.questionId
+                );
+                return {
+                    success: true,
+                    data: result,
+                    message: `Your answer is on the record; ${result.heardBy} other player(s) heard it.`,
+                };
             }
             case 'cast-vote': {
                 const data = await this.coordinator.apply('castVote', agentId, payload.targetId);
@@ -582,6 +927,69 @@ export class SurvivorSessionManager {
             }
             default:
                 throw new Error(`Unknown Survivor command: ${type}`);
+        }
+    }
+
+    // Turns a settled request into a real room. Only the players who said yes go
+    // in; a request nobody accepted resolves as a refusal and opens nothing.
+    async _resolveConversationRequest(requestId) {
+        const pending = this.conversations.get(requestId);
+        if (!pending || pending.status !== 'pending') return null;
+        const accepterIds = pending.inviteeIds.filter(id => pending.responses[id]?.accepted);
+        let roomId = null;
+        if (accepterIds.length > 0) {
+            const eligible = this._strategyPlayerIds();
+            try {
+                const room = this.rooms.create(
+                    pending.requesterId,
+                    accepterIds,
+                    eligible,
+                    pending.pitch
+                );
+                roomId = room.id;
+                for (const memberId of accepterIds) {
+                    try {
+                        this.rooms.join(room.id, memberId, eligible);
+                    } catch (error) {
+                        this._problem('talk-join', error, { requestId, memberId });
+                    }
+                }
+            } catch (error) {
+                this._problem('talk-open-room', error, { requestId });
+            }
+        }
+        const { request } = this.conversations.resolve(requestId, roomId);
+        const declinerIds = request.inviteeIds.filter(id => !request.responses[id]?.accepted);
+        await Promise.allSettled([
+            this.notifyAgent(request.requesterId, 'survivor-talk-resolved', {
+                requestId,
+                status: request.status,
+                accepterIds,
+                declinerIds,
+                roomId,
+                reasons: Object.fromEntries(declinerIds.map(id =>
+                    [id, request.responses[id]?.reason || 'no answer']
+                )),
+            }),
+            ...accepterIds.map(id => this.notifyAgent(id, 'survivor-talk-resolved', {
+                requestId,
+                status: request.status,
+                accepterIds,
+                declinerIds,
+                roomId,
+                withId: request.requesterId,
+            })),
+        ]);
+        return request;
+    }
+
+    async _sweepConversationRequests() {
+        for (const request of this.conversations.dueRequests(this.clock())) {
+            try {
+                await this._resolveConversationRequest(request.id);
+            } catch (error) {
+                this._problem('talk-expire', error, { requestId: request.id });
+            }
         }
     }
 
@@ -602,9 +1010,43 @@ export class SurvivorSessionManager {
                 return this.view();
             case 'advance':
                 this._requireActive();
-                this.active.phaseDeadlineAt = this.clock();
-                await this.tick();
+                await this.advancePhase();
                 return this.view();
+            case 'open-council':
+                return this._applyAndTransition('openCouncil', { openedAt: this.clock() });
+            case 'council-question': {
+                const result = await this.askCouncilQuestion(
+                    payload.prompt,
+                    payload.targetIds,
+                    payload.askedBy
+                );
+                return { ...this.view(), lastQuestion: result };
+            }
+            case 'council-answer':
+                // Lets the operator put words on the record for a bot that is
+                // wedged, so a stuck cast never blocks the whole council.
+                await this._recordCouncilAnswer(
+                    payload.playerId,
+                    payload.answer,
+                    payload.questionId
+                );
+                return this.view();
+            case 'end-council':
+                this._requireRunning();
+                return this._applyAndTransition('beginVoting');
+            case 'set-phase-deadline': {
+                this._requireActive();
+                const seconds = Number(payload.seconds);
+                if (payload.seconds === null) {
+                    this.active.phaseDeadlineAt = null;
+                } else if (!Number.isFinite(seconds) || seconds < 0) {
+                    throw new Error('seconds must be a non-negative number or null');
+                } else {
+                    this.active.phaseDeadlineAt = this.clock() + seconds * 1000;
+                }
+                this._emit();
+                return this.view();
+            }
             case 'challenge':
                 return this.startNextChallenge(payload.gameId);
             case 'set-next-challenge':
@@ -615,6 +1057,20 @@ export class SurvivorSessionManager {
                 ] = payload.gameId;
                 this._emit();
                 return this.view();
+            case 'set-challenge-deck': {
+                this._requireActive();
+                const gameIds = payload.gameIds;
+                if (!Array.isArray(gameIds) || gameIds.length === 0) {
+                    throw new Error('gameIds must be a non-empty array of game ids');
+                }
+                for (const gameId of gameIds) this.getContestPreset(gameId);
+                // Only the unplayed tail is replaceable; rewriting history would
+                // desync the deck from the challenges already on the record.
+                const played = this.active.challengeDeck.slice(0, this.active.challengeIndex);
+                this.active.challengeDeck = [...played, ...gameIds];
+                this._emit();
+                return this.view();
+            }
             case 'challenge-result': {
                 const before = this.coordinator.view();
                 const result = before.merged
@@ -644,6 +1100,7 @@ export class SurvivorSessionManager {
             await this.contestCoordinator.cancelContest(activeContestId, reason).catch(() => {});
         }
         this.rooms.closeAll('season-cancelled');
+        this.conversations.cancelAll('season-cancelled');
         await Promise.allSettled(
             session.createdAgents.map(agent => this.destroyAgent(agent.id))
         );
@@ -661,10 +1118,14 @@ export class SurvivorSessionManager {
     }
 
     async _afterStateChange(before, after) {
-        this.rooms.closeAll(`phase-${after.phase}`);
+        if (after.phase !== before.phase) {
+            this.rooms.closeAll(`phase-${after.phase}`);
+            this.conversations.cancelAll(`phase-${after.phase}`);
+        }
         const newlyEliminated = after.bootOrder.filter(id => !before.bootOrder.includes(id));
         for (const playerId of newlyEliminated) {
             this.rooms.removePlayer(playerId);
+            this.conversations.removePlayer(playerId);
             await this.onEliminated(playerId, after);
         }
         if (after.status === 'completed') {
@@ -680,7 +1141,8 @@ export class SurvivorSessionManager {
             await this.startNextChallenge();
             return;
         }
-        this.active.phaseDeadlineAt = this.clock() + this._durationForPhase(after.phase);
+        const duration = this._durationForPhase(after.phase);
+        this.active.phaseDeadlineAt = duration == null ? null : this.clock() + duration;
         await this._broadcastPhase();
         this._emit();
     }
@@ -693,15 +1155,28 @@ export class SurvivorSessionManager {
             || state.players[id].jury
             || state.finalistIds.includes(id)
         );
-        await Promise.allSettled(recipients.map(id =>
-            this.sendDirective(id, phasePrompt(state, id), {
+        const results = await Promise.allSettled(recipients.map(id =>
+            this.sendDirective(id, phasePrompt(state, id, this.briefingFor(id, state)), {
                 pause: !state.players[id].active && !state.players[id].jury,
             })
         ));
+        const undelivered = recipients.filter((_, index) => results[index].status === 'rejected');
+        if (undelivered.length > 0) {
+            this._problem('phase-directive', new Error(
+                `${undelivered.join(', ')} did not receive the ${state.phase} directive`
+            ));
+        }
+    }
+
+    // Each bot's own memory: the public record plus only the private talk it was
+    // actually part of.
+    briefingFor(playerId, state = this.coordinator.view()) {
+        return buildPlayerBriefing(state, playerId, { privateLog: this.secretEventLog });
     }
 
     _privateStatus(agentId) {
         const state = this.coordinator.view();
+        const council = state.council;
         return {
             seasonId: state.id,
             phase: state.phase,
@@ -714,6 +1189,12 @@ export class SurvivorSessionManager {
             legalTargetIds: state.eligibleTargetIds.filter(id => id !== agentId),
             ballotReceived: Boolean(state.ballots[agentId]),
             room: this.rooms.roomFor(agentId),
+            // Requests this bot is party to, so it can chase its own unanswered ask.
+            conversationRequests: this.conversations.pendingFor(agentId),
+            unansweredQuestions: (council?.questions || [])
+                .filter(question => question.targetIds.includes(agentId)
+                    && !question.answers.some(answer => answer.playerId === agentId))
+                .map(question => ({ id: question.id, prompt: question.prompt })),
         };
     }
 
@@ -733,9 +1214,14 @@ export class SurvivorSessionManager {
             ?? fallback;
     }
 
+    // null means "no clock": the host decides when this phase ends. Councils
+    // default to that, because Jeff asking questions is the show and a timer
+    // would cut him off mid-question.
     _durationForPhase(phase) {
+        if (COUNCIL_PHASES.includes(phase) && !this.active?.councilAutoAdvance) return null;
         const defaults = {
             strategy: 120_000,
+            tribal_council: 300_000,
             voting: 60_000,
             revote: 45_000,
             deadlock: 60_000,

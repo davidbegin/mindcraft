@@ -1,5 +1,13 @@
 import { containsCommand } from './commands/index.js';
 
+const SPOKEN_COORDINATE_PATTERNS = [
+    /\b[xyz]\s*[:=]?\s*~?-?\d+(?:\.\d+)?(?:\s*[,;/]?\s*[xyz]\s*[:=]?\s*~?-?\d+(?:\.\d+)?){1,2}\b/i,
+    /[\[(]\s*~?-?\d+(?:\.\d+)?\s*,\s*~?-?\d+(?:\.\d+)?\s*,\s*~?-?\d+(?:\.\d+)?\s*[\])]/,
+    /\b~?-?\d+(?:\.\d+)?\s*,\s*~?-?\d+(?:\.\d+)?\s*,\s*~?-?\d+(?:\.\d+)?\b/,
+    /\b(?:coordinates?|coords?)\s*(?:are|at|:|=)?\s*[\[(]?\s*~?-?\d+(?:\.\d+)?(?:\s*[,\s]\s*~?-?\d+(?:\.\d+)?){1,2}/i,
+    /\b(?:at|to|near)\s+[\[(]?\s*~?-?\d+(?:\.\d+)?(?:\s*[,\s]\s*~?-?\d+(?:\.\d+)?){2}\b/i,
+];
+
 /**
  * Return only the human-facing portion of a chat response. Minecraft command
  * syntax is operational metadata and must never be sent to text-to-speech.
@@ -9,6 +17,18 @@ export function getSpokenChatText(message) {
     const commandName = containsCommand(text);
     const commandIndex = commandName ? text.indexOf(commandName) : -1;
     return (commandIndex === -1 ? text : text.substring(0, commandIndex)).trim();
+}
+
+/**
+ * Coordinates remain available in chat and command arguments, but TTS must
+ * never read their numeric values to the audience.
+ */
+export function getAudibleChatText(message) {
+    const text = String(message || '').trim();
+    if (SPOKEN_COORDINATE_PATTERNS.some(pattern => pattern.test(text))) {
+        return 'Meet me at the spot.';
+    }
+    return text;
 }
 
 /**

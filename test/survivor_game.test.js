@@ -14,6 +14,7 @@ const PLAYERS = Array.from({ length: 12 }, (_, index) => `Player${index + 1}`);
 function beginPreMergeVote(game, winningTribe = 'Ember') {
     game.startChallenge({ id: 'cake_race' });
     game.completeChallenge({ winningTribe });
+    game.openCouncil();
     game.beginVoting();
     return game.snapshot();
 }
@@ -42,6 +43,7 @@ test('creates two balanced tribes and requires at least four players', () => {
 function playIndividualRound(game, immuneId, targetId) {
     game.startChallenge({ id: 'cake_race' });
     game.completeChallenge({ winnerId: immuneId });
+    game.openCouncil();
     game.beginVoting();
     return castPlurality(game, targetId);
 }
@@ -149,6 +151,7 @@ test('post-merge challenge winner is immune and boot joins jury', () => {
 
     game.startChallenge({ id: 'tower_battle' });
     game.completeChallenge({ winnerId: 'Player3' });
+    game.openCouncil();
     game.beginVoting();
     assert.ok(!game.snapshot().eligibleTargetIds.includes('Player3'));
     castPlurality(game, 'Player4');
@@ -267,6 +270,7 @@ test('coordinator persists state and journals public events without ballot targe
     await coordinator.start({ participantIds: PLAYERS, mergeAt: 10, id: 'season-1' });
     await coordinator.apply('startChallenge', { id: 'cake_race' });
     await coordinator.apply('completeChallenge', { winningTribe: 'Ember' });
+    await coordinator.apply('openCouncil');
     await coordinator.apply('beginVoting');
     await coordinator.apply('castVote', 'Player2', 'Player4');
 
@@ -276,4 +280,130 @@ test('coordinator persists state and journals public events without ballot targe
     const ballotEvent = journal.split('\n').find(line => line.includes('ballot.cast'));
     assert.ok(ballotEvent);
     assert.ok(!ballotEvent.includes('Player4'));
+});
+
+test('every vote is preceded by a Tribal Council that only the host closes', () => {
+    const game = new SurvivorGame({ participantIds: PLAYERS, mergeAt: 10, random: () => 0 });
+    game.startChallenge({ id: 'cake_race' });
+    game.completeChallenge({ winningTribe: 'Ember' });
+
+    // Strategy talk cannot skip the mat.
+    assert.throws(() => game.beginVoting(), /Expected phase tribal_council/);
+    const council = game.openCouncil({ openedAt: 5 }).council;
+    assert.equal(game.snapshot().phase, 'tribal_council');
+    assert.equal(council.kind, 'tribal');
+    assert.equal(council.openedAt, 5);
+    assert.deepEqual(council.attendeeIds, game.snapshot().eligibleVoterIds);
+
+    // And no ballot is legal until council closes.
+    const [voter, target] = game.snapshot().eligibleVoterIds;
+    assert.throws(() => game.castVote(voter, target), /not accepted during tribal_council/);
+    game.beginVoting();
+    assert.equal(game.castVote(voter, target).accepted, true);
+});
+
+test('the host questions players on the record and each answers once', () => {
+    const game = new SurvivorGame({ participantIds: PLAYERS, mergeAt: 10, random: () => 0 });
+    game.startChallenge({ id: 'cake_race' });
+    game.completeChallenge({ winningTribe: 'Ember' });
+    const attendees = game.openCouncil().eligibleVoterIds;
+    const [first, second] = attendees;
+
+    game.askCouncilQuestion({
+        id: 'q1',
+        prompt: 'Who do you trust least here?',
+        targetIds: [first, second],
+        askedBy: 'Jeff Prompts',
+    });
+    const progress = game.answerCouncilQuestion(first, '  Nobody, and that is my problem.  ');
+    assert.deepEqual(progress, { questionId: 'q1', answered: 1, expected: 2 });
+
+    const [question] = game.snapshot().council.questions;
+    assert.equal(question.answers[0].answer, 'Nobody, and that is my problem.');
+    assert.throws(
+        () => game.answerCouncilQuestion(first, 'again', 'q1'),
+        /already answered/
+    );
+    // With nothing outstanding, a bot that speaks up anyway is told so rather
+    // than overwriting an answer already on the record.
+    assert.throws(
+        () => game.answerCouncilQuestion(first, 'again'),
+        /has no unanswered council question/
+    );
+    assert.throws(
+        () => game.answerCouncilQuestion(attendees[2], 'let me in'),
+        /has no unanswered council question/
+    );
+    assert.throws(
+        () => game.answerCouncilQuestion(attendees[2], 'let me in', 'q1'),
+        /was not asked question q1/
+    );
+    assert.throws(
+        () => game.askCouncilQuestion({ id: 'q2', prompt: 'You?', targetIds: ['Player1'] }),
+        /Not at this council: Player1/
+    );
+    assert.throws(
+        () => game.askCouncilQuestion({ id: 'q1', prompt: 'Again?', targetIds: [second] }),
+        /already asked/
+    );
+
+    // The answer survives on the event log for later rounds to read back.
+    const answers = game.snapshot().events.filter(event => event.type === 'council.answer');
+    assert.equal(answers.length, 1);
+    assert.equal(answers[0].playerId, first);
+});
+
+test('the finale opens a council of finalists and jurors', () => {
+    const game = new SurvivorGame({
+        participantIds: ['Alice', 'Billy', 'Cara', 'Dev'],
+        mergeAt: 4,
+        finalistCount: 2,
+        random: () => 0,
+    });
+    for (const target of ['Dev', 'Cara']) {
+        game.startChallenge({ id: 'cake_race' });
+        game.completeChallenge({ winnerId: 'Alice' });
+        game.openCouncil();
+        game.beginVoting();
+        for (const voterId of game.snapshot().eligibleVoterIds) {
+            game.castVote(voterId, voterId === target
+                ? game.snapshot().eligibleTargetIds.find(id => id !== target)
+                : target);
+        }
+        game.revealVotes();
+    }
+
+    const state = game.snapshot();
+    assert.equal(state.phase, 'jury_questioning');
+    assert.equal(state.council.kind, 'final');
+    assert.deepEqual(state.council.attendeeIds.sort(), ['Alice', 'Billy', 'Cara', 'Dev']);
+
+    // Jeff can put a question to a juror as easily as to a finalist.
+    game.askCouncilQuestion({ id: 'f1', prompt: 'What do you need to hear?', targetIds: ['Dev'] });
+    game.answerCouncilQuestion('Dev', 'Own the vote that took me out.');
+    assert.equal(game.snapshot().council.questions[0].answers[0].playerId, 'Dev');
+});
+
+test('a council question needs a prompt, a target, and room on the docket', () => {
+    const game = new SurvivorGame({ participantIds: PLAYERS, mergeAt: 10, random: () => 0 });
+    game.startChallenge({ id: 'cake_race' });
+    game.completeChallenge({ winningTribe: 'Ember' });
+    assert.throws(
+        () => game.askCouncilQuestion({ id: 'q1', prompt: 'Early?', targetIds: ['Player2'] }),
+        /Expected phase tribal_council or jury_questioning/
+    );
+
+    const [attendee] = game.openCouncil().eligibleVoterIds;
+    assert.throws(
+        () => game.askCouncilQuestion({ id: 'q1', prompt: '   ', targetIds: [attendee] }),
+        /prompt must be a non-empty string/
+    );
+    assert.throws(
+        () => game.askCouncilQuestion({ id: 'q1', prompt: 'x'.repeat(1001), targetIds: [attendee] }),
+        /1000 characters or fewer/
+    );
+    assert.throws(
+        () => game.answerCouncilQuestion(attendee, 'x'.repeat(1201)),
+        /1200 characters or fewer/
+    );
 });

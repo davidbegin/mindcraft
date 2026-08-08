@@ -8,6 +8,7 @@ import {
     listContestGamePresets,
     listSurvivorScenarios,
 } from '../src/mindcraft/contest/game_presets.js';
+import { getCursorProfiles } from '../src/mindcraft/model_profiles.js';
 
 test('lists the starter contest games for the UI', () => {
     const games = listContestGamePresets();
@@ -21,6 +22,8 @@ test('lists the starter contest games for the UI', () => {
             'diamond_race',
             'dog_race',
             'netherite_race',
+            'spleef',
+            'team_tower_battle',
             'tower_battle',
         ]
     );
@@ -39,12 +42,12 @@ test('lists the starter contest games for the UI', () => {
     assert.deepEqual(
         tower.defaultCharacters.map(({ name, profileId }) => ({ name, profileId })),
         [
-            { name: 'Billy', profileId: 'gpt-5-6-luna-instant' },
-            { name: 'Alice', profileId: 'claude' },
-            { name: 'Marcus', profileId: 'gpt-5-6-terra-balanced' },
-            { name: 'Dario', profileId: 'gpt-5-6-terra-thorough' },
-            { name: 'ChipChipperson', profileId: 'gpt-5-6-sol-instant' },
-            { name: 'bridget', profileId: 'gpt-5-6-terra-balanced' },
+            { name: 'Billy', profileId: 'grok-4-5-fast' },
+            { name: 'Kimmy', profileId: 'kimi-k3-fast' },
+            { name: 'Marcus', profileId: 'gemini-3-1-pro' },
+            { name: 'Dario', profileId: 'claude-fable-5-fast' },
+            { name: 'ChipChipperson', profileId: 'gpt-5-6-luna-instant' },
+            { name: 'bridget', profileId: 'composer-2-5' },
             { name: 'Leviticus', profileId: 'gpt-5-6-terra-fast' },
         ]
     );
@@ -59,6 +62,27 @@ test('lists the starter contest games for the UI', () => {
     assert.match(tower.defaultCharacters[4].systemPrompt, /never rerun/i);
     assert.match(tower.defaultCharacters[5].systemPrompt, /do not keep insulting/i);
     assert.match(tower.defaultCharacters[6].systemPrompt, /bluffs/i);
+});
+
+test('every default character runs on a different model family at a quick effort', () => {
+    const profiles = new Map(getCursorProfiles().map(profile => [profile.id, profile]));
+    const families = new Set();
+
+    for (const character of CONTEST_BOT_CHARACTERS) {
+        const profile = profiles.get(character.profileId);
+        assert.ok(profile, `${character.name} references unknown profile ${character.profileId}`);
+        assert.ok(
+            !families.has(profile.family),
+            `${character.name} reuses the ${profile.family} model family`
+        );
+        families.add(profile.family);
+
+        const effort = Object.values(profile.profile.model.params || {})[0] || null;
+        assert.ok(
+            [null, 'none', 'low'].includes(effort),
+            `${character.name} runs ${profile.model}, which is too slow for a default chat bot`
+        );
+    }
 });
 
 test('Survivor uses the canonical contest characters by default', () => {
@@ -81,7 +105,7 @@ test('the four-player scenario casts four bots for a final two', () => {
     assert.equal(four.defaultCharacters.length, 4);
     assert.deepEqual(
         four.defaultCharacters.map(character => character.name),
-        ['Billy', 'Alice', 'Marcus', 'Dario']
+        ['Billy', 'Kimmy', 'Marcus', 'Dario']
     );
     assert.ok(four.challengeGameIds.length > 0);
     assert.ok(four.phaseDurationsMs.strategy < getSurvivorSeasonPreset().phaseDurationsMs.strategy);
@@ -129,6 +153,24 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.match(tower.prompt, /timer expires/);
     assert.doesNotMatch(tower.prompt, /five minutes/i);
 
+    const teamTower = getContestGamePreset('team_tower_battle');
+    assert.equal(teamTower.rules.type, 'team_tower_battle');
+    assert.equal(teamTower.rules.deathPenaltyBlocks, 5);
+    assert.equal(teamTower.rules.minimumPlayersPerTeam, 2);
+    assert.equal(teamTower.rules.planningMs, 60_000);
+    assert.equal(teamTower.metadata.pvp, true);
+    assert.match(teamTower.prompt, /friendly fire is disabled/i);
+    assert.match(teamTower.prompt, /planning phase/i);
+    assert.match(teamTower.prompt, /never start a second tower/i);
+    assert.equal(
+        listContestGamePresets().find(game => game.id === 'team_tower_battle').planningMs,
+        60_000
+    );
+    assert.equal(
+        listContestGamePresets().find(game => game.id === 'tower_battle').planningMs,
+        0
+    );
+
     const deathRace = getContestGamePreset('death_race');
     assert.equal(deathRace.rules.type, 'death_race');
     assert.equal(deathRace.rules.scoring, 'first-death-wins');
@@ -169,8 +211,25 @@ test('contest presets include game-specific rules and judge metrics', () => {
     const longDepth = getContestGamePreset('deepest_5');
     assert.equal(longDepth.durationMs, 300_000);
     assert.equal(longDepth.rules.scoring, 'lowest-y-at-deadline');
+
+    const spleef = getContestGamePreset('spleef');
+    assert.equal(spleef.rules.type, 'spleef');
+    assert.equal(spleef.rules.scoring, 'last-standing');
+    assert.equal(spleef.rules.floorY, 100);
+    assert.equal(spleef.durationMs, 300_000);
+    assert.equal(spleef.metadata.pvp, false);
+    assert.match(spleef.prompt, /diamond shovel/i);
+    assert.match(spleef.prompt, /last competitor still standing/i);
+    // Core knowledge the bots kept failing at: win by dropping OTHERS, never dig
+    // under your own feet, and aim breaks at a rival's coordinates.
+    assert.match(spleef.prompt, /making OTHER players fall/i);
+    assert.match(spleef.prompt, /never break the block you are standing on/i);
+    assert.match(spleef.prompt, /never dig straight down/i);
+    assert.match(spleef.prompt, /a rival's coordinates, not your own/i);
+    assert.match(spleef.prompt, /ahead of a moving rival/i);
+    assert.match(spleef.prompt, /cut off their escape/i);
 });
 
 test('unknown contest game ids throw', () => {
-    assert.throws(() => getContestGamePreset('spleef'), /Unknown contest game/);
+    assert.throws(() => getContestGamePreset('not_a_real_game'), /Unknown contest game/);
 });

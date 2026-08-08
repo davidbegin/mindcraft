@@ -28,6 +28,11 @@ const ITEM_RACE_PRESENTATIONS = Object.freeze({
         winnerLabel: 'NETHERITE FORGED!',
         titleColor: 'dark_purple',
     }),
+    spleef: Object.freeze({
+        score: 'last standing',
+        winnerLabel: 'LAST STANDING!',
+        titleColor: 'aqua',
+    }),
 });
 
 function textComponent(text, options = {}) {
@@ -46,11 +51,24 @@ export function formatContestScore(contest, result) {
     if (contest.rules?.type === 'tower_battle') {
         return `${result.score} blocks`;
     }
+    if (contest.rules?.type === 'team_tower_battle') {
+        const height = result.details?.towerHeight ?? result.towerHeight ?? 0;
+        const penalty = result.details?.deathPenalty ?? result.deathPenalty ?? 0;
+        return `${height} - ${penalty} = ${result.score} blocks`;
+    }
     if (contest.rules?.type === 'depth_race') {
         const depth = Number.isInteger(result.score)
             ? result.score
             : result.score.toFixed(1);
         return `${depth} blocks deep`;
+    }
+    if (contest.rules?.type === 'spleef') {
+        if (result.details?.surviving) return 'last standing';
+        const survivedMs = result.details?.survivedMs;
+        if (Number.isFinite(survivedMs)) {
+            return `fell at ${formatContestTime(survivedMs)}`;
+        }
+        return 'eliminated';
     }
     const itemRace = ITEM_RACE_PRESENTATIONS[contest.rules?.type];
     if (itemRace) return itemRace.score;
@@ -82,12 +100,31 @@ export function formatSurvivorBossbar(state, deadlineAt = null, now = Date.now()
 }
 
 function rankedResults(contest) {
-    return [...(contest.results || [])]
+    const results = [...(contest.results || [])]
         .filter(result => result.rank !== null)
         .sort((left, right) =>
             (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER)
             || left.participantId.localeCompare(right.participantId)
         );
+    if (contest.rules?.type !== 'team_tower_battle') return results;
+    const byTeam = new Map();
+    for (const result of results) {
+        const teamName = result.details?.teamName;
+        if (teamName && !byTeam.has(teamName)) {
+            byTeam.set(teamName, { ...result, participantId: teamName });
+        }
+    }
+    const teams = [...byTeam.values()].sort((left, right) =>
+        right.score - left.score || left.participantId.localeCompare(right.participantId)
+    );
+    let priorScore = null;
+    let priorRank = 0;
+    return teams.map((result, index) => {
+        const rank = result.score === priorScore ? priorRank : index + 1;
+        priorScore = result.score;
+        priorRank = rank;
+        return { ...result, rank };
+    });
 }
 
 function formatWinnerCoordinates(contest) {
@@ -155,6 +192,9 @@ export class ContestHud {
 
     async _announceStart(contest) {
         const maxSeconds = Math.max(1, Math.ceil(contest.durationMs / 1000));
+        const competitors = contest.rules?.type === 'team_tower_battle'
+            ? (contest.metadata?.gameSession?.teamNames || contest.participantIds).join(' vs ')
+            : contest.participantIds.join(' vs ');
         await this._commands([
             `bossbar remove ${BOSSBAR_ID}`,
             `bossbar add ${BOSSBAR_ID} ${textComponent(contest.title, { color: 'gold', bold: true })}`,
@@ -171,7 +211,7 @@ export class ContestHud {
             )}`,
             `playsound entity.ender_dragon.growl master ${ALL_PLAYERS} ~ ~ ~ 0.6 1.3 1`,
             `tellraw ${ALL_PLAYERS} ${textComponent(
-                `[${contest.title}] ${contest.participantIds.join(' vs ')} — ${formatContestTime(contest.durationMs)} starts now!`,
+                `[${contest.title}] ${competitors} — ${formatContestTime(contest.durationMs)} starts now!`,
                 { color: 'gold', bold: true }
             )}`,
         ]);
@@ -226,7 +266,11 @@ export class ContestHud {
     }
 
     async _announceCompleted(contest) {
-        const winners = contest.winnerIds || [];
+        const teamMode = contest.rules?.type === 'team_tower_battle';
+        const winners = teamMode
+            ? rankedResults(contest).filter(result => result.rank === 1)
+                .map(result => result.participantId)
+            : contest.winnerIds || [];
         const winnerResults = rankedResults(contest).filter(result => result.rank === 1);
         const itemRace = ITEM_RACE_PRESENTATIONS[contest.rules?.type];
         const winnerLabel = itemRace

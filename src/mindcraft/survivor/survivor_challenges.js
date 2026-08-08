@@ -14,6 +14,7 @@ export const SURVIVOR_CHALLENGE_TYPES = Object.freeze([
     'netherite_race',
     'tower_battle',
     'depth_race',
+    'spleef',
 ]);
 
 function assertResults(results) {
@@ -38,6 +39,13 @@ function individualScore(preset, result) {
     const type = preset?.rules?.type;
     if (FIRST_FINISH_TYPES.has(type)) {
         return -numeric(result, ['elapsedMs', 'finishedAt'], Number.POSITIVE_INFINITY);
+    }
+    if (type === 'spleef') {
+        // Longer survival wins; still-standing players pass a huge score.
+        if (result?.surviving === true || result?.lastStanding === true) {
+            return 1_000_000_000 + numeric(result, ['survivedMs', 'elapsedMs', 'score'], 0);
+        }
+        return numeric(result, ['survivedMs', 'elapsedMs', 'score'], Number.NEGATIVE_INFINITY);
     }
     if (type === 'depth_race') {
         return -numeric(result, ['y', 'depthY'], Number.POSITIVE_INFINITY);
@@ -87,6 +95,13 @@ export function resolveTeamChallenge(preset, results, tribeByParticipant) {
                 tribe,
                 score: Math.max(...members.map(result => individualScore(preset, result))),
                 detail: 'Fastest tribe member',
+            };
+        }
+        if (type === 'spleef') {
+            return {
+                tribe,
+                score: Math.max(...members.map(result => individualScore(preset, result))),
+                detail: 'Longest surviving tribe member',
             };
         }
         if (type === 'depth_race') {

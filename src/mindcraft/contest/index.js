@@ -7,6 +7,10 @@ export {
     measureTowers,
     scoreTowerBattle,
 } from './tower_scoring.js';
+export {
+    measureTeamTowerBattle,
+    scoreTeamTowerBattle,
+} from './team_tower_scoring.js';
 export { TowerHighScoreStore } from './tower_high_scores.js';
 export { ContestLoop } from './contest_loop.js';
 export {
@@ -14,6 +18,7 @@ export {
     ContestAnnouncer,
     buildContestResultAnnouncement,
     buildContestStartAnnouncement,
+    buildPlanningAnnouncement,
     buildSurvivorAnnouncement,
 } from './contest_announcer.js';
 export {
@@ -43,6 +48,10 @@ export {
     findDogRaceWinner,
 } from './dog_race.js';
 export {
+    remainingSpleefSurvivors,
+    scoreSpleef,
+} from './spleef.js';
+export {
     buildDepthProbeCommand,
     parsePlayerY,
     scoreDepthRace,
@@ -52,12 +61,15 @@ export {
     buildSurvivorEliminationCommands,
     getArenaJoinInfo,
     parseOnlinePlayers,
+    spectatorWarpCommands,
 } from './arena_manager.js';
 export { ContestRecordingManager } from './contest_recording.js';
 export { SpectatorDirector } from './spectator_director.js';
 export {
     GameSessionManager,
+    resolvePlanningMs,
     validateGameParticipants,
+    validateTeamSetup,
 } from './game_session_manager.js';
 export {
     filterRecordingManifest,
@@ -74,5 +86,7 @@ export {
 export {
     GAME_CONTENT_SYSTEM_PROMPT,
     buildParticipantGameDirective,
+    buildTeamPlanningDirective,
     buildGameSystemPrompt,
+    pickTeamCaptain,
 } from './game_content.js';

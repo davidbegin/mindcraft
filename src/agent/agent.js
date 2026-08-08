@@ -24,6 +24,7 @@ import {
     requestContestSpeech,
     requestSurvivorCommand,
     reportContestDeath,
+    reportContestEliminated,
     reportContestWinItem,
 } from './mindserver_proxy.js';
 import { setOutageHandler } from '../models/quota_guard.js';
@@ -31,6 +32,7 @@ import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { generateSpeech, playSpeech, isSystemSpeakModel } from './speak.js';
 import {
+    getAudibleChatText,
     getHumanCommandAcknowledgement,
     getSpokenChatText,
     isGameOperationalMessage,
@@ -153,6 +155,7 @@ export class Agent {
                 if (settings.game_session) {
                     this._trackGameBlockPlacements();
                     this._watchContestWinItem();
+                    this._watchSpleefFall();
                 }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
@@ -613,6 +616,7 @@ export class Agent {
             console.log(`[${this.name}] voice: silent (game operational status): "${text.trim().slice(0, 60)}"`);
             return;
         }
+        text = getAudibleChatText(text);
         const model = this.prompter.profile.speak_model;
         const shouldSpeak = addressed || settings.game_session?.speakAll;
         const volume = (settings.speak && shouldSpeak) ? this._getSpeechVolume() : null;
@@ -1071,6 +1075,23 @@ export class Agent {
     }
 
     _reportContestDeath() {
+        if (settings.game_session?.contestType === 'spleef') {
+            this._reportContestEliminated('death');
+            return;
+        }
+        if (settings.game_session?.contestType === 'team_tower_battle') {
+            const position = this.bot?.entity?.position;
+            reportContestDeath({
+                event: 'death',
+                position: position
+                    ? { x: position.x, y: position.y, z: position.z }
+                    : null,
+            }).catch(error => {
+                if (/not accepting|deadline|already finished/i.test(error.message)) return;
+                console.error(`[${this.name}] Could not report team tower death:`, error.message);
+            });
+            return;
+        }
         if (
             settings.game_session?.contestType !== 'death_race'
             || this._contestDeathReported
@@ -1082,6 +1103,46 @@ export class Agent {
             if (/not accepting|deadline|already finished/i.test(error.message)) return;
             console.error(`[${this.name}] Could not report contest death:`, error.message);
             this._contestDeathReported = false;
+        });
+    }
+
+    _watchSpleefFall() {
+        const checkFall = () => {
+            if (settings.game_session?.contestType !== 'spleef') return;
+            if (this._contestEliminatedReported) return;
+            const floorY = settings.game_session?.floorY;
+            if (!Number.isFinite(floorY)) return;
+            const y = this.bot?.entity?.position?.y;
+            if (!Number.isFinite(y) || y >= floorY) return;
+            this._reportContestEliminated('fell');
+        };
+        this._spleefFallInterval = setInterval(checkFall, 250);
+        this._spleefFallInterval.unref?.();
+        checkFall();
+    }
+
+    _reportContestEliminated(reason = 'fell') {
+        if (
+            settings.game_session?.contestType !== 'spleef'
+            || this._contestEliminatedReported
+        ) {
+            return;
+        }
+        this._contestEliminatedReported = true;
+        const position = this.bot?.entity?.position;
+        reportContestEliminated({
+            reason,
+            position: position ? {
+                x: position.x,
+                y: position.y,
+                z: position.z,
+            } : null,
+        }).catch(error => {
+            if (/not accepting|deadline|already finished|already eliminated/i.test(error.message)) {
+                return;
+            }
+            console.error(`[${this.name}] Could not report contest elimination:`, error.message);
+            this._contestEliminatedReported = false;
         });
     }
 

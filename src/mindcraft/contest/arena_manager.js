@@ -99,6 +99,16 @@ const GAME_KITS = Object.freeze({
         'wooden_sword 1',
         'bread 16',
     ]),
+    team_tower_battle: Object.freeze([
+        'cobblestone 256',
+        'oak_planks 128',
+        'wooden_sword 1',
+        'bread 16',
+    ]),
+    spleef: Object.freeze([
+        'diamond_shovel 1',
+        'bread 16',
+    ]),
     deepest_2_5: DEPTH_RACE_KIT,
     deepest_5: DEPTH_RACE_KIT,
 });
@@ -339,6 +349,9 @@ function buildWorldResetCommands(gameId, options = {}) {
         'time set noon',
         'weather clear',
     ];
+    if (gameId === 'team_tower_battle') {
+        commands.push('gamerule keepInventory true');
+    }
 
     fillLayers(
         commands,
@@ -495,6 +508,18 @@ function buildWorldResetCommands(gameId, options = {}) {
             'difficulty normal',
             ...flatFloorCommands(bounds)
         );
+    } else if (gameId === 'spleef') {
+        const pitBottomY = ARENA.floorY - 8;
+        commands.push(
+            'gamerule doMobSpawning false',
+            'difficulty peaceful',
+            `fill ${minX} ${pitBottomY} ${minZ} `
+            + `${maxX} ${pitBottomY} ${maxZ} bedrock`,
+            `fill ${minX} ${pitBottomY + 1} ${minZ} `
+            + `${maxX} ${ARENA.floorY - 1} ${maxZ} water`,
+            `fill ${minX} ${ARENA.floorY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} snow_block`
+        );
     } else {
         commands.push(...flatFloorCommands(bounds));
     }
@@ -513,16 +538,60 @@ function buildWorldResetCommands(gameId, options = {}) {
     return commands;
 }
 
-function buildParticipantCommands(gameId, participants) {
+function teamSpawnPositions(participants, teamNames, teamByParticipant) {
+    const positions = new Map();
+    teamNames.forEach((teamName, teamIndex) => {
+        const members = participants.filter(name => teamByParticipant[name] === teamName);
+        members.forEach((name, index) => {
+            const offset = (index - (members.length - 1) / 2) * 4;
+            positions.set(name, {
+                x: ARENA.centerX + (teamIndex === 0 ? -18 : 18),
+                z: Math.round(ARENA.centerZ + offset),
+            });
+        });
+    });
+    return positions;
+}
+
+export function buildContestTeamCommands(participants, options = {}) {
+    const teamNames = Array.isArray(options.teamNames) ? options.teamNames : [];
+    const teamByParticipant = options.teamByParticipant || {};
+    if (teamNames.length !== 2) return [];
+    const colors = ['red', 'blue'];
+    const commands = [];
+    teamNames.forEach((teamName, index) => {
+        const teamId = `mcgame_${index + 1}`;
+        commands.push(
+            `team remove ${teamId}`,
+            `team add ${teamId}`,
+            `team modify ${teamId} color ${colors[index]}`,
+            `team modify ${teamId} friendlyFire false`,
+            `team modify ${teamId} collisionRule pushOtherTeams`,
+            `team modify ${teamId} suffix ${JSON.stringify({ text: ` [${teamName}]`, color: colors[index] })}`
+        );
+        participants
+            .filter(name => teamByParticipant[name] === teamName)
+            .forEach(name => {
+                assertPlayerName(name);
+                commands.push(`team join ${teamId} ${name}`);
+            });
+    });
+    return commands;
+}
+
+function buildParticipantCommands(gameId, participants, options = {}) {
     const commands = [];
     // Dog racers must all start on the bare plain, inside the wilderness ring.
     const positions = spawnPositions(
         participants.length,
         gameId === 'dog_race' ? DOG_ARENA.plainRadius - 3 : undefined
     );
+    const teamPositions = gameId === 'team_tower_battle'
+        ? teamSpawnPositions(participants, options.teamNames || [], options.teamByParticipant || {})
+        : null;
     participants.forEach((name, index) => {
         assertPlayerName(name);
-        const position = positions[index];
+        const position = teamPositions?.get(name) || positions[index];
         commands.push(
             `clear ${name}`,
             `effect clear ${name}`,
@@ -539,6 +608,9 @@ function buildParticipantCommands(gameId, participants) {
         if (gameId === 'death_race') {
             commands.push(`effect give ${name} weakness infinite 255 true`);
         }
+        if (gameId === 'spleef') {
+            commands.push(`effect give ${name} weakness infinite 255 true`);
+        }
         for (const item of GAME_KITS[gameId] || []) {
             commands.push(`give ${name} ${item}`);
         }
@@ -549,7 +621,8 @@ function buildParticipantCommands(gameId, participants) {
 function buildResetCommands(gameId, participants, options = {}) {
     return [
         ...buildWorldResetCommands(gameId, options),
-        ...buildParticipantCommands(gameId, participants),
+        ...buildParticipantCommands(gameId, participants, options),
+        ...buildContestTeamCommands(participants, options),
     ];
 }
 
@@ -754,12 +827,18 @@ export class ContestArenaManager {
         // RCON setup — wait on `list` so the error is clear and early.
         await this.waitForPlayersOnline(participants);
 
-        const participantCommands = buildParticipantCommands(preset.id, participants);
+        const participantCommands = buildParticipantCommands(preset.id, participants, options);
         for (const command of participantCommands) {
             await this.runCommand(command);
         }
+        const teamCommands = preset.id === 'team_tower_battle'
+            ? buildContestTeamCommands(participants, options)
+            : [];
+        for (const command of teamCommands) {
+            await this.runCommand(command);
+        }
 
-        const commands = [...worldCommands, ...participantCommands];
+        const commands = [...worldCommands, ...participantCommands, ...teamCommands];
         const participantSet = new Set(participants);
         let spectators = Array.isArray(options.spectators)
             ? [...new Set(options.spectators)]

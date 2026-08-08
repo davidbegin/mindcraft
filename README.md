@@ -223,6 +223,8 @@ The `cursor` api runs each request as a one-shot [Cursor SDK](https://cursor.com
 
 Any `params` key that isn't an adapter option below is passed through as a Cursor model parameter — `fast`, `effort`, `reasoning`, `thinking`, and `context`, depending on the model. `Cursor.models.list()` returns the valid ids and parameters for your account; `composer-2.5` is the default.
 
+The mindserver's profile dropdown is generated from `src/mindcraft/model_profiles.js`, which offers Composer 2.5, GPT-5.6 (terra/luna/sol), Opus 5, Fable 5, Grok 4.5, Gemini 3.1 Pro, Kimi K3, and GLM 5.2, each crossed with the effort levels that model accepts. Add a family there to put a new Cursor model in front of the bots.
+
 | Adapter option | Default | Purpose |
 |------|------|------|
 | `timeout_ms` | `120000` | Cancels a run that hangs. `-1` waits forever. |

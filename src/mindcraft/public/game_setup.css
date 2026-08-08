@@ -1,0 +1,240 @@
+/* Styles for the shared game setup modal (see game_setup.js). Both the games
+   dashboard and the Survivor control room link this file. */
+
+.game-setup-modal {
+    width: min(900px, 94vw);
+    height: auto;
+    max-height: min(88vh, 760px);
+}
+
+.game-setup-participants {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.game-setup-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.8fr) minmax(0, 1.35fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-inset);
+}
+
+.game-setup-row.has-teams {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 1.1fr) auto;
+}
+
+.game-setup-teams {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-inset);
+}
+
+.game-setup-teams[hidden] {
+    display: none;
+}
+
+.game-setup-teams label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+}
+
+.game-setup-teams input {
+    width: 150px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 9px;
+    font: inherit;
+}
+
+.game-setup-row select,
+.game-setup-row input[type="text"],
+.game-setup-row textarea,
+.game-setup-prompt textarea {
+    width: 100%;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 9px;
+    font: inherit;
+}
+
+.game-setup-row select:focus,
+.game-setup-row input[type="text"]:focus,
+.game-setup-row textarea:focus,
+.game-setup-prompt textarea:focus {
+    outline: none;
+    border-color: var(--border-strong);
+}
+
+.game-setup-row input.invalid {
+    border-color: var(--red);
+}
+
+.game-setup-voice {
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.game-setup-voice select {
+    min-width: 0;
+}
+
+.game-setup-voice-status {
+    min-height: 18px;
+    margin: 0 0 8px;
+    font-size: 0.78rem;
+    color: var(--text-mute);
+}
+
+.game-setup-voice-status.error {
+    color: var(--red);
+}
+
+.game-setup-row .name-hint {
+    grid-column: 1 / -1;
+    font-size: 0.75rem;
+    color: var(--text-mute);
+}
+
+.game-setup-row .name-hint.error {
+    color: var(--red);
+}
+
+.game-setup-row .personality-prompt {
+    grid-column: 1 / -1;
+    min-height: 72px;
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+.game-setup-actions {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 14px;
+}
+
+.game-setup-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.game-setup-duration {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+
+.game-setup-duration label,
+.game-setup-prompt label {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}
+
+.game-setup-duration input {
+    width: 100px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 9px;
+    font: inherit;
+}
+
+.game-setup-duration input:focus {
+    outline: none;
+    border-color: var(--border-strong);
+}
+
+.game-setup-prompt textarea {
+    resize: vertical;
+    min-height: 96px;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+.game-setup-prompt-count {
+    align-self: flex-end;
+    font-size: 0.75rem;
+    color: var(--text-mute);
+    font-family: var(--mono);
+}
+
+.game-setup-error {
+    min-height: 18px;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}
+
+.game-setup-error.error {
+    color: var(--red);
+}
+
+.btn-preview {
+    padding: 5px 10px;
+    white-space: nowrap;
+}
+
+.launch-debug-report {
+    margin-top: 12px;
+    border: 1px solid var(--border, #333);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.launch-debug-report[hidden] { display: none !important; }
+
+.launch-debug-report-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.launch-debug-report-head strong { font-size: 0.9rem; }
+
+.launch-debug-report-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.launch-debug-report textarea {
+    width: 100%;
+    min-height: 140px;
+    max-height: 240px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: var(--text);
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border, #333);
+    border-radius: 6px;
+    padding: 8px;
+}

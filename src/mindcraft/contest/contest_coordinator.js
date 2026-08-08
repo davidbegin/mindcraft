@@ -262,6 +262,8 @@ export class ContestCoordinator {
                 metadata: clone(metadata),
                 status: 'draft',
                 submissions: {},
+                eliminations: {},
+                deaths: {},
                 results: [],
                 winnerIds: [],
                 createdAt: now,
@@ -378,6 +380,93 @@ export class ContestCoordinator {
         });
     }
 
+    async eliminate(contestId, participantId, payload = {}) {
+        assertNonEmptyString(participantId, 'participantId');
+        return this._enqueue(async () => {
+            const contest = this._requireContest(contestId);
+            if (contest.status !== 'running') {
+                throw new Error('Contest is not accepting eliminations');
+            }
+            if (!contest.participantIds.includes(participantId)) {
+                throw new Error(`Participant is not registered: ${participantId}`);
+            }
+            if (!contest.eliminations || typeof contest.eliminations !== 'object') {
+                contest.eliminations = {};
+            }
+            if (contest.eliminations[participantId]) {
+                throw new Error(`Participant already eliminated: ${participantId}`);
+            }
+            const now = this.clock();
+            if (now >= contest.deadlineAt) {
+                await this._finalizeContest(contest, 'deadline');
+                throw new Error('Contest deadline has passed');
+            }
+            contest.eliminations[participantId] = {
+                participantId,
+                eliminatedAt: now,
+                reason: payload?.reason ?? 'fell',
+                payload: clone(payload),
+            };
+            await this._commit('participant.eliminated', {
+                contestId,
+                participantId,
+                reason: contest.eliminations[participantId].reason,
+            });
+
+            const survivors = contest.participantIds.filter(
+                id => !contest.eliminations[id]
+            );
+            if (survivors.length === 1) {
+                const winnerId = survivors[0];
+                contest.submissions[winnerId] = {
+                    participantId: winnerId,
+                    payload: {
+                        event: 'last_standing',
+                        elapsedMs: now - contest.startedAt,
+                    },
+                    submittedAt: now,
+                };
+                await this._commit('winner.detected', {
+                    contestId,
+                    participantId: winnerId,
+                    payload: clone(contest.submissions[winnerId].payload),
+                });
+                await this._finalizeContest(contest, 'last-standing');
+            } else if (survivors.length === 0) {
+                await this._finalizeContest(contest, 'all-eliminated');
+            }
+            return clone(contest);
+        });
+    }
+
+    async recordDeath(contestId, participantId, payload = {}) {
+        assertNonEmptyString(participantId, 'participantId');
+        return this._enqueue(async () => {
+            const contest = this._requireContest(contestId);
+            if (contest.status !== 'running') {
+                throw new Error('Contest is not accepting deaths');
+            }
+            if (!contest.participantIds.includes(participantId)) {
+                throw new Error(`Participant is not registered: ${participantId}`);
+            }
+            const now = this.clock();
+            if (now >= contest.deadlineAt) {
+                throw new Error('Contest deadline has passed');
+            }
+            if (!contest.deaths || typeof contest.deaths !== 'object') {
+                contest.deaths = {};
+            }
+            contest.deaths[participantId] = (contest.deaths[participantId] ?? 0) + 1;
+            await this._commit('participant.death', {
+                contestId,
+                participantId,
+                total: contest.deaths[participantId],
+                payload: clone(payload),
+            });
+            return clone(contest);
+        });
+    }
+
     async tick() {
         return this._enqueue(async () => {
             const contest = this.state.activeContestId
@@ -425,6 +514,18 @@ export class ContestCoordinator {
         const judged = await this.judge(clone(contest));
         if (!Array.isArray(judged)) throw new TypeError('judge must return an array');
         contest.results = rankResults(contest, judged);
+        if (contest.rules?.type === 'team_tower_battle') {
+            const teamScores = [...new Set(
+                contest.results
+                    .filter(result => !result.disqualified && Number.isFinite(result.score))
+                    .map(result => result.score)
+            )].sort((left, right) => right - left);
+            for (const result of contest.results) {
+                result.rank = result.disqualified || !Number.isFinite(result.score)
+                    ? null
+                    : teamScores.indexOf(result.score) + 1;
+            }
+        }
         contest.winnerIds = contest.results
             .filter(result => result.rank === 1)
             .map(result => result.participantId);

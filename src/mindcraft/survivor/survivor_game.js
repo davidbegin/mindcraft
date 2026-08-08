@@ -1,6 +1,7 @@
 const PHASES = Object.freeze([
     'challenge',
     'strategy',
+    'tribal_council',
     'voting',
     'revote',
     'deadlock',
@@ -13,6 +14,13 @@ const PHASES = Object.freeze([
 ]);
 
 export const MIN_SURVIVOR_PLAYERS = 4;
+
+// Phases where the host is running a live Tribal Council and answers are public.
+export const COUNCIL_PHASES = Object.freeze(['tribal_council', 'jury_questioning']);
+
+export const MAX_COUNCIL_QUESTION_LENGTH = 1000;
+export const MAX_COUNCIL_ANSWER_LENGTH = 1200;
+const MAX_COUNCIL_QUESTIONS = 40;
 
 // A jury needs at least two voices, so short casts end at a final two instead of
 // letting the single first boot crown the winner alone.
@@ -107,6 +115,7 @@ export function createSurvivorState(options = {}) {
         participantIds,
         players,
         challenge: null,
+        council: null,
         councilTribe: null,
         immunityIds: [],
         eligibleVoterIds: [],
@@ -139,6 +148,7 @@ export class SurvivorGame {
             : createSurvivorState(options);
         this.state.councilVoterIds ||= [...(this.state.eligibleVoterIds || [])];
         this.state.finalistCount ||= 3;
+        this.state.council ??= null;
         this._assertState();
     }
 
@@ -205,7 +215,9 @@ export class SurvivorGame {
         return this.snapshot();
     }
 
-    beginVoting() {
+    // Strategy talk ends at the council mat, not at the voting booth: the host
+    // questions everyone in public first, and only then do ballots open.
+    openCouncil(options = {}) {
         this._requirePhase('strategy');
         const activeIds = this.activePlayerIds();
         const voters = this.state.merged
@@ -215,14 +227,113 @@ export class SurvivorGame {
         if (voters.length < 2 || targets.length === 0) {
             throw new Error('Tribal Council has no legal vote');
         }
-        this.state.phase = 'voting';
+        this.state.phase = 'tribal_council';
         this.state.eligibleVoterIds = voters;
         this.state.councilVoterIds = [...voters];
         this.state.eligibleTargetIds = targets;
         this.state.ballots = {};
         this.state.tiedIds = [];
         this.state.deadlockDecisions = {};
-        this._event('vote.started', { voters, targets });
+        this.state.council = this._createCouncil('tribal', voters, options.openedAt);
+        this._event('council.opened', {
+            councilId: this.state.council.id,
+            kind: 'tribal',
+            attendeeIds: voters,
+            targetIds: targets,
+        });
+        return this.snapshot();
+    }
+
+    askCouncilQuestion(question = {}) {
+        this._requirePhase(...COUNCIL_PHASES);
+        const council = this.state.council;
+        if (!council) throw new Error('No Tribal Council is in session');
+        if (council.questions.length >= MAX_COUNCIL_QUESTIONS) {
+            throw new Error(`A council takes at most ${MAX_COUNCIL_QUESTIONS} questions`);
+        }
+        assertName(question.id, 'question.id');
+        assertName(question.prompt, 'question.prompt');
+        const prompt = question.prompt.trim();
+        if (prompt.length > MAX_COUNCIL_QUESTION_LENGTH) {
+            throw new Error(`A question must be ${MAX_COUNCIL_QUESTION_LENGTH} characters or fewer`);
+        }
+        if (council.questions.some(item => item.id === question.id)) {
+            throw new Error(`Question ${question.id} was already asked`);
+        }
+        const targetIds = uniqueNames(question.targetIds, 'question.targetIds');
+        if (targetIds.length === 0) throw new Error('Ask at least one player');
+        const absent = targetIds.filter(id => !council.attendeeIds.includes(id));
+        if (absent.length > 0) {
+            throw new Error(`Not at this council: ${absent.join(', ')}`);
+        }
+        const entry = {
+            id: question.id,
+            prompt,
+            targetIds,
+            askedBy: question.askedBy || 'host',
+            askedAt: question.askedAt ?? null,
+            answers: [],
+        };
+        council.questions.push(entry);
+        this._event('council.question', { councilId: council.id, ...clone(entry) });
+        return this.snapshot();
+    }
+
+    // Answers are on the public record, which is the whole point: a juror who
+    // hears you throw them under the bus remembers it at the final vote.
+    answerCouncilQuestion(playerId, answer, questionId = null) {
+        this._requirePhase(...COUNCIL_PHASES);
+        const council = this.state.council;
+        if (!council) throw new Error('No Tribal Council is in session');
+        assertName(playerId, 'playerId');
+        assertName(answer, 'answer');
+        const text = answer.trim();
+        if (text.length > MAX_COUNCIL_ANSWER_LENGTH) {
+            throw new Error(`An answer must be ${MAX_COUNCIL_ANSWER_LENGTH} characters or fewer`);
+        }
+        const question = questionId
+            ? council.questions.find(item => item.id === questionId)
+            : [...council.questions].reverse().find(item =>
+                item.targetIds.includes(playerId)
+                && !item.answers.some(entry => entry.playerId === playerId)
+            );
+        if (!question) {
+            throw new Error(questionId
+                ? `Unknown council question: ${questionId}`
+                : `${playerId} has no unanswered council question`);
+        }
+        if (!question.targetIds.includes(playerId)) {
+            throw new Error(`${playerId} was not asked question ${question.id}`);
+        }
+        if (question.answers.some(entry => entry.playerId === playerId)) {
+            throw new Error(`${playerId} already answered question ${question.id}`);
+        }
+        const entry = { playerId, answer: text };
+        question.answers.push(entry);
+        this._event('council.answer', {
+            councilId: council.id,
+            questionId: question.id,
+            prompt: question.prompt,
+            ...entry,
+        });
+        return {
+            questionId: question.id,
+            answered: question.answers.length,
+            expected: question.targetIds.length,
+        };
+    }
+
+    // The host closes council once the talking is done. Only now do bots vote,
+    // so everything said on the mat is available to change their minds.
+    beginVoting() {
+        this._requirePhase('tribal_council');
+        this.state.phase = 'voting';
+        this.state.ballots = {};
+        this._event('vote.started', {
+            voters: [...this.state.eligibleVoterIds],
+            targets: [...this.state.eligibleTargetIds],
+            councilId: this.state.council?.id ?? null,
+        });
         return this.snapshot();
     }
 
@@ -390,6 +501,17 @@ export class SurvivorGame {
         return this.snapshot();
     }
 
+    _createCouncil(kind, attendeeIds, openedAt = null) {
+        return {
+            id: `council-${kind}-r${this.state.round}`,
+            kind,
+            round: this.state.round,
+            attendeeIds: [...attendeeIds],
+            questions: [],
+            openedAt,
+        };
+    }
+
     _beginDeadlock(tiedIds) {
         this.state.phase = 'deadlock';
         this.state.tiedIds = tiedIds;
@@ -451,7 +573,19 @@ export class SurvivorGame {
             this.state.councilVoterIds = [];
             this.state.eligibleTargetIds = [];
             this.state.ballots = {};
+            // The finale is a council too, so the host can put the same
+            // questions to finalists and jurors on the record.
+            this.state.council = this._createCouncil(
+                'final',
+                [...remaining, ...this.state.juryIds]
+            );
             this._event('finalists.reached', { finalistIds: remaining });
+            this._event('council.opened', {
+                councilId: this.state.council.id,
+                kind: 'final',
+                attendeeIds: this.state.council.attendeeIds,
+                targetIds: [...remaining],
+            });
             return this.snapshot();
         }
         if (!this.state.merged && remaining.length === this.state.mergeAt) {
@@ -462,6 +596,7 @@ export class SurvivorGame {
         this.state.round += 1;
         this.state.phase = 'challenge';
         this.state.challenge = null;
+        this.state.council = null;
         this.state.councilTribe = null;
         this.state.immunityIds = [];
         this.state.eligibleVoterIds = [];

@@ -71,6 +71,30 @@ test('supports injected judging rules and preserves ties', async () => {
     });
 });
 
+test('team tower ranks teams rather than counting tied teammates as places', async () => {
+    let now = 1_000;
+    await withCoordinator(async ({ coordinator }) => {
+        const contestId = await createAndStart(coordinator, {
+            participantIds: ['alice', 'amy', 'bob', 'ben'],
+            rules: { type: 'team_tower_battle' },
+        });
+        now = 61_000;
+        await coordinator.tick();
+        const contest = coordinator.snapshot().contests[contestId];
+        assert.deepEqual(
+            contest.results.map(result => [result.participantId, result.rank]),
+            [['alice', 1], ['amy', 1], ['ben', 2], ['bob', 2]]
+        );
+        assert.deepEqual(contest.winnerIds, ['alice', 'amy']);
+    }, {
+        clock: () => now,
+        judge: contest => contest.participantIds.map(participantId => ({
+            participantId,
+            score: ['alice', 'amy'].includes(participantId) ? 20 : 10,
+        })),
+    });
+});
+
 test('first detected win item completes the contest immediately', async () => {
     let now = 5_000;
     await withCoordinator(async ({ coordinator, root }) => {
@@ -234,4 +258,25 @@ test('contest loop reports unchanged ticks for live HUD updates', async () => {
 
     assert.equal(ticks, 1);
     assert.equal(updates, 0);
+});
+
+test('records repeated deaths without eliminating or ending a running contest', async () => {
+    let now = 1_000;
+    await withCoordinator(async ({ coordinator }) => {
+        const contestId = await createAndStart(coordinator);
+        await coordinator.recordDeath(contestId, 'alice', { reason: 'fall' });
+        now = 2_000;
+        await coordinator.recordDeath(contestId, 'alice', { reason: 'pvp' });
+
+        const contest = coordinator.snapshot().contests[contestId];
+        assert.equal(contest.status, 'running');
+        assert.equal(contest.deaths.alice, 2);
+        assert.deepEqual(contest.eliminations, {});
+
+        now = contest.deadlineAt;
+        await assert.rejects(
+            coordinator.recordDeath(contestId, 'alice'),
+            /deadline has passed/
+        );
+    }, { clock: () => now });
 });

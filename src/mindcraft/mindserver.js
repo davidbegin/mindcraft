@@ -41,17 +41,22 @@ import {
     listSurvivorScenarios,
     safeHighlightSessionId,
     scoreDepthRace,
+    scoreSpleef,
+    measureTeamTowerBattle,
+    scoreTeamTowerBattle,
     scoreTowerBattle,
     serializeRecordingManifest,
+    spectatorWarpCommands,
 } from './contest/index.js';
+import { ConversationRequestRegistry } from './survivor/conversation_requests.js';
 import { PrivateRoomRegistry } from './survivor/private_rooms.js';
 import { SurvivorCoordinator } from './survivor/survivor_coordinator.js';
 import { SurvivorSessionManager } from './survivor/survivor_session_manager.js';
 import { runMinecraftCommand } from './minecraft_server.js';
-import { getGpt56Profiles } from './model_profiles.js';
-import { ensureSkin, SKINS_DIR } from './skins.js';
+import { getCursorProfiles } from './model_profiles.js';
+import { synchronizeProfileSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
-import { clearSpeechQueue, playSpeech } from '../agent/speak.js';
+import { clearSpeechQueue, playSpeech, setMuted, toggleMuted, isMuted } from '../agent/speak.js';
 import { VoiceOutput } from './voice_output.js';
 import * as launchTelemetry from './diagnostics/launch_telemetry.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -94,6 +99,7 @@ let survivorCoordinator = null;
 let survivorRecovery = null;
 let survivorSessionManager = null;
 let survivorRooms = null;
+let survivorConversations = null;
 let towerHighScores = null;
 let liveTowerAtlas = null;
 const contestArenaManager = new ContestArenaManager();
@@ -193,7 +199,7 @@ function getAvailableProfiles() {
             .map(entry => path.join(projectRoot, 'profiles', entry.name)),
     ];
 
-    const generatedProfiles = getGpt56Profiles().map(profile => ({
+    const generatedProfiles = getCursorProfiles().map(profile => ({
         ...profile,
         configured: isProviderConfigured(profile.provider),
     }));
@@ -300,18 +306,44 @@ async function syncSurvivorHud(view) {
     ]);
 }
 
+// Bot-facing pushes that are not phase directives. Bots ack on receipt, so a
+// rejection here means the bot is genuinely unreachable rather than slow.
+function notifySurvivorAgent(agentRef, eventName, payload) {
+    const connection = getConnection(agentRef);
+    if (!connection?.socket) {
+        return Promise.reject(new Error(`Agent '${agentRef}' is not connected`));
+    }
+    return new Promise((resolve, reject) => {
+        connection.socket.timeout(15_000).emit(eventName, payload, (error, result) => {
+            if (error) {
+                reject(new Error(`Agent '${agentRef}' did not acknowledge ${eventName}`));
+                return;
+            }
+            if (result && result.success === false) {
+                reject(new Error(result.error || `Agent '${agentRef}' rejected ${eventName}`));
+                return;
+            }
+            resolve(result);
+        });
+    });
+}
+
+function handleSurvivorConversationEvent(event) {
+    if (!event) return;
+    survivorCoordinator?.recordPrivateEvent(event).catch(error => {
+        console.warn('Could not journal Survivor conversation event:', error.message);
+    });
+    survivorSessionManager?.recordConversationEvent(event);
+    emitToOperators('survivor-secret-event', event);
+}
+
 function handleSurvivorRoomEvent(event) {
     if (!event) return;
     survivorCoordinator?.recordPrivateEvent(event).catch(error => {
         console.warn('Could not journal private Survivor event:', error.message);
     });
+    survivorSessionManager?.recordRoomEvent(event);
     emitToOperators('survivor-secret-event', event);
-    if (event.type === 'room.created') {
-        for (const inviteeId of event.invitedIds || []) {
-            getConnection(inviteeId)?.socket?.emit('survivor-room-invite', event);
-        }
-        return;
-    }
     if (event.type === 'room.message') {
         for (const memberId of event.memberIds || []) {
             if (memberId !== event.senderId) {
@@ -382,8 +414,8 @@ async function ensureContest(options) {
                         inGame: Boolean(connection.in_game),
                     };
                 },
-                prepareArena: (preset, participants) =>
-                    contestArenaManager.prepare(preset, participants),
+                prepareArena: (preset, participants, options) =>
+                    contestArenaManager.prepare(preset, participants, options),
                 presentWinner: contest => contestArenaManager.presentWinner(contest),
                 presentResults: contest => contestArenaManager.presentResults(contest),
                 startRecording: options => contestRecordingManager.start(options),
@@ -392,6 +424,8 @@ async function ensureContest(options) {
                 sendDirective: sendGameDirective,
                 clearQueuedVoice: clearContestVoice,
                 announceStart: contest => contestAnnouncer.announceStart(contest),
+                announcePlanning: (contest, options) =>
+                    contestAnnouncer.announcePlanning(contest, options),
                 announceResult: contest => contestAnnouncer.announceResult(contest),
                 announceVisualResult: () => contestHud.sync(contestCoordinator.view()),
                 onUpdate: () => emitContestUpdate(),
@@ -408,11 +442,16 @@ async function ensureContest(options) {
             survivorRooms = new PrivateRoomRegistry({
                 onEvent: handleSurvivorRoomEvent,
             });
+            survivorConversations = new ConversationRequestRegistry({
+                onEvent: handleSurvivorConversationEvent,
+            });
             const survivorPreset = getSurvivorSeasonPreset();
             survivorSessionManager = new SurvivorSessionManager({
                 coordinator: survivorCoordinator,
                 contestCoordinator: coordinator,
                 rooms: survivorRooms,
+                conversations: survivorConversations,
+                notifyAgent: notifySurvivorAgent,
                 getProfiles: getAvailableProfiles,
                 getExistingAgentNames: reservedAgentNames,
                 resolveParticipantVoice: resolveVoiceName,
@@ -459,6 +498,7 @@ async function ensureContest(options) {
                 },
                 phaseDurationsMs: {
                     strategy: survivorPreset.phaseDurationsMs.strategy,
+                    tribal_council: survivorPreset.phaseDurationsMs.tribalCouncil,
                     voting: survivorPreset.phaseDurationsMs.voting,
                     revote: survivorPreset.phaseDurationsMs.revote,
                     deadlock: survivorPreset.phaseDurationsMs.deadlock,
@@ -641,6 +681,7 @@ function sendGameDirective(agentRef, prompt, options = {}) {
                 prompt,
                 pause: options.pause === true,
                 react: options.react === true,
+                endConversations: options.endConversations === true,
             },
             (error, result) => {
                 if (error) {
@@ -740,12 +781,25 @@ function measureDepthRace(contest) {
     });
 }
 
+function teamTowerScoringOptions(contest, reports) {
+    const gameSession = contest.metadata?.gameSession || {};
+    return {
+        reports,
+        floorY: getArenaJoinInfo().arena.center.y,
+        participantIds: contest.participantIds,
+        teamNames: gameSession.teamNames || [],
+        teamByParticipant: gameSession.teamByParticipant || {},
+        deaths: contest.deaths || {},
+        deathPenaltyBlocks: contest.rules?.deathPenaltyBlocks ?? 5,
+    };
+}
+
 async function refreshLiveTowerAtlas(view) {
     const contest = view?.activeContest;
     if (
         !contest
         || contest.status !== 'running'
-        || contest.rules?.type !== 'tower_battle'
+        || !['tower_battle', 'team_tower_battle'].includes(contest.rules?.type)
     ) {
         liveTowerAtlas = null;
         return null;
@@ -757,11 +811,25 @@ async function refreshLiveTowerAtlas(view) {
         warn: false,
     });
     const reportingParticipants = new Set(reports.map(report => report.participantId));
-    const scored = scoreTowerBattle({
-        reports,
-        floorY,
-        participantIds: contest.participantIds,
-    }).sort((left, right) =>
+    const teamMode = contest.rules?.type === 'team_tower_battle';
+    const scored = teamMode
+        ? measureTeamTowerBattle(teamTowerScoringOptions(contest, reports)).teamResults
+            .map(result => ({
+                participantId: result.teamName,
+                height: result.towerHeight,
+                score: result.score,
+                deaths: result.deaths,
+                deathPenalty: result.deathPenalty,
+                blocksStanding: result.blocksStanding,
+                measuredFrom: result.measuredFrom,
+                reporting: result.members.some(id => reportingParticipants.has(id)),
+            }))
+        : scoreTowerBattle({
+            reports,
+            floorY,
+            participantIds: contest.participantIds,
+        });
+    scored.sort((left, right) =>
         right.score - left.score || left.participantId.localeCompare(right.participantId)
     );
     let previousScore = null;
@@ -776,10 +844,13 @@ async function refreshLiveTowerAtlas(view) {
             previousRank = rank;
             return {
                 participantId: result.participantId,
-                height: result.details?.towerHeight ?? result.score ?? 0,
-                blocksStanding: result.details?.blocksStanding ?? 0,
-                measuredFrom: result.details?.measuredFrom ?? 'no-tower',
-                reporting: reportingParticipants.has(result.participantId),
+                height: result.height ?? result.details?.towerHeight ?? result.score ?? 0,
+                score: result.score ?? 0,
+                deaths: result.deaths ?? 0,
+                deathPenalty: result.deathPenalty ?? 0,
+                blocksStanding: result.blocksStanding ?? result.details?.blocksStanding ?? 0,
+                measuredFrom: result.measuredFrom ?? result.details?.measuredFrom ?? 'no-tower',
+                reporting: result.reporting ?? reportingParticipants.has(result.participantId),
                 rank,
             };
         }),
@@ -797,9 +868,20 @@ async function getContestLeader(contest) {
             floorY,
             participantIds: contest.participantIds,
         }).filter(result => result.score > 0);
+    } else if (contest.rules?.type === 'team_tower_battle') {
+        const reports = await collectTowerReports(contest.participantIds);
+        results = measureTeamTowerBattle(
+            teamTowerScoringOptions(contest, reports)
+        ).teamResults.map(result => ({
+            participantId: result.teamName,
+            score: result.score,
+            details: result,
+        }));
     } else if (contest.rules?.type === 'depth_race') {
         results = (await measureDepthRace(contest))
             .filter(result => !result.disqualified);
+    } else if (contest.rules?.type === 'spleef') {
+        results = scoreSpleef(contest).filter(result => !result.disqualified);
     } else {
         results = defaultJudge(contest).filter(result => !result.disqualified);
     }
@@ -857,6 +939,13 @@ async function judgeContest(contest) {
             floorY,
             participantIds: contest.participantIds,
         });
+    }
+    if (contest.rules?.type === 'team_tower_battle') {
+        const reports = await collectTowerReports(contest.participantIds);
+        return scoreTeamTowerBattle(teamTowerScoringOptions(contest, reports));
+    }
+    if (contest.rules?.type === 'spleef') {
+        return scoreSpleef(contest);
     }
     return defaultJudge(contest);
 }
@@ -1019,6 +1108,8 @@ async function startContestGame(gameId, options = {}) {
             participants: options.participants,
             systemPrompt: options.systemPrompt,
             durationMs: options.durationMs,
+            planningMs: options.planningMs,
+            teamNames: options.teamNames,
         });
         await contestHud.sync(contestCoordinator.view());
         return {
@@ -1615,15 +1706,10 @@ async function reclaimAgentNames(names) {
 }
 
 export async function registerAgent(settings, viewer_port) {
-    // Every bot gets a generated skin keyed to its name + model so it is
-    // visually unique in-game. Hand-authored profile skins are left alone.
-    try {
-        if (!settings.profile.skin || settings.profile.skin.generated) {
-            settings.profile.skin = ensureSkin(settings.profile.name, settings.profile.model);
-        }
-    } catch (error) {
-        console.error(`Failed to generate skin for ${settings.profile.name}:`, error);
-    }
+    // The running model is the sole source of truth for skin branding. Always
+    // replace stale/custom profile skins, and abort registration if that cannot
+    // be done rather than booting an agent in a misleading shirt.
+    synchronizeProfileSkin(settings.profile);
     const agentId = `${settings.profile.name}#${++agent_id_seq}`;
     // Drop any earlier instance that is no longer wearing this name so ghost
     // registrations cannot pile up under it.
@@ -1846,11 +1932,16 @@ export function createMindServer(host_public = false, port = 8080) {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const publicDir = path.join(__dirname, 'public');
     const indexHtml = path.join(publicDir, 'index.html');
+    const survivorHtml = path.join(publicDir, 'survivor.html');
     // index: false so `/` can redirect to `/colony` instead of silently serving index.html
     app.use(express.static(publicDir, { index: false }));
     // Client-side views share index.html; each has a real URL for copy/share/reload.
     app.get(['/colony', '/games'], (_req, res) => {
         res.sendFile(indexHtml);
+    });
+    // The Survivor control room is its own page: too much state to share a view.
+    app.get('/survivor', (_req, res) => {
+        res.sendFile(survivorHtml);
     });
     app.get('/', (_req, res) => {
         res.redirect(302, '/colony');
@@ -1859,6 +1950,22 @@ export function createMindServer(host_public = false, port = 8080) {
     app.use('/bots', express.static(path.join(projectRoot, 'bots')));
     // Generated bot skins (same /skins path the MC container sees them under)
     app.use('/skins', express.static(SKINS_DIR));
+
+    // Global TTS mute toggle for a host-side hotkey (e.g. Hammerspoon/Raycast).
+    // POST with no args toggles; ?muted=true|false sets an explicit state.
+    // GET reports the current state.
+    const applyMute = (req, res) => {
+        const q = req.query.muted;
+        const next = q === undefined
+            ? toggleMuted()
+            : setMuted(q === 'true' || q === '1');
+        io.emit('voice-mute', { muted: next });
+        res.json({ success: true, muted: next });
+    };
+    app.post('/api/voice/mute', applyMute);
+    app.get('/api/voice/mute', (_req, res) => {
+        res.json({ success: true, muted: isMuted() });
+    });
 
     // What an export window would contain, so the UI can preview before downloading.
     app.get('/api/recordings/export-info', (req, res) => {
@@ -2026,6 +2133,9 @@ export function createMindServer(host_public = false, port = 8080) {
                     scenarios: listSurvivorScenarios(),
                     games: listContestGamePresets(),
                     join: getMinecraftJoinInfo(),
+                    // Backfill for the operator feed: survivor-secret-event only
+                    // reaches sockets that were connected when it happened.
+                    secretEvents: survivorSessionManager?.secretEvents() ?? [],
                     error: survivorSessionManager ? null : 'Survivor is not enabled',
                 });
             } catch (error) {
@@ -2046,8 +2156,10 @@ export function createMindServer(host_public = false, port = 8080) {
                     tribeNames: request?.tribeNames ?? preset.tribeNames,
                     challengeGameIds: request?.challengeGameIds ?? preset.challengeGameIds,
                     systemPrompt: request?.systemPrompt,
+                    councilAutoAdvance: request?.councilAutoAdvance ?? false,
                     phaseDurationsMs: request?.phaseDurationsMs ?? {
                         strategy: preset.phaseDurationsMs.strategy,
+                        tribal_council: preset.phaseDurationsMs.tribalCouncil,
                         voting: preset.phaseDurationsMs.voting,
                         revote: preset.phaseDurationsMs.revote,
                         deadlock: preset.phaseDurationsMs.deadlock,
@@ -2099,8 +2211,10 @@ export function createMindServer(host_public = false, port = 8080) {
             try {
                 const data = await startContestGame(request?.gameId, {
                     durationMs: request?.durationMs,
+                    planningMs: request?.planningMs,
                     participants: request?.participants,
                     systemPrompt: request?.systemPrompt,
+                    teamNames: request?.teamNames,
                 });
                 callback({ success: true, data });
             } catch (error) {
@@ -2261,7 +2375,7 @@ export function createMindServer(host_public = false, port = 8080) {
             }
         });
 
-        socket.on('contest-death', async (_request, callback) => {
+        socket.on('contest-death', async (request, callback) => {
             try {
                 const connection = curAgent();
                 const active = contestCoordinator?.view()?.activeContest;
@@ -2270,6 +2384,20 @@ export function createMindServer(host_public = false, port = 8080) {
                 }
                 if (connection.settings.game_session.contestId !== active.id) {
                     throw new Error('Game participant is not in the active contest');
+                }
+                if (active.rules?.type === 'team_tower_battle') {
+                    const data = await contestCoordinator.recordDeath(
+                        active.id,
+                        connection.name,
+                        {
+                            event: request?.event || 'death',
+                            position: request?.position || null,
+                            elapsedMs: Date.now() - active.startedAt,
+                        }
+                    );
+                    emitContestUpdate();
+                    callback?.({ success: true, data });
+                    return;
                 }
                 if (active.rules?.type !== 'death_race') {
                     throw new Error('The active contest is not a first-to-die game');
@@ -2294,6 +2422,61 @@ export function createMindServer(host_public = false, port = 8080) {
                 cleanup.catch(error => {
                     console.error(`Could not clean up completed contest ${active.id}:`, error);
                 });
+            } catch (error) {
+                callback?.({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('contest-eliminated', async (request, callback) => {
+            try {
+                const connection = curAgent();
+                const active = contestCoordinator?.view()?.activeContest;
+                if (!connection?.settings?.game_session || !active) {
+                    throw new Error('Only an active game participant can report an elimination');
+                }
+                if (connection.settings.game_session.contestId !== active.id) {
+                    throw new Error('Game participant is not in the active contest');
+                }
+                if (active.rules?.type !== 'spleef') {
+                    throw new Error('The active contest is not a Spleef game');
+                }
+                const data = await contestCoordinator.eliminate(
+                    active.id,
+                    connection.name,
+                    {
+                        reason: request?.reason || 'fell',
+                        position: request?.position || null,
+                        elapsedMs: Date.now() - active.startedAt,
+                    }
+                );
+                try {
+                    for (const command of spectatorWarpCommands([connection.name])) {
+                        await runMinecraftCommand(command);
+                    }
+                } catch (error) {
+                    console.warn(
+                        `Could not spectate eliminated Spleef player ${connection.name}:`,
+                        error.message
+                    );
+                }
+                const view = contestCoordinator.view();
+                emitContestUpdate();
+                callback?.({ success: true, data });
+
+                if (!view.activeContest) {
+                    const cleanup = survivorSessionManager?.view()?.challengeContestId === active.id
+                        ? survivorSessionManager.syncContestView(view)
+                        : gameSessionManager?.view()?.contestId === active.id
+                            ? gameSessionManager.syncWithContestView(view)
+                            : contestHud.sync(view).then(() => contestRecordingManager.stop(active.id));
+                    cleanup.catch(error => {
+                        console.error(`Could not clean up completed contest ${active.id}:`, error);
+                    });
+                } else if (contestHud) {
+                    contestHud.sync(view).catch(error => {
+                        console.warn(`Could not sync Spleef HUD: ${error.message}`);
+                    });
+                }
             } catch (error) {
                 callback?.({ success: false, error: error.message });
             }
@@ -2428,7 +2611,15 @@ export function createMindServer(host_public = false, port = 8080) {
         socket.on('get-settings', (agentRef, callback) => {
             const connection = getConnection(agentRef);
             if (connection) {
-                callback({ settings: connection.settings });
+                try {
+                    // This request is made on every process boot, including
+                    // crash recovery and restarts after a model change.
+                    synchronizeProfileSkin(connection.settings.profile);
+                    callback({ settings: connection.settings });
+                } catch (error) {
+                    console.error(`Refusing to boot ${connection.name} with an invalid skin:`, error);
+                    callback({ error: error.message });
+                }
             } else {
                 callback({ error: `Agent '${agentRef}' not found.` });
             }

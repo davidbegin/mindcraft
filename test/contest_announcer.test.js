@@ -5,6 +5,7 @@ import {
     ContestAnnouncer,
     buildContestResultAnnouncement,
     buildContestStartAnnouncement,
+    buildPlanningAnnouncement,
 } from '../src/mindcraft/contest/contest_announcer.js';
 
 test('builds game start and winner announcements', () => {
@@ -24,6 +25,47 @@ test('builds game start and winner announcements', () => {
         buildContestResultAnnouncement({ winnerIds: [] }),
         'Game over. There was no winner.'
     );
+    assert.equal(
+        buildContestResultAnnouncement({
+            rules: { type: 'team_tower_battle' },
+            winnerIds: ['alice', 'amy'],
+            results: [
+                { participantId: 'alice', rank: 1, details: { teamName: 'Ember' } },
+                { participantId: 'amy', rank: 1, details: { teamName: 'Ember' } },
+            ],
+        }),
+        'And the winning team is... Ember! Ember wins!'
+    );
+});
+
+test('opens the planning phase without holding the clock itself', async () => {
+    assert.equal(
+        buildPlanningAnnouncement({ title: 'Team Tower Battle' }, 45_000),
+        'Team Tower Battle. Teams, you have 45 seconds to plan. '
+        + 'Agree on one shared tower and who does what. No building until the countdown.'
+    );
+
+    const calls = [];
+    const announcer = new ContestAnnouncer({
+        speak: text => {
+            calls.push(['speak', text]);
+            return Promise.resolve();
+        },
+        sleep: ms => {
+            calls.push(['sleep', ms]);
+            return Promise.resolve();
+        },
+    });
+
+    await announcer.announcePlanning({ title: 'Team Tower Battle' }, { planningMs: 60_000 });
+
+    assert.deepEqual(calls, [
+        [
+            'speak',
+            'Team Tower Battle. Teams, you have 60 seconds to plan. '
+            + 'Agree on one shared tower and who does what. No building until the countdown.',
+        ],
+    ]);
 });
 
 test('waits after the spoken countdown before starting play', async () => {
