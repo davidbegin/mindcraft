@@ -88,5 +88,6 @@ export {
     buildParticipantGameDirective,
     buildTeamPlanningDirective,
     buildGameSystemPrompt,
+    pickTeamAttacker,
     pickTeamCaptain,
 } from './game_content.js';

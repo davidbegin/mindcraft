@@ -161,7 +161,10 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(teamTower.metadata.pvp, true);
     assert.match(teamTower.prompt, /friendly fire is disabled/i);
     assert.match(teamTower.prompt, /planning phase/i);
-    assert.match(teamTower.prompt, /never start a second tower/i);
+    assert.match(teamTower.prompt, /Attacking is mandatory, not optional/i);
+    assert.match(teamTower.prompt, /dedicated ATTACKER/i);
+    assert.match(teamTower.prompt, /place blocks only when they connect/i);
+    assert.match(teamTower.prompt, /never place a new foundation/i);
     assert.equal(
         listContestGamePresets().find(game => game.id === 'team_tower_battle').planningMs,
         60_000

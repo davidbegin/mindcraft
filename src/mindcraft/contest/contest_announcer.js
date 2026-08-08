@@ -12,7 +12,8 @@ export function buildPlanningAnnouncement(contest, planningMs) {
     const title = String(contest?.title || 'Game').trim();
     const seconds = Math.max(1, Math.round(Number(planningMs) / 1000));
     return `${title}. Teams, you have ${seconds} seconds to plan. `
-        + 'Agree on one shared tower and who does what. No building until the countdown.';
+        + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
+        + 'All builders use only the captain\'s structure. No building until the countdown.';
 }
 
 export function buildContestResultAnnouncement(contest) {

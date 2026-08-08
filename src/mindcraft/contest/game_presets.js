@@ -270,11 +270,11 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
     team_tower_battle: Object.freeze({
         id: 'team_tower_battle',
         title: 'Team Tower Battle',
-        blurb: 'Two teams build one tower each. Highest tower wins after death penalties.',
+        blurb: 'Build one shared tower while your attacker destroys the enemy tower.',
         durationLabel: '2 min 30 sec',
         durationMs: 2.5 * 60_000,
         prompt:
-            'CONTEST: Team Tower Battle. Your whole team builds ONE shared tower and only that single tallest team tower scores, so building apart is how teams lose. Before the clock starts you get a planning phase to agree on one tower base coordinate; stick to that base for the entire match and never start a second tower. Everyone builds up the same tower together — there are no strict roles and nobody should sit back just guarding. Optionally, one teammate can grief the enemy tower instead of building: knock their builders off and break their tower blocks. Share the same structure and make room for teammates. PVP is on against the opposing team, but friendly fire is disabled, so you may attack the enemy and tear down their tower. If you die, you immediately respawn and keep your inventory, but your team loses five blocks from its final score for every death. At the deadline, each standing tower belongs to the team that placed most of its blocks. Your team score is its highest owned tower minus the death penalty. Build high without giving the enemy easy knockoffs.',
+            'CONTEST: Team Tower Battle. This is a PVP attack-and-build game. Each team has one dedicated ATTACKER whose core job is to cross the arena, fight enemy builders, and destroy the enemy tower from its supporting blocks with a pickaxe. Attacking is mandatory, not optional. Everyone else is a BUILDER on ONE shared team tower. Only that single tallest team tower scores, so two separate structures are a failure. During the planning phase before the clock starts, the captain names one base coordinate. Builders regroup at that base and place blocks only when they connect to the captain\'s existing structure; they never place a new foundation on bare ground. The attacker never starts a separate tower. Friendly fire is disabled. If you die, you immediately respawn and keep your inventory, but your team loses five blocks from its final score for every death. At the deadline, each standing tower belongs to the team that placed most of its blocks. Your team score is its highest owned tower minus the death penalty. Builders keep one tower rising while the attacker keeps the opposing tower from standing.',
         rules: Object.freeze({
             type: 'team_tower_battle',
             pvp: true,

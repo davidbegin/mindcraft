@@ -1,4 +1,5 @@
 import { runMinecraftCommand } from '../minecraft_server.js';
+import { modelInfo } from '../skins.js';
 import { buildDogRaceResetCommand } from './dog_race.js';
 
 const ARENA = Object.freeze({
@@ -102,7 +103,8 @@ const GAME_KITS = Object.freeze({
     team_tower_battle: Object.freeze([
         'cobblestone 256',
         'oak_planks 128',
-        'wooden_sword 1',
+        'iron_sword 1',
+        'iron_pickaxe 1',
         'bread 16',
     ]),
     spleef: Object.freeze([
@@ -540,41 +542,100 @@ function buildWorldResetCommands(gameId, options = {}) {
 
 function teamSpawnPositions(participants, teamNames, teamByParticipant) {
     const positions = new Map();
+    const sharedBaseOffsets = [
+        { x: 0, z: 0 },
+        { x: 0, z: 1 },
+        { x: 0, z: -1 },
+        { x: 1, z: 0 },
+        { x: -1, z: 0 },
+        { x: 1, z: 1 },
+        { x: -1, z: -1 },
+        { x: 1, z: -1 },
+        { x: -1, z: 1 },
+    ];
     teamNames.forEach((teamName, teamIndex) => {
         const members = participants.filter(name => teamByParticipant[name] === teamName);
         members.forEach((name, index) => {
-            const offset = (index - (members.length - 1) / 2) * 4;
+            const offset = sharedBaseOffsets[index % sharedBaseOffsets.length];
             positions.set(name, {
-                x: ARENA.centerX + (teamIndex === 0 ? -18 : 18),
-                z: Math.round(ARENA.centerZ + offset),
+                x: ARENA.centerX + (teamIndex === 0 ? -18 : 18) + offset.x,
+                z: ARENA.centerZ + offset.z,
             });
         });
     });
     return positions;
 }
 
+// A nametag suffix belongs to a scoreboard team, not to a player, and joining
+// a contest team drops a bot from the `model_*` team that spells out its model.
+// So each side gets one team per model: bots that share a model share a team
+// (keeping friendly fire off between them) and every nametag still ends in
+// "[Team] [model]". Sides whose bots all run one model collapse to one team.
+const contestTeamIds = new Set(['mcgame_1', 'mcgame_2']);
+
+function contestTeamModel(model) {
+    if (!model) return null;
+    const info = modelInfo(model);
+    const slug = info.label.replace(/[^A-Za-z0-9]/g, '').toLowerCase().slice(0, 24);
+    return slug ? { slug, label: info.label, color: info.mcColor } : null;
+}
+
+function contestTeamSuffix(teamName, color, model) {
+    const suffix = { text: ` [${teamName}]`, color };
+    if (model) suffix.extra = [{ text: ` [${model.label}]`, color: model.color }];
+    return suffix;
+}
+
+function groupSideByModel(participants, teamName, teamByParticipant, modelByParticipant) {
+    const groups = new Map();
+    participants
+        .filter(name => teamByParticipant[name] === teamName)
+        .forEach(name => {
+            assertPlayerName(name);
+            const model = contestTeamModel(modelByParticipant[name]);
+            const key = model?.slug ?? '';
+            if (!groups.has(key)) groups.set(key, { model, members: [] });
+            groups.get(key).members.push(name);
+        });
+    // An empty side still gets its team so the match has both colors defined.
+    if (groups.size === 0) groups.set('', { model: null, members: [] });
+    return groups;
+}
+
 export function buildContestTeamCommands(participants, options = {}) {
     const teamNames = Array.isArray(options.teamNames) ? options.teamNames : [];
     const teamByParticipant = options.teamByParticipant || {};
+    const modelByParticipant = options.modelByParticipant || {};
     if (teamNames.length !== 2) return [];
     const colors = ['red', 'blue'];
-    const commands = [];
+    // Teams left over from earlier matches would keep coloring the nametags of
+    // bots that are not playing this one.
+    const commands = [...contestTeamIds].map(teamId => `team remove ${teamId}`);
+    contestTeamIds.clear();
     teamNames.forEach((teamName, index) => {
-        const teamId = `mcgame_${index + 1}`;
-        commands.push(
-            `team remove ${teamId}`,
-            `team add ${teamId}`,
-            `team modify ${teamId} color ${colors[index]}`,
-            `team modify ${teamId} friendlyFire false`,
-            `team modify ${teamId} collisionRule pushOtherTeams`,
-            `team modify ${teamId} suffix ${JSON.stringify({ text: ` [${teamName}]`, color: colors[index] })}`
+        const color = colors[index];
+        const groups = groupSideByModel(
+            participants,
+            teamName,
+            teamByParticipant,
+            modelByParticipant
         );
-        participants
-            .filter(name => teamByParticipant[name] === teamName)
-            .forEach(name => {
-                assertPlayerName(name);
+        for (const [slug, group] of groups) {
+            const teamId = slug ? `mcgame_${index + 1}_${slug}` : `mcgame_${index + 1}`;
+            contestTeamIds.add(teamId);
+            commands.push(
+                `team remove ${teamId}`,
+                `team add ${teamId}`,
+                `team modify ${teamId} color ${color}`,
+                `team modify ${teamId} friendlyFire false`,
+                `team modify ${teamId} collisionRule pushOtherTeams`,
+                `team modify ${teamId} suffix `
+                + JSON.stringify(contestTeamSuffix(teamName, color, group.model))
+            );
+            for (const name of group.members) {
                 commands.push(`team join ${teamId} ${name}`);
-            });
+            }
+        }
     });
     return commands;
 }

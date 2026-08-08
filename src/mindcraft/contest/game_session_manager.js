@@ -1,6 +1,7 @@
 import {
     buildParticipantGameDirective,
     buildTeamPlanningDirective,
+    pickTeamAttacker,
     pickTeamCaptain,
 } from './game_content.js';
 
@@ -281,6 +282,14 @@ export class GameSessionManager {
                 teamSetup.teamNames.map(name => [name, pickTeamCaptain(teamSetup.teams[name])])
             )
             : null;
+        const attackerByTeam = teamSetup
+            ? Object.fromEntries(
+                teamSetup.teamNames.map(name => [
+                    name,
+                    pickTeamAttacker(teamSetup.teams[name], captainByTeam[name]),
+                ])
+            )
+            : null;
         const participantIds = participants.map(participant => participant.name);
 
         this._record({
@@ -305,6 +314,7 @@ export class GameSessionManager {
                     teamByParticipant: teamSetup?.teamByParticipant ?? null,
                     teams: teamSetup?.teams ?? null,
                     captainByTeam,
+                    attackerByTeam,
                     participants: participants.map(({ name, profileId, voice, systemPrompt, model, provider, team }) => ({
                         name,
                         profileId,
@@ -330,6 +340,7 @@ export class GameSessionManager {
             teamByParticipant: teamSetup?.teamByParticipant ?? null,
             teams: teamSetup?.teams ?? null,
             captainByTeam,
+            attackerByTeam,
             participants: participants.map(({ name, profileId, voice, systemPrompt, model, provider, team }) => ({
                 name,
                 profileId,
@@ -437,6 +448,14 @@ export class GameSessionManager {
                 teamNames: teamSetup?.teamNames,
                 teamByParticipant: teamSetup?.teamByParticipant,
                 teams: teamSetup?.teams,
+                // The profile's model object is what nametags outside contests
+                // are labelled with, so team nametags read the same way.
+                modelByParticipant: Object.fromEntries(
+                    participants.map(participant => [
+                        participant.name,
+                        participant.profile?.model ?? participant.model,
+                    ])
+                ),
             });
 
             this._setStatus('recording', 'start_recording', 'Starting synchronized recording…');
@@ -453,6 +472,7 @@ export class GameSessionManager {
                     preset,
                     teamSetup,
                     captainByTeam,
+                    attackerByTeam,
                     participantIds,
                     planningMs,
                 });
@@ -477,6 +497,7 @@ export class GameSessionManager {
                             )
                             : [],
                         captainId: captainByTeam?.[teamSetup?.teamByParticipant[name]] ?? null,
+                        attackerId: attackerByTeam?.[teamSetup?.teamByParticipant[name]] ?? null,
                     }),
                     // Planning chatter must not swallow the goal that starts the
                     // clock; a queued directive would idle the bot for the whole
@@ -533,6 +554,7 @@ export class GameSessionManager {
         preset,
         teamSetup,
         captainByTeam,
+        attackerByTeam,
         participantIds,
         planningMs,
     }) {
@@ -563,6 +585,7 @@ export class GameSessionManager {
                         teamSetup.teamByParticipant[id] !== teamId
                     ),
                     captainId: captainByTeam?.[teamId] ?? null,
+                    attackerId: attackerByTeam?.[teamId] ?? null,
                 })
             );
         }));

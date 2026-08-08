@@ -42,7 +42,8 @@ test('opens the planning phase without holding the clock itself', async () => {
     assert.equal(
         buildPlanningAnnouncement({ title: 'Team Tower Battle' }, 45_000),
         'Team Tower Battle. Teams, you have 45 seconds to plan. '
-        + 'Agree on one shared tower and who does what. No building until the countdown.'
+        + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
+        + 'All builders use only the captain\'s structure. No building until the countdown.'
     );
 
     const calls = [];
@@ -63,7 +64,8 @@ test('opens the planning phase without holding the clock itself', async () => {
         [
             'speak',
             'Team Tower Battle. Teams, you have 60 seconds to plan. '
-            + 'Agree on one shared tower and who does what. No building until the countdown.',
+            + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
+            + 'All builders use only the captain\'s structure. No building until the countdown.',
         ],
     ]);
 });

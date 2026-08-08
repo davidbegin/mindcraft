@@ -26,6 +26,12 @@ export function pickTeamCaptain(teamMembers = []) {
     return teamMembers.find(name => typeof name === 'string' && name.trim()) || null;
 }
 
+export function pickTeamAttacker(teamMembers = [], captainId = null) {
+    return teamMembers.find(name =>
+        typeof name === 'string' && name.trim() && name !== captainId
+    ) || null;
+}
+
 export function buildTeamPlanningDirective({
     title = 'the match',
     presetPrompt = '',
@@ -35,6 +41,7 @@ export function buildTeamPlanningDirective({
     teammateIds = [],
     enemyIds = [],
     captainId = null,
+    attackerId = null,
 }) {
     const seconds = Math.max(1, Math.round(planningMs / 1000));
     const teammateList = teammateIds.join(', ') || 'none';
@@ -47,13 +54,18 @@ export function buildTeamPlanningDirective({
         captainId
             ? `${captainId} is the team captain and has the final word. Settle disagreements in one line, then commit to the captain's call.`
             : 'Pick one teammate as captain immediately and commit to their call.',
+        attackerId
+            ? `${attackerId} is the ATTACKER. This is a required PVP role: when the match starts, they go directly to the enemy tower, attack its builders, and break its supporting blocks. They do not switch to building unless the enemy tower is already destroyed.`
+            : 'Assign one teammate as the ATTACKER. Attacking the enemy tower is required, not optional.',
         `Use !startConversation with ${teammateIds.join(' and ') || 'your team'} right now and settle three things:`,
         '1. THE BASE: one exact x z coordinate where the whole team stacks. Put the numbers only in the conversation command, never in spoken dialogue. Out loud, say exactly: "Meet me at the spot."',
-        '2. THE PLAN: everyone builds UP the same tower together. There are no strict jobs — no dedicated supplier and nobody parked on defense just guarding the base. Optionally, one teammate can peel off to grief the enemy tower (knock their builders off and break their blocks); everyone else keeps stacking.',
+        `2. THE ROLES: ${attackerId || 'the assigned attacker'} attacks and dismantles the enemy tower for the whole match. Every other teammate is a BUILDER and works only on your one shared tower. Nobody starts a personal structure and nobody just guards.`,
         '3. THE REGROUP RULE: if you die or get knocked away, you return to that same base. Nobody ever starts a second tower.',
         isCaptain
-            ? 'You are the captain. Open the conversation first, put your current x and z only in the conversation command as the proposed base, and say "Meet me at the spot." Get an explicit yes from each teammate that they will stack that one tower with you. If someone would rather go grief the enemy tower, let them, but keep most of the team building.'
-            : 'Answer the captain quickly, confirm the agreed spot without saying its numbers, and commit to building up that tower — or say so if you would rather go grief the enemy tower. Do not counter-propose more than once.',
+            ? 'You are the captain and lead builder. Open the conversation first, put your current x and z only in the conversation command as the base, and say "Meet me at the spot." Get an explicit yes from every builder that they will place only onto your structure, and an explicit confirmation from the attacker that they will assault the enemy tower.'
+            : participantName === attackerId
+                ? 'YOU ARE THE ATTACKER. Quickly confirm the agreed spot without saying its numbers, then confirm your attack role. At the countdown, ignore building materials and immediately cross the arena to destroy the enemy tower and fight its builders.'
+                : 'Confirm the captain\'s base and your BUILDER role. At the countdown, go to the captain and place blocks only when they touch the shared team tower. Never place a new foundation on bare ground.',
     ];
     if (presetPrompt) lines.push(`MATCH RULES FOR REFERENCE: ${presetPrompt}`);
     if (enemyIds.length > 0) {
@@ -76,6 +88,7 @@ export function buildParticipantGameDirective(
     const rivals = Array.isArray(team.enemyIds) && team.enemyIds.length > 0
         ? team.enemyIds
         : participantIds.filter(name => name !== participantName);
+    const isAttacker = team.attackerId === participantName;
     const lines = [
         presetPrompt,
         `COMPETITORS: ${participantIds.join(', ')}.`,
@@ -89,9 +102,16 @@ export function buildParticipantGameDirective(
             team.captainId
                 ? `${team.captainId} is your captain and calls the tower location. Follow that call even if you would have picked a different spot.`
                 : 'Follow the tower location your team already agreed on.',
-            'Everyone on your team builds UP the same tower together — no strict jobs and no teammate parked on defense just guarding. Stack blocks and race the tower higher alongside them.',
-            'Optionally, one teammate can break off to grief the enemy tower — knock their builders off and break their blocks — but the rest keep stacking. Coordinate with !startConversation and share useful coordinates and plans.',
-            'Never attack a teammate. Build onto the same team structure, make room for each other, and keep paths and standing room open.'
+            team.attackerId
+                ? `${team.attackerId} is your team's dedicated ATTACKER; everyone else is a BUILDER. These roles are mandatory for the whole match.`
+                : 'One teammate must attack the enemy tower while everyone else builds the shared tower.',
+            isAttacker
+                ? `YOU ARE THE ATTACKER. Go directly to the enemy team (${rivals.join(', ')}) now. Use !attackPlayer on an enemy builder, then use !clearArea with the coordinates of the enemy tower's lowest reachable supporting blocks. Keep attacking and dismantling; do not build a separate tower and do not return to routine building while an enemy tower stands.`
+                : 'YOU ARE A BUILDER. Go to the captain\'s base and build UP only on the one structure the captain starts. Your first and every later block must touch that shared tower; never place a new foundation on bare ground. If you cannot find it, regroup with the captain before placing anything.',
+            'Coordinate with !startConversation only for a short tactical update, then immediately resume your assigned job.',
+            isAttacker
+                ? 'Never attack a teammate. Ignore friendly structures and keep pressure on the opposing tower.'
+                : 'Never attack a teammate. Build onto the same team structure, make room for each other, and keep paths and standing room open.'
         );
     }
     if (rivals.length > 0) {

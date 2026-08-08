@@ -23,6 +23,7 @@ import {
     buildGameSystemPrompt,
     buildParticipantGameDirective,
     buildTeamPlanningDirective,
+    pickTeamAttacker,
 } from '../src/mindcraft/contest/game_content.js';
 
 const profiles = [
@@ -531,6 +532,10 @@ test('team tower plans before the clock starts and points every teammate at one 
             coordinator.snapshot().contests['game-1'].metadata.gameSession.captainByTeam,
             { Ember: 'alice', Tide: 'bob' }
         );
+        assert.deepEqual(
+            coordinator.snapshot().contests['game-1'].metadata.gameSession.attackerByTeam,
+            { Ember: 'amy', Tide: 'ben' }
+        );
 
         await coordinator.cancelContest('game-1', 'test complete');
         await manager.syncWithContestView(coordinator.view());
@@ -587,6 +592,7 @@ test('a planning brief tells a non-captain who to follow and who to stay quiet a
         teammateIds: ['alice'],
         enemyIds: ['bob', 'ben'],
         captainId: 'alice',
+        attackerId: 'amy',
     });
     assert.match(directive, /The match has NOT started/);
     assert.match(directive, /only your team's single tallest tower counts/);
@@ -596,6 +602,43 @@ test('a planning brief tells a non-captain who to follow and who to stay quiet a
     assert.match(directive, /Meet me at the spot/);
     assert.doesNotMatch(directive, /Say the numbers out loud/);
     assert.doesNotMatch(directive, /You are the captain/);
+    assert.match(directive, /YOU ARE THE ATTACKER/);
+    assert.match(directive, /immediately cross the arena/);
+});
+
+test('team attacker selection assigns the first non-captain', () => {
+    assert.equal(pickTeamAttacker(['alice', 'amy', 'alex'], 'alice'), 'amy');
+    assert.equal(pickTeamAttacker(['alice'], 'alice'), null);
+});
+
+test('team directives give attackers and builders non-overlapping core jobs', () => {
+    const team = {
+        teamId: 'Ember',
+        teammateIds: ['alice'],
+        enemyIds: ['bob', 'ben'],
+        captainId: 'alice',
+        attackerId: 'amy',
+    };
+    const attacker = buildParticipantGameDirective(
+        'Team Tower Battle.',
+        ['alice', 'amy', 'bob', 'ben'],
+        'amy',
+        team
+    );
+    const builder = buildParticipantGameDirective(
+        'Team Tower Battle.',
+        ['alice', 'amy', 'bob', 'ben'],
+        'alice',
+        team
+    );
+
+    assert.match(attacker, /YOU ARE THE ATTACKER/);
+    assert.match(attacker, /Use !attackPlayer on an enemy builder/);
+    assert.match(attacker, /use !clearArea with the coordinates/);
+    assert.match(attacker, /do not return to routine building/);
+    assert.match(builder, /YOU ARE A BUILDER/);
+    assert.match(builder, /every later block must touch that shared tower/);
+    assert.match(builder, /never place a new foundation on bare ground/);
 });
 
 test('a refused second game leaves the running bots alone', async () => {

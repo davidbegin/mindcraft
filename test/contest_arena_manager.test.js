@@ -227,7 +227,7 @@ test('builds a blank tower arena with equal kits and no diamond ore', async () =
     }
 });
 
-test('team tower preserves inventory, splits spawns, and disables friendly fire', async () => {
+test('team tower preserves inventory, clusters team spawns, and disables friendly fire', async () => {
     const commands = [];
     const participants = ['alice', 'amy', 'bob', 'ben'];
     const options = {
@@ -259,9 +259,75 @@ test('team tower preserves inventory, splits spawns, and disables friendly fire'
     assert.ok(commands.includes('team modify mcgame_1 collisionRule pushOtherTeams'));
     assert.ok(commands.includes('team join mcgame_1 alice'));
     assert.ok(commands.includes('team join mcgame_2 bob'));
-    assert.ok(commands.some(command => command === 'tp alice 99982 101 99998'));
-    assert.ok(commands.some(command => command === 'tp bob 100018 101 99998'));
+    for (const name of participants) {
+        assert.ok(commands.includes(`give ${name} iron_sword 1`));
+        assert.ok(commands.includes(`give ${name} iron_pickaxe 1`));
+    }
+    assert.ok(commands.includes('tp alice 99982 101 100000'));
+    assert.ok(commands.includes('tp amy 99982 101 100001'));
+    assert.ok(commands.includes('tp bob 100018 101 100000'));
+    assert.ok(commands.includes('tp ben 100018 101 100001'));
     assert.ok(buildContestTeamCommands(participants, options).length > 0);
+});
+
+test('team nametags keep the model name alongside the team name', () => {
+    const participants = ['alice', 'amy', 'bob', 'ben'];
+    const commands = buildContestTeamCommands(participants, {
+        teamNames: ['Ember', 'Tide'],
+        teamByParticipant: {
+            alice: 'Ember',
+            amy: 'Ember',
+            bob: 'Tide',
+            ben: 'Tide',
+        },
+        modelByParticipant: {
+            alice: { api: 'cursor', model: 'gpt-5.6-sol' },
+            amy: { api: 'cursor', model: 'claude-opus-5' },
+            bob: 'gpt-5.6-sol',
+            ben: 'gpt-5.6-sol',
+        },
+    });
+
+    const suffixOf = teamId => commands.find(command =>
+        command.startsWith(`team modify ${teamId} suffix `)
+    );
+    assert.deepEqual(
+        JSON.parse(suffixOf('mcgame_1_gpt56sol').replace('team modify mcgame_1_gpt56sol suffix ', '')),
+        {
+            text: ' [Ember]',
+            color: 'red',
+            extra: [{ text: ' [gpt-5.6-sol]', color: 'gold' }],
+        }
+    );
+    assert.ok(commands.includes('team join mcgame_1_gpt56sol alice'));
+    assert.ok(commands.includes('team join mcgame_1_claudeopus5 amy'));
+    // A side on one model stays a single team, so friendly fire stays off.
+    assert.ok(commands.includes('team join mcgame_2_gpt56sol bob'));
+    assert.ok(commands.includes('team join mcgame_2_gpt56sol ben'));
+    assert.equal(
+        commands.filter(command => command.startsWith('team add mcgame_2')).length,
+        1
+    );
+    for (const teamId of ['mcgame_1_gpt56sol', 'mcgame_1_claudeopus5', 'mcgame_2_gpt56sol']) {
+        assert.ok(commands.includes(`team modify ${teamId} friendlyFire false`));
+    }
+});
+
+test('contest teams from an earlier match are removed before the next one', () => {
+    const options = {
+        teamNames: ['Ember', 'Tide'],
+        teamByParticipant: { alice: 'Ember', bob: 'Tide' },
+        modelByParticipant: { alice: 'kimi-k3', bob: 'glm-5.2' },
+    };
+    buildContestTeamCommands(['alice', 'bob'], options);
+    const commands = buildContestTeamCommands(['alice', 'bob'], {
+        ...options,
+        modelByParticipant: { alice: 'grok-4.5', bob: 'gemini-3.1-pro' },
+    });
+
+    assert.ok(commands.includes('team remove mcgame_1_kimik3'));
+    assert.ok(commands.includes('team remove mcgame_2_glm52'));
+    assert.ok(commands.includes('team join mcgame_1_grok45 alice'));
 });
 
 test('builds a blank self-destruct plain with no hazards, mobs, or kit', async () => {
