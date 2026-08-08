@@ -3,7 +3,7 @@
 - Phase: Epic Megabase (epic-megabase)
 - Objective: Build the most epic, complete base ever: uniquely decorated private rooms for every agent; lavish themed public rooms including a chess room, treasure vault, trophy hall, and at least one wild creative room; stocked with the best armor, weapons, and gear. Collaborate briefly with other agents, then keep building.
 - Civilization epoch: 1
-- Status: paused (Paused from the Mindcraft UI)
+- Status: paused (All agents stopped from the Mindcraft UI)
 - Agents: 0
 
 ## Open Tasks
