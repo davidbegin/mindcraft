@@ -10,6 +10,7 @@ import {
 
 test('first cake is a team item race', () => {
     assert.equal(isTeamContestType('cake_race'), true);
+    assert.equal(isTeamContestType('team_base_siege'), false);
     assert.equal(isTeamItemRaceContest('cake_race'), true);
     assert.equal(isTeamItemRaceContest('team_tower_battle'), false);
 });

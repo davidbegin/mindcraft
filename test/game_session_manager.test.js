@@ -876,35 +876,32 @@ test('team tower plans before the clock starts and points every teammate at one 
     });
 });
 
-test('Base Siege runs planning, then build, then combat directives', async () => {
+test('Base Siege runs a timed build phase then combat directives', async () => {
     const siegePreset = {
         ...preset,
         id: 'team_base_siege',
         title: 'Base Siege',
-        prompt: 'Last team standing wins. Arena shrinks if both hide.',
+        prompt: 'Last person alive wins. Stay on the platform.',
         rules: {
             type: 'team_base_siege',
-            minimumPlayersPerTeam: 2,
-            planningMs: 30_000,
-            buildPhaseMs: 30_000,
-            maxPressureRounds: 3,
+            scoring: 'last-standing',
+            planningMs: 0,
+            buildPhaseMs: 180_000,
+            floorY: 100,
         },
     };
-    assert.equal(resolveBuildPhaseMs(undefined, siegePreset), 30_000);
-    assert.equal(resolveBuildPhaseMs(15_000, siegePreset), 15_000);
+    assert.equal(resolveBuildPhaseMs(undefined, siegePreset), 180_000);
+    assert.equal(resolveBuildPhaseMs(90_000, siegePreset), 90_000);
     assert.throws(() => resolveBuildPhaseMs(-1, siegePreset), /cannot be negative/);
 
     await withManager(async ({ manager, coordinator, calls }) => {
         await manager.start({
             gameId: 'team_base_siege',
-            teamNames: ['Ember', 'Tide'],
-            planningMs: 20_000,
             buildPhaseMs: 25_000,
             participants: [
-                { profileId: 'fast', name: 'alice', team: 'Ember' },
-                { profileId: 'smart', name: 'amy', team: 'Ember' },
-                { profileId: 'fast', name: 'bob', team: 'Tide' },
-                { profileId: 'smart', name: 'ben', team: 'Tide' },
+                { profileId: 'fast', name: 'alice' },
+                { profileId: 'smart', name: 'amy' },
+                { profileId: 'fast', name: 'bob' },
             ],
         });
 
@@ -912,25 +909,23 @@ test('Base Siege runs planning, then build, then combat directives', async () =>
         const planningIndex = types.indexOf('announce-planning');
         const buildIndex = types.indexOf('announce-build');
         const startIndex = types.indexOf('announce-start');
-        assert.ok(planningIndex >= 0);
-        assert.ok(buildIndex > planningIndex);
+        assert.equal(planningIndex, -1);
+        assert.ok(buildIndex >= 0);
         assert.ok(startIndex > buildIndex);
-        assert.equal(calls[planningIndex][2], 20_000);
         assert.equal(calls[buildIndex][2], 25_000);
 
         const sleeps = calls.filter(([type]) => type === 'sleep').map(([, ms]) => ms);
-        assert.deepEqual(sleeps.filter(ms => ms === 20_000 || ms === 25_000), [20_000, 25_000]);
+        assert.ok(sleeps.includes(25_000));
 
         const directives = calls.filter(([type]) => type === 'directive').map(([, name, prompt]) => ({ name, prompt }));
-        assert.ok(directives.some(({ prompt }) => /PLANNING PHASE/.test(prompt) && /arena shrinks/i.test(prompt)));
-        assert.ok(directives.some(({ prompt }) => /BUILD PHASE/.test(prompt) && /Do NOT attack enemies yet/i.test(prompt)));
-        assert.ok(directives.some(({ prompt }) => /COMBAT IS ON/.test(prompt) && /Death eliminates you permanently/i.test(prompt)));
+        assert.ok(directives.some(({ prompt }) => /BUILD PHASE/.test(prompt) && /Do NOT attack anyone yet/i.test(prompt)));
+        assert.ok(directives.some(({ prompt }) => /COMBAT IS ON/.test(prompt) && /Last person alive wins/i.test(prompt)));
         assert.equal(
             coordinator.snapshot().contests['game-1'].metadata.gameSession.buildPhaseMs,
             25_000
         );
         assert.equal(
-            coordinator.snapshot().contests['game-1'].metadata.gameSession.attackerByTeam,
+            coordinator.snapshot().contests['game-1'].metadata.gameSession.teamNames,
             null
         );
 

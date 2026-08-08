@@ -3393,6 +3393,13 @@
             if (status === 'preparing') return 'Preparing arena…';
             if (status === 'recording') return 'Starting synchronized recording…';
             if (status === 'planning') return 'Teams are planning their tower…';
+            if (status === 'building') {
+                const endsAt = gameSession.progress?.buildEndsAt;
+                if (Number.isFinite(endsAt)) {
+                    return `Build phase · ${formatCountdown(endsAt)} left`;
+                }
+                return 'Build phase in progress…';
+            }
             if (status === 'announcing-start') return 'Announcing match start…';
             if (status === 'between-matches') {
                 return gameSession.series
@@ -3514,6 +3521,10 @@
                 launchElapsedTimer = setInterval(() => {
                     const since = latestLaunch?.startedAt;
                     if (since) elapsedEl.textContent = formatElapsed(Date.now() - since);
+                    // Refresh the build-phase countdown while the timer is live.
+                    if (contestState?.gameSession?.status === 'building') {
+                        detailEl.textContent = launchProgressMessage(contestState.gameSession);
+                    }
                     renderLaunchSteps(latestLaunch);
                 }, 1000);
             }

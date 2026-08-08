@@ -289,20 +289,21 @@ test('contest presets include game-specific rules and judge metrics', () => {
 
     const baseSiege = getContestGamePreset('team_base_siege');
     assert.equal(baseSiege.rules.type, 'team_base_siege');
-    assert.equal(baseSiege.rules.teamCount, 2);
-    assert.equal(baseSiege.rules.planningMs, 30_000);
-    assert.equal(baseSiege.rules.buildPhaseMs, 30_000);
-    assert.equal(baseSiege.rules.maxPressureRounds, 3);
+    assert.equal(baseSiege.rules.scoring, 'last-standing');
+    assert.equal(baseSiege.rules.planningMs, 0);
+    assert.equal(baseSiege.rules.buildPhaseMs, 3 * 60_000);
+    assert.equal(baseSiege.rules.floorY, 100);
     assert.equal(baseSiege.metadata.pvp, true);
+    assert.match(baseSiege.prompt, /free-for-all/i);
     assert.match(baseSiege.prompt, /Death eliminates you for good/i);
-    assert.match(baseSiege.prompt, /arena walls slam inward/i);
+    assert.match(baseSiege.prompt, /last person alive/i);
     assert.equal(
         listContestGamePresets().find(game => game.id === 'team_base_siege').planningMs,
-        30_000
+        0
     );
     assert.equal(
         listContestGamePresets().find(game => game.id === 'team_base_siege').buildPhaseMs,
-        30_000
+        3 * 60_000
     );
 
     const deathRace = getContestGamePreset('death_race');

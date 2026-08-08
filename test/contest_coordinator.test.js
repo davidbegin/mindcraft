@@ -281,79 +281,34 @@ test('records repeated deaths without eliminating or ending a running contest', 
     }, { clock: () => now });
 });
 
-test('Base Siege ends when one team is fully eliminated', async () => {
+test('Base Siege ends when only one competitor remains', async () => {
     let now = 1_000;
     await withCoordinator(async ({ coordinator }) => {
         const contestId = await createAndStart(coordinator, {
-            participantIds: ['alice', 'amy', 'bob', 'ben'],
-            rules: { type: 'team_base_siege' },
-            metadata: {
-                gameSession: {
-                    teamNames: ['Ember', 'Tide'],
-                    teamByParticipant: {
-                        alice: 'Ember',
-                        amy: 'Ember',
-                        bob: 'Tide',
-                        ben: 'Tide',
-                    },
-                },
-            },
+            participantIds: ['alice', 'bob', 'chip'],
+            rules: { type: 'team_base_siege', scoring: 'last-standing' },
         });
         now = 5_000;
         await coordinator.eliminate(contestId, 'bob', { reason: 'death' });
         assert.equal(coordinator.snapshot().contests[contestId].status, 'running');
         now = 6_000;
-        const completed = await coordinator.eliminate(contestId, 'ben', { reason: 'death' });
+        const completed = await coordinator.eliminate(contestId, 'chip', { reason: 'death' });
         assert.equal(completed.status, 'completed');
-        assert.deepEqual(completed.winnerIds.sort(), ['alice', 'amy']);
-    }, {
-        clock: () => now,
-        judge: contest => contest.participantIds.map(participantId => ({
-            participantId,
-            score: ['alice', 'amy'].includes(participantId) ? 100 : 1,
-            details: {
-                teamName: ['alice', 'amy'].includes(participantId) ? 'Ember' : 'Tide',
-            },
-        })),
-    });
+        assert.deepEqual(completed.winnerIds, ['alice']);
+    }, { clock: () => now });
 });
 
-test('Base Siege deadline can defer into a pressure round', async () => {
+test('Base Siege deadlines no longer open pressure rounds by default', async () => {
     let now = 1_000;
-    let deferred = 0;
     await withCoordinator(async ({ coordinator }) => {
         const contestId = await createAndStart(coordinator, {
             durationMs: 1_000,
-            participantIds: ['alice', 'amy', 'bob', 'ben'],
-            rules: { type: 'team_base_siege', maxPressureRounds: 3 },
-            metadata: {
-                gameSession: {
-                    teamNames: ['Ember', 'Tide'],
-                    teamByParticipant: {
-                        alice: 'Ember',
-                        amy: 'Ember',
-                        bob: 'Tide',
-                        ben: 'Tide',
-                    },
-                    pressureRound: 0,
-                    arenaHalfSize: 32,
-                },
-            },
+            participantIds: ['alice', 'bob'],
+            rules: { type: 'team_base_siege', scoring: 'last-standing' },
         });
         now = 2_500;
         const result = await coordinator.tick();
-        assert.equal(result.reason, 'pressure-round');
-        assert.equal(deferred, 1);
-        assert.equal(coordinator.snapshot().contests[contestId].status, 'running');
-        assert.ok(coordinator.snapshot().contests[contestId].deadlineAt > now);
-    }, {
-        clock: () => now,
-        onDeadline: contest => {
-            deferred += 1;
-            contest.deadlineAt = now + 5_000;
-            contest.metadata.gameSession.pressureRound = 1;
-            contest.metadata.gameSession.arenaHalfSize = 24;
-            return { reason: 'pressure-round' };
-        },
-    });
+        assert.equal(result.reason, 'deadline');
+        assert.equal(coordinator.snapshot().contests[contestId].status, 'completed');
+    }, { clock: () => now });
 });

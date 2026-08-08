@@ -98,6 +98,7 @@ export {
 } from './team_base_siege.js';
 export {
     contestHasTeamSession,
+    isBaseSiegeContest,
     isTeamContestType,
     isTeamEliminationContest,
     isTeamItemRaceContest,
