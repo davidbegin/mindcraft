@@ -19,7 +19,13 @@
         let playback = Promise.resolve();
         let playbackGeneration = 0;
         let activeAudio = null;
+        let activeAgentName = null;
         let resolveActiveAudio = null;
+        // Lines arrive well before they play, so a per-bot clear has to name the
+        // backlog it cancels rather than a moment in time: agent name -> the last
+        // sequence number that bot is no longer allowed to play.
+        let sequence = 0;
+        const clearedThrough = new Map();
 
         const setStatus = (status) => {
             try { onStatus?.(status); } catch (_) { /* page callback is advisory */ }
@@ -42,17 +48,21 @@
         socket.on('bot-voice', (payload) => {
             if (!enabled || !payload?.audio) return;
             const generation = playbackGeneration;
+            const seq = ++sequence;
             playback = playback.catch(() => {}).then(() => new Promise(resolve => {
-                if (generation !== playbackGeneration) {
+                if (generation !== playbackGeneration
+                    || seq <= (clearedThrough.get(payload.agentName) ?? 0)) {
                     resolve();
                     return;
                 }
                 const audio = new Audio(`data:audio/mpeg;base64,${payload.audio}`);
                 activeAudio = audio;
+                activeAgentName = payload.agentName;
                 resolveActiveAudio = resolve;
                 const finish = () => {
                     if (activeAudio === audio) {
                         activeAudio = null;
+                        activeAgentName = null;
                         resolveActiveAudio = null;
                     }
                     resolve();
@@ -70,13 +80,20 @@
             }));
         });
 
-        socket.on('bot-voice-clear', () => {
-            playbackGeneration++;
+        socket.on('bot-voice-clear', (payload) => {
+            const agentName = payload?.agentName;
+            if (agentName) {
+                clearedThrough.set(agentName, sequence);
+                if (activeAgentName !== agentName) return;
+            } else {
+                playbackGeneration++;
+                playback = Promise.resolve();
+            }
             activeAudio?.pause();
             activeAudio = null;
+            activeAgentName = null;
             resolveActiveAudio?.();
             resolveActiveAudio = null;
-            playback = Promise.resolve();
         });
 
         return {

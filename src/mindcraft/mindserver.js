@@ -51,13 +51,30 @@ import {
 } from './contest/index.js';
 import { ConversationRequestRegistry } from './survivor/conversation_requests.js';
 import { PrivateRoomRegistry } from './survivor/private_rooms.js';
+import { SurvivorSeasonArchive } from './survivor/survivor_archive.js';
 import { SurvivorCoordinator } from './survivor/survivor_coordinator.js';
 import { SurvivorSessionManager } from './survivor/survivor_session_manager.js';
 import { runMinecraftCommand } from './minecraft_server.js';
 import { getCursorProfiles } from './model_profiles.js';
 import { synchronizeProfileSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
-import { clearSpeechQueue, playSpeech, setMuted, toggleMuted, isMuted } from '../agent/speak.js';
+import {
+    allowBot,
+    clearSpeechQueue,
+    playSpeech,
+    setMuted,
+    silenceBot,
+    toggleMuted,
+    isMuted,
+} from '../agent/speak.js';
+import {
+    getVoiceHealth,
+    noteVoiceFailure,
+    noteVoiceFailureReport,
+    noteVoiceSuccess,
+    resetVoiceHealth,
+    setVoiceHealthHandler,
+} from '../agent/tts_health.js';
 import { VoiceOutput } from './voice_output.js';
 import * as launchTelemetry from './diagnostics/launch_telemetry.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -87,7 +104,11 @@ const voiceOutput = new VoiceOutput({
         audioPromise: Promise.resolve(audio),
     }),
     clearHost: clearSpeechQueue,
+    silenceOnHost: silenceBot,
 });
+// A silent cast is indistinguishable from a quiet one, so every voice failure
+// is pushed to the open dashboards instead of living only in this console.
+setVoiceHealthHandler(health => emitToOperators('voice-health', health));
 let colonyCoordinator = null;
 let colonyReady = null;
 let colonySupervisorInterval = null;
@@ -97,6 +118,7 @@ let contestReady = null;
 let contestLoop = null;
 let gameSessionManager = null;
 let survivorCoordinator = null;
+let survivorArchive = null;
 let survivorRecovery = null;
 let survivorSessionManager = null;
 let survivorRooms = null;
@@ -457,6 +479,10 @@ async function ensureContest(options) {
             survivorCoordinator = existsSync(path.join(survivorRoot, 'state.json'))
                 ? await SurvivorCoordinator.load({ root: survivorRoot })
                 : await SurvivorCoordinator.create({ root: survivorRoot });
+            // A season that ended before the last shutdown has to be filed now:
+            // starting the next one overwrites state.json.
+            await survivorCoordinator.archiveFinishedSeason();
+            survivorArchive = new SurvivorSeasonArchive({ root: survivorRoot });
             survivorRooms = new PrivateRoomRegistry({
                 onEvent: handleSurvivorRoomEvent,
             });
@@ -574,6 +600,14 @@ async function ensureContest(options) {
                     }
                 },
             });
+            // Restoring the season is pure disk work now — it parks the season as
+            // suspended rather than respawning the cast — so it can be awaited
+            // here. Anything that calls ensureContest() before deciding whether a
+            // season is in the way is therefore looking at settled state. When
+            // recovery respawned bots it could not be awaited (registering a bot
+            // awaits ensureContest()), and the resulting race let a new game start
+            // and then get overrun by the season coming back underneath it.
+            await recoverSurvivorSeason();
             contestLoop.start();
             return coordinator;
         }).catch(error => {
@@ -584,10 +618,6 @@ async function ensureContest(options) {
             launchTelemetry.recordError(error, { stage: 'contest_bootstrap' });
             throw error;
         });
-        const pending = contestReady;
-        // Recovery re-creates bots, and registering a bot awaits ensureContest().
-        // Awaiting it inside the chain above would make this promise wait on itself.
-        pending.then(() => recoverSurvivorSeason(), () => {});
     }
     return contestReady;
 }
@@ -604,7 +634,8 @@ function recoverSurvivorSeason() {
             );
             console.error(
                 '[survivor] copy the report from the Games tab (Copy diagnostics) '
-                + 'or the diagnostics-report socket event, then cancel the season to reset.'
+                + 'or the diagnostics-report socket event, then cancel the season to reset. '
+                + 'Other games can still be started; the season was not restored.'
             );
             return null;
         })
@@ -694,6 +725,11 @@ function sendGameDirective(agentRef, prompt, options = {}) {
     if (!connection?.socket || !connection.in_game) {
         return Promise.reject(new Error(`Agent '${agentRef}' is not ready for a game directive`));
     }
+    // Handing a bot a goal, or cueing it to react, gives a silenced bot its
+    // voice back on the host queue too. A bare pause does not.
+    if (options.react === true || options.pause !== true) {
+        allowBot(connection.name);
+    }
     return new Promise((resolve, reject) => {
         connection.socket.timeout(20000).emit(
             'game-directive',
@@ -728,6 +764,27 @@ function clearContestVoice(contest) {
     }
 }
 
+/**
+ * The server generates narrator and council lines itself rather than going
+ * through speak.js, so it records voice health on the same path the agents use.
+ */
+async function generateVoiceAudio(text, voiceId, { voiceSettings = null, botName = null } = {}) {
+    try {
+        const audio = await elevenLabsTTSConfig.sendAudioRequest(
+            text,
+            getVoicesConfig().elevenlabs_model,
+            voiceId,
+            elevenLabsTTSConfig.baseUrl,
+            { voiceSettings }
+        );
+        noteVoiceSuccess();
+        return audio;
+    } catch (error) {
+        noteVoiceFailure(error, { provider: 'elevenlabs', botName });
+        throw error;
+    }
+}
+
 async function speakContestAnnouncement(text, options = {}) {
     const voiceSettings = options.delivery === 'booming'
         ? {
@@ -737,12 +794,10 @@ async function speakContestAnnouncement(text, options = {}) {
             use_speaker_boost: true,
         }
         : null;
-    const audio = await elevenLabsTTSConfig.sendAudioRequest(
+    const audio = await generateVoiceAudio(
         text,
-        getVoicesConfig().elevenlabs_model,
         resolveVoice(CONTEST_NARRATOR_CHARACTER.name, CONTEST_NARRATOR_CHARACTER.voice),
-        elevenLabsTTSConfig.baseUrl,
-        { voiceSettings }
+        { voiceSettings, botName: CONTEST_NARRATOR_CHARACTER.name }
     );
     const sessionId = options.sessionId || gameSessionManager?.view()?.sessionId;
     if (sessionId) {
@@ -780,11 +835,10 @@ async function speakSurvivorPlayerLine(playerId, text) {
     const line = String(text || '').trim().slice(0, 800);
     if (!line) return;
     const connection = getConnection(playerId);
-    const audio = await elevenLabsTTSConfig.sendAudioRequest(
+    const audio = await generateVoiceAudio(
         line,
-        getVoicesConfig().elevenlabs_model,
         resolveVoice(playerId, connection?.settings?.game_session?.voice ?? null),
-        elevenLabsTTSConfig.baseUrl
+        { botName: playerId }
     );
     const sessionId = connection?.settings?.game_session?.sessionId
         || survivorRecordingSessionId();
@@ -1176,12 +1230,15 @@ async function startContestGame(gameId, options = {}) {
         throw new Error('Game session manager is not enabled');
     }
     await survivorSessionManager?.archiveFinishedSeason();
-    const blockingSeason = survivorSessionManager?.view();
-    if (blockingSeason) {
-        throw new Error(
-            `A Survivor season is active (${blockingSeason.status}). `
-            + 'Cancel it before starting another game.'
-        );
+    // A suspended season deliberately does not block: parking a season so other
+    // games can run in between is the whole point of suspending it.
+    if (survivorSessionManager?.occupiesWorld()) {
+        const blockingSeason = survivorSessionManager.view();
+        throw new Error(blockingSeason
+            ? `A Survivor season is active (${blockingSeason.status}). `
+                + 'Suspend it to run other games, or cancel it outright.'
+            : 'A Survivor season is still recorded as running but has no session. '
+                + 'Cancel the season from the Survivor control room to clear it.');
     }
     try {
         const result = await gameSessionManager.start({
@@ -2016,6 +2073,7 @@ export function createMindServer(host_public = false, port = 8080) {
     const indexHtml = path.join(publicDir, 'index.html');
     const survivorHtml = path.join(publicDir, 'survivor.html');
     const conversationsHtml = path.join(publicDir, 'conversations.html');
+    const seasonsHtml = path.join(publicDir, 'seasons.html');
     // index: false so `/` can redirect to `/colony` instead of silently serving index.html
     app.use(express.static(publicDir, { index: false }));
     // Client-side views share index.html; each has a real URL for copy/share/reload.
@@ -2030,6 +2088,11 @@ export function createMindServer(host_public = false, port = 8080) {
     // its own rather than a card competing with the council console.
     app.get('/conversations', (_req, res) => {
         res.sendFile(conversationsHtml);
+    });
+    // Looking back at finished seasons has nothing to do with running one, so
+    // the archive is its own page rather than a panel in the control room.
+    app.get('/seasons', (_req, res) => {
+        res.sendFile(seasonsHtml);
     });
     app.get('/', (_req, res) => {
         res.redirect(302, '/colony');
@@ -2053,6 +2116,17 @@ export function createMindServer(host_public = false, port = 8080) {
     app.post('/api/voice/mute', applyMute);
     app.get('/api/voice/mute', (_req, res) => {
         res.json({ success: true, muted: isMuted() });
+    });
+
+    // Why the bots went quiet, without digging through the server console.
+    app.get('/api/voice/health', (_req, res) => {
+        res.json({ success: true, ...getVoiceHealth() });
+    });
+    // Dismisses the banner so the next real failure reports fresh.
+    app.post('/api/voice/health/reset', (_req, res) => {
+        resetVoiceHealth();
+        emitToOperators('voice-health', getVoiceHealth());
+        res.json({ success: true, ...getVoiceHealth() });
     });
 
     // What an export window would contain, so the UI can preview before downloading.
@@ -2163,6 +2237,8 @@ export function createMindServer(host_public = false, port = 8080) {
         console.log('Client connected');
 
         agentsStatusUpdate(socket);
+        // A reload must not lose a standing voice warning.
+        socket.emit('voice-health', getVoiceHealth());
 
         socket.on('list-profiles', (callback) => {
             callback({ success: true, profiles: getAvailableProfiles() });
@@ -2247,6 +2323,35 @@ export function createMindServer(host_public = false, port = 8080) {
             }
         });
 
+        // Post-season analysis reads from disk, not from the live session, so
+        // every season that ever ran is available whether or not one is running
+        // now. The list stays light; a season's rounds, ballots and transcripts
+        // only travel when somebody opens it.
+        socket.on('survivor-seasons', async callback => {
+            try {
+                await ensureContest();
+                if (!survivorArchive) throw new Error('Survivor is not enabled');
+                callback({ success: true, seasons: await survivorArchive.list() });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
+        socket.on('survivor-season', async (request, callback) => {
+            try {
+                await ensureContest();
+                if (!survivorArchive) throw new Error('Survivor is not enabled');
+                const season = await survivorArchive.get(request?.seasonId);
+                callback({
+                    success: Boolean(season),
+                    data: season,
+                    error: season ? null : `No season on record with id ${request?.seasonId}`,
+                });
+            } catch (error) {
+                callback({ success: false, error: error.message });
+            }
+        });
+
         socket.on('survivor-start', async (request, callback) => {
             try {
                 await ensureContest();
@@ -2260,10 +2365,27 @@ export function createMindServer(host_public = false, port = 8080) {
                     );
                 }
                 const preset = getSurvivorSeasonPreset(request?.scenarioId);
+                const participantCount = Array.isArray(request?.participants)
+                    ? request.participants.length
+                    : 0;
+                if (participantCount < preset.minimumPlayers) {
+                    const requirement = preset.maximumPlayers === preset.minimumPlayers
+                        ? `exactly ${preset.minimumPlayers}`
+                        : `at least ${preset.minimumPlayers}`;
+                    throw new Error(
+                        `${preset.title} requires ${requirement} players`
+                    );
+                }
+                if (preset.maximumPlayers && participantCount > preset.maximumPlayers) {
+                    throw new Error(
+                        `${preset.title} requires exactly ${preset.maximumPlayers} players`
+                    );
+                }
                 const data = await survivorSessionManager.start({
                     participants: request?.participants,
                     mergeAt: request?.mergeAt ?? preset.mergeAt,
                     finalistCount: request?.finalistCount ?? preset.finalistCount,
+                    juryEligibility: preset.juryEligibility,
                     tribeNames: request?.tribeNames ?? preset.tribeNames,
                     challengeGameIds: request?.challengeGameIds ?? preset.challengeGameIds,
                     systemPrompt: request?.systemPrompt,
@@ -2290,6 +2412,18 @@ export function createMindServer(host_public = false, port = 8080) {
             try {
                 await ensureContest();
                 if (!survivorSessionManager) throw new Error('Survivor is not enabled');
+                // Bringing a parked season back needs the world, so whatever has
+                // been running in the meantime has to be off it first.
+                if (request?.action === 'resume-season') {
+                    await gameSessionManager?.releasePodiumHold();
+                    const blockingGame = gameSessionManager?.view();
+                    if (blockingGame) {
+                        throw new Error(
+                            `A contest game is already active: ${blockingGame.title} (${blockingGame.status}). `
+                            + 'Cancel it on the games dashboard before resuming Survivor.'
+                        );
+                    }
+                }
                 const data = await survivorSessionManager.control(
                     request?.action,
                     request || {}
@@ -2942,6 +3076,21 @@ export function createMindServer(host_public = false, port = 8080) {
         socket.on('start-voice-monitor', () => addVoiceMonitor(socket));
         socket.on('stop-voice-monitor', () => removeVoiceMonitor(socket));
 
+        // Agents generate their own voice lines in their own processes, so a
+        // failure there is invisible here until the agent relays it.
+        socket.on('voice-problem', report => {
+            const connection = curAgent();
+            if (report?.recovered) {
+                noteVoiceSuccess();
+            } else {
+                noteVoiceFailureReport({
+                    ...report,
+                    botName: report?.botName || connection?.name || null,
+                });
+            }
+            emitToOperators('voice-health', getVoiceHealth());
+        });
+
         socket.on('contest-speech', async (options, callback) => {
             try {
                 const connection = curAgent();
@@ -2949,7 +3098,9 @@ export function createMindServer(host_public = false, port = 8080) {
                     throw new Error('Contest voice broadcast is only available to active game agents');
                 }
                 if (!hasKey('ELEVENLABS_API_KEY')) {
-                    throw new Error('ELEVENLABS_API_KEY is not configured');
+                    const missingKey = new Error('ELEVENLABS_API_KEY is not configured');
+                    noteVoiceFailure(missingKey, { botName: connection.name });
+                    throw missingKey;
                 }
                 const text = String(options?.text || '').trim().slice(0, 500);
                 if (!text) {
@@ -2959,12 +3110,9 @@ export function createMindServer(host_public = false, port = 8080) {
                     connection.name,
                     connection.settings.game_session.voice
                 );
-                const audio = await elevenLabsTTSConfig.sendAudioRequest(
-                    text,
-                    getVoicesConfig().elevenlabs_model,
-                    voiceId,
-                    elevenLabsTTSConfig.baseUrl
-                );
+                const audio = await generateVoiceAudio(text, voiceId, {
+                    botName: connection.name,
+                });
                 broadcastContestRecordingAudio(connection, {
                     sessionId: connection.settings.game_session.sessionId,
                     speaker: connection.name,

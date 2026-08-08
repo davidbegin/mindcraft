@@ -166,6 +166,40 @@
 
         .view-panel[hidden] { display: none !important; }
 
+        /* Voice failures are otherwise indistinguishable from quiet bots, so
+           they get a banner above every view rather than a console line. */
+        .voice-alert {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 11px 14px;
+            margin-bottom: 16px;
+            border-radius: var(--radius);
+            background: var(--red-dim);
+            border: 1px solid rgba(239, 83, 80, 0.45);
+            box-shadow: var(--shadow);
+        }
+        .voice-alert.transient {
+            background: var(--amber-dim);
+            border-color: rgba(240, 180, 41, 0.45);
+        }
+        .voice-alert-icon { font-size: 1.05rem; line-height: 1.3; }
+        .voice-alert-body { flex: 1; min-width: 0; }
+        .voice-alert-title {
+            font-weight: 700;
+            color: #ffb4b2;
+            margin-bottom: 2px;
+        }
+        .voice-alert.transient .voice-alert-title { color: var(--amber); }
+        .voice-alert-hint { color: var(--text-dim); font-size: 0.85rem; }
+        .voice-alert-detail {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            color: var(--text-mute);
+            margin-top: 4px;
+            word-break: break-word;
+        }
+
         .meta-chip {
             background: var(--bg-elevated);
             border: 1px solid var(--border);
@@ -1895,6 +1929,7 @@
             <a href="/games" id="viewGamesBtn" data-view="games">Games</a>
             <a href="/survivor" id="viewSurvivorBtn">Survivor</a>
             <a href="/conversations" id="viewConversationsBtn">Conversations</a>
+            <a href="/seasons" id="viewSeasonsBtn">Archive</a>
         </nav>
         <span id="msStatus" class="status-pill offline">mindserver offline</span>
         <div class="topbar-meta">
@@ -1902,6 +1937,16 @@
             <span class="meta-chip" id="worldMeta">—</span>
         </div>
     </header>
+
+    <div id="voiceAlert" class="voice-alert" hidden>
+        <span class="voice-alert-icon" aria-hidden="true">🔇</span>
+        <div class="voice-alert-body">
+            <div class="voice-alert-title" id="voiceAlertTitle"></div>
+            <div class="voice-alert-hint" id="voiceAlertHint"></div>
+            <div class="voice-alert-detail" id="voiceAlertDetail"></div>
+        </div>
+        <button type="button" class="btn btn-ghost" id="voiceAlertDismiss">Dismiss</button>
+    </div>
 
     <div id="colonyView" class="view-panel">
     <section id="colonyPanel" class="colony-strip">
@@ -2681,6 +2726,47 @@
             socket.emit('listen-to-agents');
         }
 
+        /**
+         * A dead microphone is silent in exactly the same way a calm colony is,
+         * so the banner names the reason the bots stopped talking. Transient
+         * failures (rate limits, network) are amber and clear themselves; the
+         * ones needing a human (credits, keys) are red and stick around.
+         */
+        function renderVoiceHealth(health) {
+            const el = document.getElementById('voiceAlert');
+            if (!el) return;
+            const problem = health?.outage || (health?.ok === false ? health.lastFailure : null);
+            if (!problem) {
+                el.hidden = true;
+                return;
+            }
+            const needsHuman = ['quota', 'auth', 'config', 'voice'].includes(problem.kind);
+            el.classList.toggle('transient', !needsHuman);
+            document.getElementById('voiceAlertTitle').textContent =
+                health.summary || 'Bot voices are failing.';
+            document.getElementById('voiceAlertHint').textContent = problem.hint || '';
+            const bits = [];
+            if (problem.kind) bits.push(problem.kind);
+            if (problem.status != null) bits.push(`status ${problem.status}`);
+            if (problem.code) bits.push(problem.code);
+            if (problem.botName) bits.push(`first seen on ${problem.botName}`);
+            if (health.failureCount > 1) bits.push(`${health.failureCount} dropped lines`);
+            document.getElementById('voiceAlertDetail').textContent =
+                `${bits.join(' · ')}${problem.message ? ` — ${problem.message}` : ''}`;
+            el.hidden = false;
+        }
+
+        document.getElementById('voiceAlertDismiss')?.addEventListener('click', async () => {
+            document.getElementById('voiceAlert').hidden = true;
+            // Clear it server-side too, so the next real failure reports fresh
+            // instead of being swallowed by the report cooldown.
+            try {
+                await fetch('/api/voice/health/reset', { method: 'POST' });
+            } catch (_) {
+                // The banner is already hidden; a failed reset is not worth surfacing.
+            }
+        });
+
         updateStatus(false);
         socket.on('connect', () => {
             updateStatus(true);
@@ -2693,6 +2779,7 @@
         });
         socket.on('disconnect', () => updateStatus(false));
         socket.on('connect_error', () => updateStatus(false));
+        socket.on('voice-health', renderVoiceHealth);
         socket.on('colony-update', renderColonyState);
         socket.on('contest-update', renderContestState);
         socket.on('survivor-update', renderSurvivorState);
@@ -2800,13 +2887,20 @@
             const panel = document.getElementById('survivorPanel');
             const summary = document.getElementById('survivorSummary');
             const game = state?.game;
-            panel?.classList.toggle('idle', game?.status !== 'running');
+            panel?.classList.toggle(
+                'idle',
+                game?.status !== 'running' || state?.status === 'suspended'
+            );
             if (!summary) return;
             if (game?.status === 'running') {
                 const remaining = game.participantIds.filter(id => game.players[id]?.active).length;
-                summary.textContent =
-                    `Season in progress — round ${game.round}, ${String(game.phase).replaceAll('_', ' ')}, `
-                    + `${remaining} of ${game.participantIds.length} still in.`;
+                const where = `round ${game.round}, ${String(game.phase).replaceAll('_', ' ')}, `
+                    + `${remaining} of ${game.participantIds.length} still in`;
+                // A suspended season is parked, not in the way, and the dashboard
+                // has to say so or its games look blocked for no visible reason.
+                summary.textContent = state?.status === 'suspended'
+                    ? `Season suspended at ${where}. Games below can run; resume it from the control room.`
+                    : `Season in progress — ${where}.`;
                 return;
             }
             if (game?.status === 'completed') {
@@ -2862,6 +2956,17 @@
 
         function updateLaunchProgressFromSession(gameSession) {
             if (!contestBusy || !gameSession) return;
+            // The session announces its own death on this stream as soon as the
+            // server gives up, which is well before the start-game ack lands.
+            // Hand the roster back now instead of leaving the cards on "Starting…".
+            if (gameSession.status === 'failed' && gameSetup.isBusy()) {
+                const message = gameSession.error || 'Launch failed';
+                gameSetup.abortLaunch(message);
+                gameSetup.setFooter('Fix the error and try again.');
+                setContestStatus(message, true);
+                fetchLastLaunchReport();
+                return;
+            }
             const message = launchProgressMessage(gameSession);
             if (!message) return;
             setContestStatus(message, Boolean(gameSession.error));
@@ -3416,6 +3521,8 @@
                     : '';
                 title.textContent = `${active.title} · ${active.status}${sessionStatus}`;
                 const arena = active.metadata?.arenaReset?.center || gameSession?.arenaReset?.center;
+                const recording = gameSession?.recording || active.metadata?.recording;
+                const lostAngles = recording?.failures?.length || 0;
                 const updateRow = () => {
                     row.innerHTML = `
                         <span><strong>${esc(String(active.participantIds?.length || sessionParticipants?.length || 0))}</strong> bots</span>
@@ -3423,8 +3530,11 @@
                         ${active.rules?.scoring === 'tallest-standing-tower'
                             ? '<span>Towers measured automatically at the buzzer</span>'
                             : `<span>Submitted <strong>${Object.keys(active.submissions || {}).length}</strong> / ${active.participantIds?.length || 0}</span>`}
-                        ${(gameSession?.recording || active.metadata?.recording)?.enabled
-                            ? `<span>● Recording <strong>${esc(String((gameSession?.recording || active.metadata.recording).cameraCount))}</strong> synced angles</span>`
+                        ${recording?.enabled
+                            ? `<span>● Recording <strong>${esc(String(recording.cameraCount))}</strong> synced angles</span>`
+                            : ''}
+                        ${lostAngles
+                            ? `<span class="contest-status-msg error" title="${esc(recording.failures.map(f => `${f.agentName}: ${f.error}`).join('; '))}">No camera for <strong>${esc(recording.failures.map(f => f.agentName).join(', '))}</strong></span>`
                             : ''}
                         ${arena
                             ? `<span>Arena <code>${esc(`${arena.x} ${arena.y} ${arena.z}`)}</code></span>`

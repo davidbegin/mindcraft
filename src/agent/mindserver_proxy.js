@@ -109,11 +109,28 @@ class MindServerProxy {
             }
         });
 
+        // The bot died or was voted out. Everything it has queued — speech,
+        // goals, the action it is midway through — goes now.
+        this.socket.on('game-eliminated', (payload, callback) => {
+            if (!this.agent) {
+                callback?.({ success: false, error: 'Agent is not ready' });
+                return;
+            }
+            this.agent.markEliminated(payload?.reason || 'eliminated');
+            callback?.({ success: true });
+        });
+
         this.socket.on('game-directive', async (directive, callback) => {
             try {
                 if (!this.agent || !directive?.prompt) {
                     callback?.({ success: false, error: 'Agent is not ready for a game directive' });
                     return;
+                }
+                // A goal or a cue to react means the show wants this bot audible
+                // again, which is how a juror gets to speak and vote after being
+                // voted out. A bare pause is the opposite and leaves it silent.
+                if (directive.react === true || directive.pause !== true) {
+                    this.agent.reinstate();
                 }
                 if (directive.react === true) {
                     await this.agent.self_prompter.pause();
@@ -267,12 +284,18 @@ class MindServerProxy {
                 contestType: config?.contestType ?? null,
                 winItem: config?.winItem ?? null,
                 floorY: Number.isFinite(config?.floorY) ? config.floorY : null,
+                stationaryFloorBreakMs: Number.isFinite(config?.stationaryFloorBreakMs)
+                    ? config.stationaryFloorBreakMs
+                    : null,
                 survivorChallengeId: config?.challengeId ?? null,
             };
             if (this.agent) {
                 this.agent._contestDeathReported = false;
                 this.agent._contestWinReported = false;
                 this.agent._contestEliminatedReported = false;
+                // A new challenge is a clean slate: losing the last one must not
+                // leave a bot mute for the rest of the season.
+                this.agent.reinstate();
             }
         });
 
@@ -466,6 +489,17 @@ export function requestSurvivorCommand(type, payload = {}) {
 // for sending general output to server for display
 export function sendOutputToServer(agentName, message) {
     serverProxy.getSocket().emit('bot-output', agentName, message);
+}
+
+/**
+ * Agents generate their own TTS, so a voice failure here would never reach the
+ * control room without being relayed. Best effort: a bot that cannot talk to
+ * the server has bigger problems than a missing banner.
+ */
+export function reportVoiceProblem(report) {
+    const socket = serverProxy.getSocket();
+    if (!socket?.connected) return;
+    socket.emit('voice-problem', report);
 }
 
 export function requestContestSpeech(text) {

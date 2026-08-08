@@ -25,6 +25,7 @@ export class SurvivorCoordinator {
         this.root = path.resolve(options.root);
         this.statePath = path.join(this.root, 'state.json');
         this.journalPath = path.join(this.root, 'journal.jsonl');
+        this.seasonsDir = path.join(this.root, 'seasons');
         this.random = options.random || Math.random;
         this.game = options.state
             ? new SurvivorGame({ state: options.state, random: this.random })
@@ -57,14 +58,25 @@ export class SurvivorCoordinator {
             if (this.game?.snapshot().status === 'running') {
                 throw new Error('A Survivor season is already running');
             }
+            // state.json only ever holds the newest season, so the one being
+            // replaced is filed away first. Without this, starting a season
+            // erases the full record of the one before it.
+            await this._archive(this.game?.snapshot());
             this.game = new SurvivorGame({
                 ...specification,
                 id: specification?.id || randomUUID(),
                 random: this.random,
             });
-            await this._commit('season.started', {
-                seasonId: this.game.snapshot().id,
-            });
+            const snapshot = this.game.snapshot();
+            await this._persist();
+            // The opening events carry the cast and the tribe split, which is
+            // the only record of who played once state.json has moved on.
+            for (const event of snapshot.events) {
+                await this._appendJournal(event.type, {
+                    seasonId: snapshot.id,
+                    ...event,
+                });
+            }
             return this.view();
         });
     }
@@ -86,6 +98,7 @@ export class SurvivorCoordinator {
                     ...event,
                 });
             }
+            await this._archive(snapshot);
             return clone(result);
         });
     }
@@ -140,9 +153,29 @@ export class SurvivorCoordinator {
         return events;
     }
 
-    async _commit(type, data) {
-        await this._persist();
-        await this._appendJournal(type, data);
+    // A season that has stopped moving gets its own file under seasons/, keyed
+    // by season id, so post-season analysis reads a finished snapshot instead of
+    // replaying the journal from scratch.
+    async _archive(snapshot) {
+        if (!snapshot || !['completed', 'cancelled'].includes(snapshot.status)) return false;
+        await mkdir(this.seasonsDir, { recursive: true });
+        const target = path.join(this.seasonsDir, `${snapshot.id}.json`);
+        const temporaryPath = `${target}.${process.pid}.${randomUUID()}.tmp`;
+        try {
+            await writeFile(temporaryPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+            await rename(temporaryPath, target);
+        } catch (error) {
+            await rm(temporaryPath, { force: true }).catch(() => {});
+            throw error;
+        }
+        return true;
+    }
+
+    // Files the current season if it has already finished. The server calls this
+    // at boot so a season that ended before archiving existed is not lost the
+    // next time somebody starts a new one.
+    archiveFinishedSeason() {
+        return this._enqueue(() => this._archive(this.game?.snapshot()));
     }
 
     async _persist() {

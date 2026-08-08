@@ -9,146 +9,16 @@ import { validateGameParticipants } from '../contest/game_session_manager.js';
 import { ConversationRequestRegistry } from './conversation_requests.js';
 import { buildChallengeDeck, resolveTeamChallenge } from './survivor_challenges.js';
 import { COUNCIL_PHASES, MIN_SURVIVOR_PLAYERS } from './survivor_game.js';
-import { JURY_LENS, buildPlayerBriefing } from './survivor_memory.js';
+import { buildPlayerBriefing } from './survivor_memory.js';
+import { buildSurvivorDirective } from './survivor_prompts.js';
 import { buildSurvivorRelationships } from './survivor_relationships.js';
 import { buildSurvivorStandings } from './survivor_standings.js';
+import { applyRefusalEvent, applyRoomEvent } from './survivor_threads.js';
 
 function clone(value) {
     return value === null || value === undefined
         ? value
         : JSON.parse(JSON.stringify(value));
-}
-
-// Private talk used to be a strategy-phase privilege that every phase change
-// tore down. It is now permanently available, so the toolbox rides along with
-// every directive instead of being spelled out inside one phase's copy.
-const PRIVATE_TALK_TOOLBOX = [
-    'PRIVATE TALK IS ALWAYS OPEN — in every phase, including during a challenge,',
-    'at the council mat, and while ballots are open. Nobody but the people you name',
-    'hears it, and your room stays open until you walk out of it.',
-    '  !requestPrivateChat("Alice,Bob", "why they should hear you out") — asks them to step aside with you.',
-    '  !acceptPrivateChat("request id") or !declinePrivateChat("request id", "reason") — you may refuse anyone.',
-    '  !sendPrivateMessage("...") — talks to everyone currently in your private room.',
-    '  !leavePrivateGroup() — walks out, which frees you to be pulled aside by someone else.',
-    'Refusing to talk is a real move, and so is being refused. Note who will not meet with you.',
-    'Lying in private is legal. Being caught lying is what costs you the jury, so weigh it.',
-].join('\n');
-
-function phaseInstructions(state, playerId) {
-    const player = state.players[playerId];
-    const legalTargets = state.eligibleTargetIds.filter(id => id !== playerId);
-    switch (state.phase) {
-        case 'challenge':
-            return [
-                state.merged
-                    ? 'IMMUNITY CHALLENGE. Winning makes you the one player who cannot be voted out tonight.'
-                    : `IMMUNITY CHALLENGE for ${player.tribe}. The losing tribe goes to Tribal Council alone.`,
-                'How you behave while losing is remembered as long as how you behave while winning.',
-            ];
-        case 'strategy':
-            if (!state.merged && player.tribe !== state.councilTribe) {
-                return [
-                    `Your tribe is safe. ${state.councilTribe} goes to Tribal Council.`,
-                    'Give one short public confessional about what the result means.',
-                    'Your own tribemates are still worth working — the vote that ends your game is later.',
-                ];
-            }
-            return [
-                `You are going to Tribal Council. Immunity: ${state.immunityIds.join(', ') || 'nobody'}.`,
-                `Vulnerable tonight: ${state.eligibleTargetIds.join(', ')}.`,
-                'This is the widest window you get to work people before the vote. Use it.',
-                'Speak publicly in short confessionals too, so the audience follows your reasoning.',
-            ];
-        case 'tribal_council':
-            return [
-                'YOU ARE AT TRIBAL COUNCIL. Jeff Prompts is hosting and everything said here is PUBLIC.',
-                'DO NOT VOTE YET. Voting does not open until Jeff closes council.',
-                'When Jeff asks you something, answer with !answerCouncil("your answer").',
-                'Every other player hears your answer and will remember it — the jury included.',
-                'Answer so that the person you are about to vote out could still respect you afterwards.',
-                'Listen hard to what everyone else says. You are expected to change your mind here if',
-                'what comes out on the mat changes the picture. That is what council is for.',
-                `Vulnerable tonight: ${legalTargets.join(', ') || 'nobody'}.`,
-            ];
-        case 'voting':
-        case 'revote':
-            return [
-                'Council is closed. Vote now.',
-                'Before you do: reconsider everything that just came out on the mat. If someone',
-                'exposed a lie, panicked, or handed you a better target, change your vote accordingly.',
-                `Legal targets: ${legalTargets.join(', ')}.`,
-                'Cast exactly one secret ballot with !castSurvivorVote("Name", "why"). Do not announce it.',
-                'The reason is sealed with your ballot: no other player ever sees it, so write the',
-                'real reason you are writing this name down, not the version you told them.',
-                'You may keep working people privately while you decide, but the ballot comes first:',
-                'a bot still whispering when the clock runs out has cast nothing.',
-            ];
-        case 'jury_voting':
-            return [
-                `Vote for the winner: ${legalTargets.join(', ')}.`,
-                'Judge the game that was played, not how much you liked being voted out.',
-                'Cast your ballot with !castSurvivorVote("Name", "why they earned your vote").',
-            ];
-        case 'finalist_tiebreak':
-            return [
-                `The jury deadlocked. You break the tie between ${legalTargets.join(' and ')}.`,
-                'Cast your ballot with !castSurvivorVote("Name", "why").',
-            ];
-        case 'deadlock':
-            return [
-                `The vote tied between ${state.tiedIds.join(' and ')} and neither can be voted again.`,
-                'Talk this out in public, then use !submitDeadlockDecision("Name").',
-                'It must be unanimous or everyone without immunity draws rocks.',
-            ];
-        case 'jury_questioning':
-            return player.jury
-                ? [
-                    `FINAL TRIBAL COUNCIL. The final ${state.finalistIds.length} are ${state.finalistIds.join(', ')}.`,
-                    'You are a juror. Jeff will put questions to you and to them; answer with !answerCouncil("...").',
-                    'Make them account for the moves they made, especially the one that took you out.',
-                ]
-                : [
-                    `FINAL TRIBAL COUNCIL. You are in the final ${state.finalistIds.length}.`,
-                    `Your jury is ${state.juryIds.join(', ')} — every one of them was voted out.`,
-                    'Answer Jeff with !answerCouncil("..."). This is the whole game.',
-                    'Claim your moves plainly. Jurors forgive a ruthless player who owns it and',
-                    'punish one who pretends they were carried along by fate.',
-                ];
-        case 'fire_making': {
-            const decidesSeason = state.finalistIds.length > 0
-                && state.tiedIds.every(id => state.finalistIds.includes(id));
-            return [
-                state.tiedIds.includes(playerId)
-                    ? `You are in the fire-making tiebreak. Prepare to compete.${decidesSeason ? ' The winner is the Sole Survivor.' : ''}`
-                    : `Watch the fire-making tiebreak between ${state.tiedIds.join(' and ')}.`,
-            ];
-        }
-        case 'completed':
-            return [`${state.winnerIds.join(', ')} is the Sole Survivor.`];
-        case 'cancelled':
-            return ['The season was cancelled.'];
-        default:
-            return [];
-    }
-}
-
-function phasePrompt(state, playerId, briefing = '') {
-    const player = state.players[playerId];
-    const activeIds = state.participantIds.filter(id => state.players[id].active);
-    const header = [
-        `SURVIVOR — ROUND ${state.round}. PHASE: ${state.phase.replaceAll('_', ' ')}.`,
-        state.merged
-            ? `You are ${playerId}. The tribes have merged; everyone plays for themselves.`
-            : `You are ${playerId}. Tribe: ${player.tribe}.`,
-        `Still in the game (${activeIds.length}): ${activeIds.join(', ')}.`,
-    ];
-    return [
-        header.join('\n'),
-        JURY_LENS,
-        briefing,
-        phaseInstructions(state, playerId).join('\n'),
-        player.active ? PRIVATE_TALK_TOOLBOX : '',
-    ].filter(Boolean).join('\n\n');
 }
 
 export function councilQuestionPrompt(question, state) {
@@ -305,7 +175,11 @@ export class SurvivorSessionManager {
             placement: player.placement ?? null,
             partnerIds,
             threadCount: own.length,
-            openThreadCount: own.filter(thread => thread.open).length,
+            // A thread they walked out of is still theirs to read, but they are
+            // not in the room any more, so it does not count as talking.
+            openThreadCount: own.filter(thread =>
+                thread.open && (thread.currentMemberIds || []).includes(id)
+            ).length,
             // Split so an operator can tell a talker from someone being talked at.
             spokenCount: own.reduce(
                 (total, thread) => total + (thread.messageCountBySender[id] || 0),
@@ -337,95 +211,14 @@ export class SurvivorSessionManager {
     }
 
     _recordThreadEvent(event) {
-        let thread = this.roomHistory.find(item => item.roomId === event.roomId);
-        if (!thread) {
-            thread = {
-                roomId: event.roomId,
-                round: event.round,
-                phase: event.phase,
-                ownerId: event.ownerId ?? null,
-                memberIds: [],
-                currentMemberIds: [],
-                invitedIds: [],
-                pitch: '',
-                messages: [],
-                messageCount: 0,
-                messageCountBySender: {},
-                openedAt: event.at,
-                closedAt: null,
-                closeReason: null,
-                lastMessageAt: null,
-            };
-            this.roomHistory.push(thread);
-            if (this.roomHistory.length > this.roomHistoryLimit) {
-                this.roomHistory.splice(0, this.roomHistory.length - this.roomHistoryLimit);
-            }
-        }
-        // memberIds is the union across the thread's life: someone who talked and
-        // then walked out still built a relationship, and their words stay in the
-        // transcript.
-        for (const memberId of [...(event.memberIds || []), event.memberId]) {
-            if (memberId && !thread.memberIds.includes(memberId)) thread.memberIds.push(memberId);
-        }
-        // Every room event carries the membership as it stands afterwards, which
-        // is how the browser knows who is still sitting in an open thread.
-        if (Array.isArray(event.memberIds)) thread.currentMemberIds = [...event.memberIds];
-        if (event.type === 'room.created') {
-            thread.invitedIds = [...(event.invitedIds || [])];
-            thread.pitch = event.pitch || '';
-        }
-        if (event.type === 'room.message' && event.senderId) {
-            thread.messages.push({
-                id: event.id,
-                senderId: event.senderId,
-                message: event.message,
-                at: event.at,
-                round: event.round,
-                phase: event.phase,
-            });
-            if (thread.messages.length > this.threadMessageLimit) thread.messages.shift();
-            thread.messageCount += 1;
-            thread.messageCountBySender[event.senderId] =
-                (thread.messageCountBySender[event.senderId] || 0) + 1;
-            thread.lastMessageAt = event.at;
-        }
-        if (event.type === 'room.closed') {
-            thread.closedAt = event.at;
-            thread.closeReason = event.reason ?? null;
-            thread.currentMemberIds = [];
-        }
+        applyRoomEvent(this.roomHistory, event, {
+            messageLimit: this.threadMessageLimit,
+            threadLimit: this.roomHistoryLimit,
+        });
     }
 
-    // "I will not meet with you" never becomes a thread, so it would vanish from
-    // the browser entirely if we only kept rooms. Silence counts as a refusal
-    // too, and only talk.resolved knows who never answered.
     _recordRefusals(event) {
-        const push = (requesterId, inviteeId, reason) => {
-            if (!requesterId || !inviteeId) return;
-            const already = this.refusals.some(item =>
-                item.requestId === event.requestId && item.inviteeId === inviteeId
-            );
-            if (already) return;
-            this.refusals.push({
-                requestId: event.requestId ?? null,
-                requesterId,
-                inviteeId,
-                reason,
-                at: event.at,
-                round: event.round,
-                phase: event.phase,
-            });
-            if (this.refusals.length > this.refusalLimit) this.refusals.shift();
-        };
-        if (event.type === 'talk.declined') {
-            push(event.requesterId, event.inviteeId, event.reason || 'no reason given');
-            return;
-        }
-        if (event.type === 'talk.resolved') {
-            for (const inviteeId of event.declinerIds || []) {
-                push(event.requesterId, inviteeId, 'never answered');
-            }
-        }
+        applyRefusalEvent(this.refusals, event, { limit: this.refusalLimit });
     }
 
     // A named failure the operator can act on, without aborting the season.
@@ -516,6 +309,16 @@ export class SurvivorSessionManager {
         });
     }
 
+    // Whether the season is holding the world right now, which is the only thing
+    // that should stop another game from starting. A suspended season owns no
+    // bots and no arena, and a finished one is just standings left on screen, so
+    // neither is in the way. Also true for a season stranded on disk with no
+    // session record, because its bots and arena claim are unaccounted for.
+    occupiesWorld() {
+        if (!this.active) return this.coordinator.view()?.status === 'running';
+        return ['provisioning', 'running'].includes(this.active.status);
+    }
+
     view() {
         if (!this.active) return null;
         const game = this.coordinator.view();
@@ -588,6 +391,11 @@ export class SurvivorSessionManager {
         }));
     }
 
+    // A restart never puts bots back in the world on its own. The season is read
+    // back off disk and parked as 'suspended', and the control room shows it
+    // waiting; the operator decides whether to bring it back or start something
+    // else. Auto-resuming here used to race game starts, because the guards that
+    // block a new game read this.active and recovery had not set it yet.
     async recover() {
         let saved;
         try {
@@ -602,102 +410,164 @@ export class SurvivorSessionManager {
             return null;
         }
         this.active = saved;
-        this.active.status = 'running';
+        this.active.status = 'suspended';
+        this.active.suspendedReason = 'server-restart';
+        this.active.paused = true;
+        this.active.phaseDeadlineAt = null;
+        // The cast is gone with the old process, so nothing is owed a resume.
+        this.active.createdAgents = [];
+        // A challenge cannot survive a restart: the contest that was driving it
+        // died with the process. Drop the link so resuming re-runs the round's
+        // challenge rather than waiting forever on a contest nobody is running.
+        this.active.challengeContestId = null;
         this.rooms.closeAll('server-restarted');
         this.conversations.cancelAll('server-restarted');
         // Private alliance memory lives only in memory during a season, so a
         // restart would otherwise wipe every bot's private history and the
-        // operator's relationship graph. Rebuild both from the journal before the
-        // phase directive goes out, since briefingFor() reads secretEventLog.
+        // operator's relationship graph. Rebuild both from the journal now, since
+        // briefingFor() reads secretEventLog when the season is resumed.
         await this._replayPrivateJournal(game);
-        this._log('info', `recovering season ${game.id} in phase '${game.phase}' with ${this.active.participantIds.length} bots`);
-        const missing = this.active.participantIds.filter(id =>
-            (game.players[id]?.active || game.players[id]?.jury) && !this.isAgentReady(id)
+        this._emit();
+        this._log(
+            'info',
+            `season ${game.id} restored in phase '${game.phase}' and suspended, waiting for the operator to resume`
         );
+        return this.view();
+    }
+
+    // Park the season without ending it: the cast leaves the world and the arena
+    // is free for another game, but the game state on disk is untouched so it can
+    // be picked up again later.
+    async suspend(reason = 'Suspended by operator') {
+        this._requireActive();
+        if (this.active.status === 'suspended') return this.view();
+        if (this.active.challengeContestId) {
+            throw new Error('Let the immunity challenge finish before suspending the season');
+        }
+        const cast = this.active.createdAgents;
+        this.rooms.closeAll('season-suspended');
+        this.conversations.cancelAll('season-suspended');
+        await Promise.allSettled(cast.map(agent => this.destroyAgent(agent.id)));
+        this.active.status = 'suspended';
+        this.active.suspendedReason = 'operator';
+        this.active.paused = true;
+        this.active.phaseDeadlineAt = null;
+        this.active.createdAgents = [];
+        this.active.readiness = null;
+        this._emit();
+        this._log('info', `season ${this.active.id} suspended: ${reason}`);
+        return this.view();
+    }
+
+    // Bring a parked season back: respawn whoever is still in the game, re-send
+    // the phase directive so every bot knows where the season stands, and put the
+    // phase clock back on.
+    async resumeSeason() {
+        this._requireActive();
+        if (this.active.status !== 'suspended') return this.view();
+        const game = this.coordinator.view();
+        if (game?.status !== 'running') {
+            throw new Error('The suspended season is no longer running and cannot be resumed');
+        }
         try {
-            if (missing.length > 0) {
-                this._log('info', `respawning ${missing.length} bot(s): ${missing.join(', ')}`);
-                await this.reclaimNames(missing);
-                const profiles = new Map(this.getProfiles().map(profile => [profile.id, profile]));
-                const failures = [];
-                for (const participant of this.active.participants.filter(
-                    item => missing.includes(item.name)
-                )) {
-                    try {
-                        const catalogProfile = profiles.get(participant.profileId);
-                        if (!catalogProfile) {
-                            throw new Error(`missing profile '${participant.profileId}'`);
-                        }
-                        const profile = clone(catalogProfile.profile);
-                        profile.name = participant.name;
-                        profile.speak_model = participant.voice
-                            ? { api: 'elevenlabs', voice: participant.voice }
-                            : 'elevenlabs';
-                        const settings = this.buildAgentSettings(profile, {
-                            survivorSeasonId: game.id,
-                            sessionId: `survivor-${game.id}`,
-                            participantIds: this.active.participantIds,
-                            rivalIds: this.active.participantIds.filter(id => id !== participant.name),
-                            profileId: participant.profileId,
-                            voice: participant.voice,
-                            model: participant.model,
-                            provider: participant.provider,
-                            systemPrompt: this.active.systemPrompt || '',
-                            personalityPrompt: participant.systemPrompt,
-                            contestType: 'survivor',
-                        });
-                        const result = await this.createAgent(settings);
-                        if (!result?.success) {
-                            throw new Error(result?.error || 'createAgent returned no agent');
-                        }
-                        this.active.createdAgents = this.active.createdAgents.filter(
-                            item => item.name !== participant.name
-                        );
-                        this.active.createdAgents.push({
-                            name: participant.name,
-                            id: result.agentId ?? participant.name,
-                        });
-                        this._log('info', `respawned ${participant.name}`);
-                    } catch (error) {
-                        // One dead bot must not abandon the rest of the cast.
-                        failures.push(`${participant.name}: ${error.message}`);
-                        this._log('warn', `could not respawn ${participant.name}: ${error.message}`);
-                    }
-                }
-                if (failures.length > 0) {
-                    this._log('warn', `${failures.length} bot(s) failed to respawn`, { failures });
-                }
-                await this._waitUntilReady(missing, 'recovery');
-            }
-            if (game.challenge) {
-                const preset = this.getContestPreset(game.challenge.id);
-                const configs = await Promise.allSettled(this.active.participantIds.map(id =>
-                    this.sendChallengeConfig(id, {
-                        challengeId: preset.id,
-                        contestType: preset.rules?.type ?? null,
-                        winItem: preset.rules?.winItem ?? null,
-                        floorY: Number.isFinite(preset.rules?.floorY)
-                            ? preset.rules.floorY
-                            : null,
-                    })
-                ));
-                const rejected = configs.filter(entry => entry.status === 'rejected').length;
-                if (rejected > 0) {
-                    this._log('warn', `challenge config failed for ${rejected} bot(s)`);
-                }
-            }
+            await this._restoreCast(game);
+            this.active.status = 'running';
+            this.active.suspendedReason = null;
+            this.active.paused = false;
             await this._broadcastPhase();
+            // A season parked during 'challenge' comes back needing its challenge
+            // run, because suspending tore down the contest that would have run it.
+            if (game.phase === 'challenge' && !this.active.challengeContestId) {
+                await this.startNextChallenge();
+            } else {
+                const duration = this._durationForPhase(game.phase);
+                this.active.phaseDeadlineAt = duration == null ? null : this.clock() + duration;
+            }
             this._emit();
-            this._log('info', `season ${game.id} recovered in phase '${game.phase}'`);
+            this._log('info', `season ${game.id} resumed in phase '${game.phase}'`);
             return this.view();
         } catch (error) {
-            this._recordFailure(error, 'recovery');
-            this._log('error', `recovery failed: ${error.message}`, {
+            this._recordFailure(error, 'resume');
+            this._log('error', `resume failed: ${error.message}`, {
                 agents: this._describeAllAgents(),
             });
+            // Stay parked rather than half-running, so the operator can retry or
+            // cancel instead of being stuck in a season with no cast.
+            this.active.status = 'suspended';
+            this.active.paused = true;
             this._emit();
             throw error;
         }
+    }
+
+    // Put every castaway who is still in the game back in the world. One bot that
+    // will not spawn is reported, not fatal: the rest of the cast still plays.
+    async _restoreCast(game) {
+        const wanted = this.active.participantIds.filter(id =>
+            game.players[id]?.active || game.players[id]?.jury
+        );
+        // Anyone already in the world still belongs to this season. Claiming them
+        // here is what lets a later cancel or suspend take the whole cast down;
+        // a bot left out of createdAgents would be stranded in the world forever.
+        for (const name of wanted) {
+            if (this.active.createdAgents.some(item => item.name === name)) continue;
+            if (this.isAgentReady(name)) this.active.createdAgents.push({ name, id: name });
+        }
+        const missing = wanted.filter(id => !this.isAgentReady(id));
+        if (missing.length === 0) return [];
+        this._log('info', `respawning ${missing.length} bot(s): ${missing.join(', ')}`);
+        await this.reclaimNames(missing);
+        const profiles = new Map(this.getProfiles().map(profile => [profile.id, profile]));
+        const failures = [];
+        for (const participant of this.active.participants.filter(
+            item => missing.includes(item.name)
+        )) {
+            try {
+                const catalogProfile = profiles.get(participant.profileId);
+                if (!catalogProfile) {
+                    throw new Error(`missing profile '${participant.profileId}'`);
+                }
+                const profile = clone(catalogProfile.profile);
+                profile.name = participant.name;
+                profile.speak_model = participant.voice
+                    ? { api: 'elevenlabs', voice: participant.voice }
+                    : 'elevenlabs';
+                const settings = this.buildAgentSettings(profile, {
+                    survivorSeasonId: game.id,
+                    sessionId: `survivor-${game.id}`,
+                    participantIds: this.active.participantIds,
+                    rivalIds: this.active.participantIds.filter(id => id !== participant.name),
+                    profileId: participant.profileId,
+                    voice: participant.voice,
+                    model: participant.model,
+                    provider: participant.provider,
+                    systemPrompt: this.active.systemPrompt || '',
+                    personalityPrompt: participant.systemPrompt,
+                    contestType: 'survivor',
+                });
+                const result = await this.createAgent(settings);
+                if (!result?.success) {
+                    throw new Error(result?.error || 'createAgent returned no agent');
+                }
+                this.active.createdAgents = this.active.createdAgents.filter(
+                    item => item.name !== participant.name
+                );
+                this.active.createdAgents.push({
+                    name: participant.name,
+                    id: result.agentId ?? participant.name,
+                });
+                this._log('info', `respawned ${participant.name}`);
+            } catch (error) {
+                // One dead bot must not abandon the rest of the cast.
+                failures.push(`${participant.name}: ${error.message}`);
+                this._log('warn', `could not respawn ${participant.name}: ${error.message}`);
+            }
+        }
+        if (failures.length > 0) {
+            this._log('warn', `${failures.length} bot(s) failed to respawn`, { failures });
+        }
+        await this._waitUntilReady(missing, 'resume');
+        return missing;
     }
 
     // Rebuild the in-memory private record (secret feed, per-bot private history,
@@ -745,6 +615,10 @@ export class SurvivorSessionManager {
     async start(request = {}) {
         if (this.active?.status === 'completed') {
             await this.archiveFinishedSeason('Archived before starting a new season');
+        } else if (this.active?.status === 'suspended') {
+            throw new Error(
+                'A suspended Survivor season is waiting. Resume it or cancel it before starting a new one.'
+            );
         } else if (this.active) {
             throw new Error('A Survivor session is already active');
         }
@@ -783,6 +657,7 @@ export class SurvivorSessionManager {
             participantIds,
             mergeAt,
             finalistCount: request.finalistCount,
+            juryEligibility: request.juryEligibility,
             tribeNames: request.tribeNames,
         });
         const challengeGameIds = request.challengeGameIds;
@@ -808,6 +683,7 @@ export class SurvivorSessionManager {
             challengeContestId: null,
             phaseDeadlineAt: null,
             paused: false,
+            suspendedReason: null,
             phaseDurationsMs,
             // Off by default: the host runs council by hand. Turn it on for
             // unattended runs so a season can play itself through.
@@ -867,6 +743,12 @@ export class SurvivorSessionManager {
         if (this.contestCoordinator.snapshot().activeContestId) {
             throw new Error('A challenge contest is already active');
         }
+        // Private talk closes for the duration of the challenge. The rooms are how
+        // a bot gets pulled into scheming, and a bot scheming through a race it
+        // could have won is the exact failure this is here to prevent. The threads
+        // themselves survive in the journal, so nobody forgets an alliance.
+        this.rooms.closeAll('immunity-challenge');
+        this.conversations.cancelAll('immunity-challenge');
         const selectedId = gameId
             || this.active.challengeDeck[this.active.challengeIndex % this.active.challengeDeck.length];
         this.active.challengeIndex += 1;
@@ -901,6 +783,11 @@ export class SurvivorSessionManager {
             winItem: preset.rules?.winItem ?? null,
             floorY: Number.isFinite(preset.rules?.floorY)
                 ? preset.rules.floorY
+                : null,
+            stationaryFloorBreakMs: Number.isFinite(
+                preset.rules?.stationaryFloorBreakMs
+            )
+                ? preset.rules.stationaryFloorBreakMs
                 : null,
         })));
         await this._broadcastPhase();
@@ -967,6 +854,9 @@ export class SurvivorSessionManager {
 
     async tick() {
         if (!this.active || this.active.paused) return null;
+        // A parked season owns no bots and no arena, so nothing about it may move
+        // on its own while another game is using the world.
+        if (this.active.status === 'suspended') return null;
         await this._sweepConversationRequests();
         // A null deadline means the host holds the phase. Zero is a real deadline.
         if (this.active.phaseDeadlineAt == null) return null;
@@ -1077,6 +967,7 @@ export class SurvivorSessionManager {
             case 'status':
                 return { success: true, data: this._privateStatus(agentId) };
             case 'talk-request': {
+                this._requireSocialPhase(state);
                 const request = this.conversations.open(
                     agentId,
                     payload.inviteeIds,
@@ -1120,6 +1011,7 @@ export class SurvivorSessionManager {
                 this.rooms.leave(agentId);
                 return { success: true, message: 'Left the private room' };
             case 'room-send': {
+                this._requireSocialPhase(state);
                 const entry = this.rooms.send(agentId, payload.message);
                 return { success: true, data: { id: entry.id }, message: 'Private message sent' };
             }
@@ -1222,7 +1114,7 @@ export class SurvivorSessionManager {
     async control(action, payload = {}) {
         switch (action) {
             case 'pause':
-                this._requireActive();
+                this._requireRunningSession();
                 if (this.active.challengeContestId) {
                     throw new Error('Active immunity challenges cannot be paused');
                 }
@@ -1230,10 +1122,16 @@ export class SurvivorSessionManager {
                 this._emit();
                 return this.view();
             case 'resume':
-                this._requireActive();
+                // Only lifts a pause. A parked season needs its cast back, which
+                // is 'resume-season'.
+                this._requireRunningSession();
                 this.active.paused = false;
                 this._emit();
                 return this.view();
+            case 'suspend':
+                return this.suspend(payload.reason);
+            case 'resume-season':
+                return this.resumeSeason();
             case 'advance':
                 this._requireActive();
                 await this.advancePhase();
@@ -1257,9 +1155,14 @@ export class SurvivorSessionManager {
                     payload.questionId
                 );
                 return this.view();
-            case 'end-council':
-                this._requireRunning();
-                return this._applyAndTransition('beginVoting');
+            case 'end-council': {
+                // The finale is a council too, so the same button has to open the
+                // jury vote rather than a Tribal Council vote that cannot start.
+                const { phase } = this._requireRunning();
+                return this._applyAndTransition(
+                    phase === 'jury_questioning' ? 'beginJuryVote' : 'beginVoting'
+                );
+            }
             case 'set-phase-deadline': {
                 this._requireActive();
                 const seconds = Number(payload.seconds);
@@ -1317,9 +1220,19 @@ export class SurvivorSessionManager {
     }
 
     async cancel(reason = 'Cancelled by operator') {
-        if (!this.active) return null;
-        const session = clone(this.active);
         const state = this.coordinator.view();
+        // A season can outlive its session overlay — session.json is lost, or a
+        // startup died between coordinator.start() and this.active being set.
+        // Cancelling still has to clear the game on disk, or it blocks every
+        // later game and silently comes back on the next restart.
+        if (!this.active) {
+            if (state?.status !== 'running') return null;
+            await this.coordinator.apply('cancel', reason);
+            this._log('info', `cleared orphaned season ${state.id} with no session record`);
+            this._emit();
+            return null;
+        }
+        const session = clone(this.active);
         if (state?.status === 'running') await this.coordinator.apply('cancel', reason);
         const activeContestId = this.contestCoordinator.snapshot().activeContestId;
         if (activeContestId) {
@@ -1347,7 +1260,8 @@ export class SurvivorSessionManager {
         // A phase change deliberately leaves private rooms alone. An alliance
         // formed in strategy is still an alliance at the mat and in the voting
         // booth, and the conversation browser is meant to be live all season.
-        // It does get narrated, so the audience hears the show move.
+        // The one exception is a challenge, which startNextChallenge() closes the
+        // rooms for. It does get narrated, so the audience hears the show move.
         const phaseChanged = after.phase !== before.phase;
         const newlyEliminated = after.bootOrder.filter(id => !before.bootOrder.includes(id));
         for (const playerId of newlyEliminated) {
@@ -1383,9 +1297,20 @@ export class SurvivorSessionManager {
             || state.players[id].jury
             || state.finalistIds.includes(id)
         );
+        // A challenge directive carries the contest's own rules and nothing about
+        // the season; a social directive carries the bot's memory of the season and
+        // nothing about a contest. Only one of the two is ever built.
+        const challenge = state.phase === 'challenge' ? this._currentChallengePreset(state) : null;
         const results = await Promise.allSettled(recipients.map(id =>
-            this.sendDirective(id, phasePrompt(state, id, this.briefingFor(id, state)), {
+            this.sendDirective(id, buildSurvivorDirective(state, id, {
+                preset: challenge,
+                briefing: state.phase === 'challenge' ? '' : this.briefingFor(id, state),
+            }), {
                 pause: !state.players[id].active && !state.players[id].jury,
+                // A bot still in a conversation only gets its next goal queued
+                // behind that chat, so a challenge would start with the cast
+                // arguing and no idea what the contest is. Cut the talk instead.
+                endConversations: state.phase === 'challenge',
             })
         ));
         const undelivered = recipients.filter((_, index) => results[index].status === 'rejected');
@@ -1393,6 +1318,20 @@ export class SurvivorSessionManager {
             this._problem('phase-directive', new Error(
                 `${undelivered.join(', ')} did not receive the ${state.phase} directive`
             ));
+        }
+    }
+
+    // The contest the round is actually playing, or null in the gap between
+    // entering the challenge phase and the contest being set up. A preset that no
+    // longer resolves must not take the whole broadcast down with it.
+    _currentChallengePreset(state = this.coordinator.view()) {
+        const challengeId = state?.challenge?.id;
+        if (!challengeId) return null;
+        try {
+            return this.getContestPreset(challengeId);
+        } catch (error) {
+            this._problem('challenge-preset', error, { challengeId });
+            return null;
         }
     }
 
@@ -1426,9 +1365,20 @@ export class SurvivorSessionManager {
         };
     }
 
-    // Who this player may pull aside, in any phase. Before the merge the tribes
-    // are camped apart, so the set is the player's own tribe rather than whoever
-    // happens to be going to council; afterwards it is everyone left.
+    // The refusal a bot reads when it tries to socialise mid-challenge. It is
+    // phrased as a redirection, because the useful outcome is the bot going back
+    // to the contest rather than retrying the command.
+    _requireSocialPhase(state) {
+        if (state.phase !== 'challenge') return;
+        throw new Error(
+            'Private talk is closed during an immunity challenge. Win the challenge first;'
+            + ' camp talk reopens as soon as it is over.'
+        );
+    }
+
+    // Who this player may pull aside in any social phase. Before the merge the
+    // tribes are camped apart, so the set is the player's own tribe rather than
+    // whoever happens to be going to council; afterwards it is everyone left.
     _privateTalkPlayerIds(playerId) {
         const state = this.coordinator.view();
         if (!state || state.status !== 'running') return [];
@@ -1510,8 +1460,18 @@ export class SurvivorSessionManager {
         return this.coordinator.view();
     }
 
+    // A parked season is not playable: it has no cast in the world and no claim
+    // on the arena, so every gameplay path has to refuse until it is resumed.
+    _requireRunningSession() {
+        this._requireActive();
+        if (this.active.status === 'suspended') {
+            throw new Error('The Survivor season is suspended. Resume it first.');
+        }
+        return this.coordinator.view();
+    }
+
     _requireRunning() {
-        const state = this._requireActive();
+        const state = this._requireRunningSession();
         if (state?.status !== 'running') throw new Error('Survivor season is not running');
         return state;
     }

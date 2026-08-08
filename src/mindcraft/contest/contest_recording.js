@@ -74,29 +74,51 @@ export class ContestRecordingManager {
                 request.options
             )
         ));
-        const failures = results.flatMap((result, index) => {
+
+        // Every camera is a full offscreen renderer, so a whole roster starting
+        // at once can push a bot past the request timeout. Losing an angle costs
+        // footage, not the match: keep the angles that came up and let the caller
+        // report the rest. Aborting here used to strand a prepared arena full of
+        // bots that had not been told to play yet.
+        const failures = [];
+        const recorded = [];
+        results.forEach((result, index) => {
+            const { agentName, options } = requests[index];
             if (result.status === 'rejected') {
-                return [`${requests[index].agentName}: ${result.reason?.message || result.reason}`];
+                failures.push({
+                    agentName,
+                    error: String(result.reason?.message || result.reason),
+                });
+                return;
             }
             if (!result.value?.success) {
-                return [`${requests[index].agentName}: ${result.value?.error || 'recording failed'}`];
+                failures.push({
+                    agentName,
+                    error: String(result.value?.error || 'recording failed'),
+                });
+                return;
             }
-            return [];
+            recorded.push({ agentName, cameraCount: 1 + options.externalCameras.length });
         });
-        if (failures.length) {
-            await Promise.allSettled(participants.map(agentName =>
-                this.requestAgent(agentName, 'stop-contest-recording')
-            ));
-            throw new Error(`Could not record every contest angle (${failures.join('; ')})`);
+
+        // A bot that failed part way through can still have live recorders, and
+        // it is no longer in the session we would stop later. Release it now
+        // without making the match wait on another round trip.
+        for (const failure of failures) {
+            Promise.resolve()
+                .then(() => this.requestAgent(failure.agentName, 'stop-contest-recording'))
+                .catch(() => { /* the angle is already lost */ });
         }
 
         this.active = {
             sessionId,
             contestId,
             syncEpochMs,
-            participants: [...participants],
-            observer,
-            cameraCount: participants.length * 2 + 2,
+            participants: recorded.map(entry => entry.agentName),
+            requestedParticipants: [...participants],
+            observer: recorded.some(entry => entry.agentName === observer) ? observer : null,
+            cameraCount: recorded.reduce((total, entry) => total + entry.cameraCount, 0),
+            failures,
         };
         return { ...this.active };
     }

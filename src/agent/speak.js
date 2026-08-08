@@ -6,14 +6,20 @@ import { TTSConfig as gptTTSConfig } from '../models/gpt.js';
 import { TTSConfig as geminiTTSConfig } from '../models/gemini.js';
 import { TTSConfig as elevenLabsTTSConfig } from '../models/elevenlabs.js';
 import { resolveVoice, getElevenLabsModel } from './tts_voices.js';
+import { noteVoiceFailure, noteVoiceSuccess } from './tts_health.js';
 
 let speakingQueue = []; // each item: {text, isSystem, volume, audioData, ready}
 let isSpeaking = false;
 let speechGeneration = 0;
 let activePlayer = null;
+let activeItem = null;
 // Global mute for host TTS. When muted, new lines are dropped entirely (no
 // TTS request, no playback) so muting also saves ElevenLabs credits.
 let muted = false;
+// Bots that are out of the game. Their lines are dropped at enqueue, so a bot
+// that dies mid-sentence stops spending ElevenLabs credits as well as stopping
+// talking.
+const silencedBots = new Set();
 
 /** Whether host TTS is currently muted. */
 export function isMuted() {
@@ -36,20 +42,72 @@ export function toggleMuted() {
     return setMuted(!muted);
 }
 
+/** Whether this bot's lines are currently being dropped. */
+export function isBotSilenced(botName) {
+    return silencedBots.has(String(botName));
+}
+
+/**
+ * Stop voicing one bot and drop the backlog it has already queued. Called when
+ * a bot dies or is eliminated: TTS runs several lines ahead of the game, so
+ * without this a bot keeps narrating for a while after it left.
+ */
+export function silenceBot(botName) {
+    silencedBots.add(String(botName));
+    clearSpeechQueue({ botName: String(botName) });
+}
+
+/** Let a silenced bot speak again, e.g. for a new game or a juror's turn. */
+export function allowBot(botName) {
+    return silencedBots.delete(String(botName));
+}
+
 /**
  * Drop speech that has not played yet and stop the line currently playing.
  * A generation token also invalidates TTS requests that are still resolving,
  * so stale audio cannot re-enter playback after an urgent announcement.
+ *
+ * Pass a `botName` to flush only that bot. The host queue is shared, so a whole
+ * flush would also swallow the narrator line calling the elimination that
+ * prompted it.
  */
-export function clearSpeechQueue() {
-    speakingQueue = [];
-    speechGeneration++;
-    isSpeaking = false;
+export function clearSpeechQueue({ botName = null } = {}) {
+    if (botName === null) {
+        speakingQueue = [];
+        speechGeneration++;
+        isSpeaking = false;
+        const player = activePlayer;
+        activePlayer = null;
+        activeItem = null;
+        try {
+            player?.kill();
+        } catch {}
+        return;
+    }
+    speakingQueue = speakingQueue.filter(item => {
+        if (item.botName !== botName) return true;
+        item.cancelled = true;
+        return false;
+    });
+    if (activeItem?.botName !== botName) return;
+    // The line playing (or still generating) belongs to this bot. Its playback
+    // handlers bail out once it is cancelled, so hand the queue on from here or
+    // everyone else waits forever behind a bot that is no longer in the game.
+    activeItem.cancelled = true;
     const player = activePlayer;
     activePlayer = null;
+    activeItem = null;
     try {
         player?.kill();
     } catch {}
+    isSpeaking = false;
+    processQueue();
+}
+
+// A queued line is dead either because its own bot was flushed or because a
+// full flush moved the queue on past it while its TTS request was in flight.
+function isStale(item) {
+    return item.cancelled === true || item.generation !== speechGeneration;
 }
 
 /**
@@ -93,14 +151,21 @@ export function isSystemSpeakModel(speak_model) {
 export async function generateSpeech(text, speak_model, botName) {
     const spec = parseModelSpec(speak_model, botName);
     if (spec.provider === 'system') return null;
-    if (spec.provider === 'elevenlabs') {
-        return elevenLabsTTSConfig.sendAudioRequest(text, spec.model, spec.voice, spec.url);
-    } else if (spec.provider === 'openai') {
-        return gptTTSConfig.sendAudioRequest(text, spec.model, spec.voice, spec.url);
-    } else if (spec.provider === 'google') {
-        return geminiTTSConfig.sendAudioRequest(text, spec.model, spec.voice, spec.url);
+    const providers = {
+        elevenlabs: elevenLabsTTSConfig,
+        openai: gptTTSConfig,
+        google: geminiTTSConfig,
+    };
+    const config = providers[spec.provider];
+    if (!config) throw new Error(`TTS Provider ${spec.provider} is not supported.`);
+    try {
+        const audio = await config.sendAudioRequest(text, spec.model, spec.voice, spec.url);
+        noteVoiceSuccess();
+        return audio;
+    } catch (err) {
+        noteVoiceFailure(err, { provider: spec.provider, botName });
+        throw err;
     }
-    throw new Error(`TTS Provider ${spec.provider} is not supported.`);
 }
 
 /**
@@ -110,15 +175,22 @@ export async function generateSpeech(text, speak_model, botName) {
  * (e.g. for recordings) instead of paying for a second TTS request.
  */
 export function playSpeech({ text, model, botName, volume = 100, audioPromise = null }) {
-    if (muted) return;
+    if (muted || silencedBots.has(String(botName))) {
+        // The caller may already have a TTS request in flight; dropping the line
+        // must not surface as an unhandled rejection.
+        audioPromise?.catch(() => {});
+        return;
+    }
     const spec = parseModelSpec(model, botName);
     const item = {
         text,
+        botName,
         isSystem: spec.provider === 'system',
         volume,
         audioData: null,
         ready: Promise.resolve(),
         generation: speechGeneration,
+        cancelled: false,
     };
     if (!item.isSystem) {
         const promise = audioPromise || generateSpeech(text, model, botName);
@@ -142,8 +214,10 @@ async function processQueue() {
         return;
     }
     const item = speakingQueue.shift();
+    activeItem = item;
     const { text: txt, isSystem, volume } = item;
     if (txt.trim() === '') {
+        activeItem = null;
         isSpeaking = false;
         processQueue();
         return;
@@ -155,10 +229,13 @@ async function processQueue() {
     // wait for preprocessing if needed
     try {
         await item.ready;
-        if (item.generation !== speechGeneration) return;
+        if (isStale(item)) return;
         if (item.error) throw item.error;
     } catch (err) {
-        console.error('[TTS] preprocess error', err);
+        // A line abandoned because its bot left the game is not a voice fault,
+        // so it must not raise an alarm in the control room.
+        if (!isStale(item)) noteVoiceFailure(err, { botName: item.botName });
+        activeItem = null;
         isSpeaking = false;
         processQueue();
         return;
@@ -175,8 +252,9 @@ async function processQueue() {
             : `espeak "${txt.replace(/"/g,'\\"')}"`;
 
         const player = exec(cmd, err => {
-            if (item.generation !== speechGeneration) return;
+            if (isStale(item)) return;
             activePlayer = null;
+            activeItem = null;
             if (err) console.error('TTS error', err);
             isSpeaking = false;
             processQueue();
@@ -189,7 +267,8 @@ async function processQueue() {
         const audioData = item.audioData;
 
         if (!audioData) {
-            console.error('[TTS] No audio data ready');
+            noteVoiceFailure(new Error('No audio data was ready for playback'), { provider: 'host' });
+            activeItem = null;
             isSpeaking = false;
             processQueue();
             return;
@@ -206,17 +285,19 @@ async function processQueue() {
                 });
                 activePlayer = player;
                 player.on('error', async (err) => {
-                    if (item.generation !== speechGeneration) return;
+                    if (isStale(item)) return;
                     activePlayer = null;
-                    console.error('[TTS] ffplay error', err);
+                    activeItem = null;
+                    noteVoiceFailure(err, { provider: 'host', botName: item.botName });
                     try { await fs.unlink(tmpPath); } catch {}
                     isSpeaking = false;
                     processQueue();
                 });
                 player.on('exit', async () => {
                     try { await fs.unlink(tmpPath); } catch {}
-                    if (item.generation !== speechGeneration) return;
+                    if (isStale(item)) return;
                     activePlayer = null;
+                    activeItem = null;
                     isSpeaking = false;
                     processQueue();
                 });
@@ -227,9 +308,10 @@ async function processQueue() {
                 });
                 activePlayer = player;
                 player.on('error', (err) => {
-                    if (item.generation !== speechGeneration) return;
+                    if (isStale(item)) return;
                     activePlayer = null;
-                    console.error('[TTS] ffplay error', err);
+                    activeItem = null;
+                    noteVoiceFailure(err, { provider: 'host', botName: item.botName });
                     isSpeaking = false;
                     processQueue();
                 });
@@ -237,14 +319,16 @@ async function processQueue() {
                 player.stdin.write(Buffer.from(audioData, 'base64'));
                 player.stdin.end();
                 player.on('exit', () => {
-                    if (item.generation !== speechGeneration) return;
+                    if (isStale(item)) return;
                     activePlayer = null;
+                    activeItem = null;
                     isSpeaking = false;
                     processQueue();
                 });
             }
         } catch (e) {
-            console.error('[TTS] Audio error', e);
+            noteVoiceFailure(e, { provider: 'host', botName: item.botName });
+            activeItem = null;
             isSpeaking = false;
             processQueue();
         }

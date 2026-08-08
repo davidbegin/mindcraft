@@ -46,7 +46,7 @@ test('starts close and wide participant cameras plus two overviews on one observ
     assert.ok(calls.every(call => call.options.syncEpochMs === 123456));
 });
 
-test('stops all recordings when any participant cannot record', async () => {
+test('keeps the session alive when a participant cannot record', async () => {
     const calls = [];
     const manager = new ContestRecordingManager({
         requestAgent: async (agentName, event) => {
@@ -58,19 +58,70 @@ test('stops all recordings when any participant cannot record', async () => {
         },
     });
 
-    await assert.rejects(
-        manager.start({
-            contestId: 'contest-1',
-            participants: ['alice', 'bob'],
-            arena,
-        }),
-        /bob: ffmpeg missing/
+    const session = await manager.start({
+        contestId: 'contest-1',
+        participants: ['alice', 'bob'],
+        arena,
+    });
+
+    assert.deepEqual(session.failures, [{ agentName: 'bob', error: 'ffmpeg missing' }]);
+    assert.deepEqual(session.participants, ['alice']);
+    assert.deepEqual(session.requestedParticipants, ['alice', 'bob']);
+    assert.equal(session.observer, 'alice');
+    // alice keeps her POV, her wide follow, and both arena overviews.
+    assert.equal(session.cameraCount, 4);
+    assert.ok(manager.active, 'the match records with the angles that came up');
+});
+
+test('releases a half-started recorder without making the launch wait', async () => {
+    const calls = [];
+    let releaseStop;
+    const stopped = new Promise(resolve => { releaseStop = resolve; });
+    const manager = new ContestRecordingManager({
+        requestAgent: async (agentName, event) => {
+            calls.push({ agentName, event });
+            if (event === 'start-contest-recording' && agentName === 'bob') {
+                throw new Error('start-contest-recording timed out for bob');
+            }
+            if (event === 'stop-contest-recording') {
+                releaseStop();
+                // A stop that never settles must not hold up the match.
+                return new Promise(() => {});
+            }
+            return { success: true };
+        },
+    });
+
+    const session = await manager.start({
+        contestId: 'contest-1',
+        participants: ['alice', 'bob'],
+        arena,
+    });
+
+    assert.match(session.failures[0].error, /timed out for bob/);
+    await stopped;
+    assert.deepEqual(
+        calls.filter(call => call.event === 'stop-contest-recording'),
+        [{ agentName: 'bob', event: 'stop-contest-recording' }]
     );
-    assert.equal(
-        calls.filter(call => call.event === 'stop-contest-recording').length,
-        2
-    );
-    assert.equal(manager.active, null);
+});
+
+test('drops the observer role when the observer loses its cameras', async () => {
+    const manager = new ContestRecordingManager({
+        requestAgent: async (agentName) => (agentName === 'alice'
+            ? { success: false, error: 'renderer failed' }
+            : { success: true }),
+    });
+
+    const session = await manager.start({
+        contestId: 'contest-1',
+        participants: ['alice', 'bob'],
+        arena,
+    });
+
+    assert.equal(session.observer, null);
+    assert.deepEqual(session.participants, ['bob']);
+    assert.equal(session.cameraCount, 2);
 });
 
 test('overview cameras frame the same arena from opposite corners', () => {

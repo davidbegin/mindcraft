@@ -14,6 +14,7 @@ export class VoiceOutput {
         }
         this.playOnHost = options.playOnHost;
         this.clearHost = options.clearHost || (() => {});
+        this.silenceOnHost = options.silenceOnHost || (() => {});
         this.onError = options.onError || (error => console.warn(`Voice output failed: ${error.message}`));
         this.monitors = new Set();
     }
@@ -44,6 +45,31 @@ export class VoiceOutput {
             }
             try {
                 monitor.emit('bot-voice-clear');
+            } catch (error) {
+                this.onError(error);
+            }
+        }
+    }
+
+    /**
+     * Cut one bot off everywhere and drop the lines it already queued, without
+     * touching anybody else's. Used when a bot dies or is eliminated: the rest
+     * of the cast, and the narrator calling the elimination, keep their audio.
+     */
+    silence(agentName) {
+        if (!agentName) return;
+        try {
+            this.silenceOnHost(agentName);
+        } catch (error) {
+            this.onError(error);
+        }
+        for (const monitor of [...this.monitors]) {
+            if (!monitor.connected) {
+                this.monitors.delete(monitor);
+                continue;
+            }
+            try {
+                monitor.emit('bot-voice-clear', { agentName });
             } catch (error) {
                 this.onError(error);
             }

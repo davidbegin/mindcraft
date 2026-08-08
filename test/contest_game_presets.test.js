@@ -186,11 +186,26 @@ test('the four-player scenario casts four bots for a final two', () => {
     assert.ok(four.phaseDurationsMs.strategy < getSurvivorSeasonPreset().phaseDurationsMs.strategy);
 });
 
+test('the six-player scenario runs two tribes into a four-person jury', () => {
+    const six = getSurvivorSeasonPreset('six_player');
+    assert.equal(six.castSize, 6);
+    assert.equal(six.minimumPlayers, 6);
+    assert.equal(six.maximumPlayers, 6);
+    assert.equal(six.mergeAt, 4);
+    assert.equal(six.finalistCount, 2);
+    assert.equal(six.juryEligibility, 'all_eliminated');
+    assert.equal(six.defaultCharacters.length, 6);
+    assert.deepEqual(
+        six.defaultCharacters.map(character => character.name),
+        ['Billy', 'Kimmy', 'Marcus', 'Dario', 'ChipChipperson', 'bridget']
+    );
+});
+
 test('scenarios are listed for the operator UI and unknown ids throw', () => {
     const scenarios = listSurvivorScenarios();
     assert.deepEqual(
         scenarios.map(scenario => scenario.scenarioId),
-        ['classic', 'four_player']
+        ['classic', 'four_player', 'six_player']
     );
     assert.ok(scenarios.every(scenario => scenario.castSize >= scenario.minimumPlayers));
     assert.throws(() => getSurvivorSeasonPreset('duos'), /Unknown Survivor scenario/);
@@ -312,6 +327,7 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(spleef.rules.type, 'spleef');
     assert.equal(spleef.rules.scoring, 'last-standing');
     assert.equal(spleef.rules.floorY, 100);
+    assert.equal(spleef.rules.stationaryFloorBreakMs, 2_000);
     assert.equal(spleef.durationMs, 300_000);
     assert.equal(spleef.metadata.pvp, false);
     assert.match(spleef.prompt, /diamond shovel/i);
@@ -324,6 +340,9 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.match(spleef.prompt, /a rival's coordinates, not your own/i);
     assert.match(spleef.prompt, /ahead of a moving rival/i);
     assert.match(spleef.prompt, /cut off their escape/i);
+    assert.match(spleef.prompt, /never stop moving/i);
+    assert.match(spleef.prompt, /same block for 2 seconds/i);
+    assert.match(spleef.prompt, /as many different areas as possible/i);
 });
 
 test('unknown contest game ids throw', () => {

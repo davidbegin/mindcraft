@@ -28,6 +28,44 @@ const PODIUM_WAIT_DIRECTIVE = [
     'and wait for the humans to start the next game.',
 ].join(' ');
 
+// Launching a game is slow — bot processes, a world rebuild, camera startup and
+// a spoken countdown — and for a long time the only thing the dashboard could
+// say was a single frozen line. These steps are published up front so the UI can
+// show the whole road, which step is underway, and how long each one took.
+const LAUNCH_STEP_LABELS = {
+    reclaim_names: 'Free the bot names',
+    create_agent: 'Start the bot processes',
+    wait_ready: 'Wait for bots to join the world',
+    prepare_arena: 'Build the arena',
+    start_recording: 'Start the cameras',
+    team_planning: 'Team planning',
+    team_build: 'Build phase',
+    announce: 'Announce the match',
+    send_goals: 'Send the goals to the bots',
+};
+
+export function buildLaunchSteps({ teamPlanning = false, teamBuild = false } = {}) {
+    const ids = [
+        'reclaim_names',
+        'create_agent',
+        'wait_ready',
+        'prepare_arena',
+        'start_recording',
+        ...(teamPlanning ? ['team_planning'] : []),
+        ...(teamBuild ? ['team_build'] : []),
+        'announce',
+        'send_goals',
+    ];
+    return ids.map(id => ({
+        id,
+        label: LAUNCH_STEP_LABELS[id],
+        status: 'pending',
+        startedAt: null,
+        endedAt: null,
+        detail: null,
+    }));
+}
+
 export function buildWinnerReactionDirective(contest, participantId) {
     const winners = Array.isArray(contest?.winnerIds) ? contest.winnerIds.filter(Boolean) : [];
     const teamResult = (contest?.results || []).find(result => result.participantId === participantId);
@@ -218,6 +256,12 @@ export class GameSessionManager {
         this.queueHighlight = options.queueHighlight || (() => null);
         this.onHighlightError = options.onHighlightError
             || (error => console.warn(`Contest highlight reel failed: ${error.message}`));
+        this.onRecordingIncomplete = options.onRecordingIncomplete
+            || (failures => console.warn(
+                `Contest is running without every camera angle: ${failures
+                    .map(failure => `${failure.agentName}: ${failure.error}`)
+                    .join('; ')}`
+            ));
         this.getAgentLaunchStatus = options.getAgentLaunchStatus || null;
         this.telemetry = options.telemetry || null;
         this.active = null;
@@ -232,18 +276,65 @@ export class GameSessionManager {
         this.telemetry?.record?.(event);
     }
 
+    // Every launch milestone goes to the terminal as well as the telemetry
+    // timeline, so a launch can be followed without a browser open.
+    _log(message, { level = 'info', stage = null, agent = null, detail = null } = {}) {
+        const line = `[contest] ${message}`;
+        if (level === 'error') console.error(line);
+        else if (level === 'warn') console.warn(line);
+        else console.log(line);
+        this._record({ level, stage: stage || 'launch', agent, message, detail });
+    }
+
+    // Walks the published step list to wherever the launch has reached: earlier
+    // steps become done, this one becomes active. Stages that are not launch
+    // steps (cleanup, the medal ceremony) leave the list alone.
+    _advanceLaunch(stage) {
+        const steps = this.launch?.steps;
+        if (!steps) return;
+        const index = steps.findIndex(step => step.id === stage);
+        const finishThrough = stage === 'running' ? steps.length : index;
+        if (index < 0 && stage !== 'running') return;
+        for (const step of steps.slice(0, finishThrough)) {
+            if (step.status === 'done') continue;
+            step.status = 'done';
+            step.startedAt = step.startedAt ?? this.clock();
+            step.endedAt = this.clock();
+        }
+        const current = index >= 0 ? steps[index] : null;
+        if (current && current.status !== 'active') {
+            current.status = 'active';
+            current.startedAt = this.clock();
+            current.endedAt = null;
+        }
+        this.launch.stage = stage;
+        if (stage === 'running') this.launch.endedAt = this.clock();
+    }
+
+    _failLaunch() {
+        for (const step of this.launch?.steps || []) {
+            if (step.status === 'active') {
+                step.status = 'failed';
+                step.endedAt = this.clock();
+            }
+        }
+    }
+
     _setProgress(stage, message, extra = {}) {
         if (!this.active) return;
         const total = this.active.participantIds?.length || 0;
         const ready = typeof extra.ready === 'number'
             ? extra.ready
             : (this.active.participantIds || []).filter(name => this.isAgentReady(name)).length;
+        this._advanceLaunch(stage);
         this.active.progress = {
             stage,
             message,
             ready,
             total,
             createdCount: this.active.createdAgents?.length || 0,
+            startedAt: this.launch?.steps?.find(step => step.id === stage)?.startedAt ?? null,
+            launchStartedAt: this.launch?.startedAt ?? null,
             ...extra,
         };
     }
@@ -252,7 +343,22 @@ export class GameSessionManager {
         if (!this.active) return;
         this.active.status = status;
         this._setProgress(stage || status, message, extra);
-        this._record({ stage: stage || status, message, detail: extra });
+        this._log(message, { stage: stage || status, detail: extra });
+        this._emit();
+    }
+
+    /**
+     * Reports what a long step is doing right now without changing the step
+     * itself, so "Build the arena" can say which of its hundreds of commands it
+     * is on. Repeated identical details are dropped: the callers report often.
+     */
+    _setStageDetail(stage, detail, extra = {}) {
+        if (!this.active || this.active.progress?.stage !== stage) return;
+        if (this.active.progress.detail === detail) return;
+        this.active.progress = { ...this.active.progress, detail, ...extra };
+        const step = this.launch?.steps?.find(item => item.id === stage);
+        if (step) step.detail = detail;
+        this._log(detail, { stage });
         this._emit();
     }
 
@@ -278,15 +384,20 @@ export class GameSessionManager {
         }
 
         this.lastFailure = null;
+        this.launch = null;
         this.telemetry?.clear?.();
-        this._record({ stage: 'validate', message: `Starting game ${request.gameId || 'unknown'}` });
+        const launchStartedAt = this.clock();
+        this._log(`Starting game ${request.gameId || 'unknown'}`, { stage: 'validate' });
 
         const preset = this.getPreset(request.gameId);
-        await this.reclaimNames(
-            (request.participants || [])
-                .map(participant => String(participant?.name || '').trim())
-                .filter(Boolean)
+        const requestedNames = (request.participants || [])
+            .map(participant => String(participant?.name || '').trim())
+            .filter(Boolean);
+        this._log(
+            `Freeing the requested bot names: ${requestedNames.join(', ') || 'none'}`,
+            { stage: 'reclaim_names' }
         );
+        await this.reclaimNames(requestedNames);
         let participants = validateGameParticipants(
             request.participants,
             this.getProfiles(),
@@ -329,10 +440,26 @@ export class GameSessionManager {
             : null;
         const participantIds = participants.map(participant => participant.name);
 
-        this._record({
-            stage: 'create_contest',
-            message: `Creating contest for ${preset.title} with ${participantIds.length} bots`,
-        });
+        this.launch = {
+            startedAt: launchStartedAt,
+            gameId: preset.id,
+            title: preset.title,
+            stage: 'create_agent',
+            endedAt: null,
+            steps: buildLaunchSteps({
+                teamPlanning: Boolean(teamSetup) && planningMs > 0,
+                teamBuild: Boolean(teamSetup) && buildPhaseMs > 0,
+            }),
+        };
+        const reclaimStep = this.launch.steps[0];
+        reclaimStep.status = 'done';
+        reclaimStep.startedAt = launchStartedAt;
+        reclaimStep.endedAt = this.clock();
+
+        this._log(
+            `Creating contest for ${preset.title} with ${participantIds.length} bots`,
+            { stage: 'create_contest' }
+        );
         const contest = await this.coordinator.createContest({
             title: preset.title,
             prompt: preset.prompt,
@@ -396,14 +523,17 @@ export class GameSessionManager {
             createdAgents: [],
             recording: null,
             error: null,
+            launch: this.launch,
             progress: {
                 stage: 'create_agent',
                 message: `Creating temporary contest bots (0/${participants.length})…`,
                 ready: 0,
                 total: participants.length,
                 createdCount: 0,
+                launchStartedAt,
             },
         };
+        this._advanceLaunch('create_agent');
         this._emit();
 
         try {
@@ -457,6 +587,11 @@ export class GameSessionManager {
                     floorY: Number.isFinite(preset.rules?.floorY)
                         ? preset.rules.floorY
                         : null,
+                    stationaryFloorBreakMs: Number.isFinite(
+                        preset.rules?.stationaryFloorBreakMs
+                    )
+                        ? preset.rules.stationaryFloorBreakMs
+                        : null,
                 });
                 const result = await this.createAgent(settings);
                 if (!result?.success) {
@@ -466,11 +601,10 @@ export class GameSessionManager {
                     name: participant.name,
                     id: result.agentId ?? participant.name,
                 });
-                this._record({
-                    stage: 'create_agent',
-                    agent: participant.name,
-                    message: `Created agent process ${result.agentId ?? participant.name}`,
-                });
+                this._log(
+                    `Created agent process ${result.agentId ?? participant.name}`,
+                    { stage: 'create_agent', agent: participant.name }
+                );
                 this._emit();
             }
 
@@ -506,6 +640,16 @@ export class GameSessionManager {
                 arena: arenaReset,
             });
             this.active.recording = { enabled: true, ...recording };
+            if (recording?.failures?.length) {
+                const detail = recording.failures
+                    .map(failure => `${failure.agentName}: ${failure.error}`)
+                    .join('; ');
+                this._record({
+                    stage: 'start_recording',
+                    message: `Recording ${recording.cameraCount} of the planned angles (${detail})`,
+                });
+                this.onRecordingIncomplete(recording.failures);
+            }
 
             if (teamSetup && planningMs > 0) {
                 await this._runPlanningPhase({
@@ -594,7 +738,7 @@ export class GameSessionManager {
                 };
             }
             await this._cancelContestIfNeeded(contest.id, `Game session startup failed: ${error.message}`);
-            await this.finish(contest.id);
+            await this.finish(contest.id, null, { discardMedia: true });
             throw error;
         }
     }
@@ -705,7 +849,7 @@ export class GameSessionManager {
         return this.finish(contestId);
     }
 
-    async finish(contestId = null, contest = null) {
+    async finish(contestId = null, contest = null, { discardMedia = false } = {}) {
         if (!this.active) return null;
         if (contestId && this.active.contestId !== contestId) return null;
         const session = this.view();
@@ -713,7 +857,7 @@ export class GameSessionManager {
         this._setProgress('cleanup', 'Cleaning up temporary contest bots…');
         this._record({ stage: 'cleanup', message: `Cleaning up session ${session.contestId}` });
         this._emit();
-        await this._finalizeMedia(contest);
+        await this._finalizeMedia(contest, { discardMedia });
         await Promise.allSettled(
             session.createdAgents.map(agent => this.destroyAgent(agent.id))
         );
@@ -918,15 +1062,23 @@ export class GameSessionManager {
         }
     }
 
-    async _finalizeMedia(contest) {
+    async _finalizeMedia(contest, { discardMedia = false } = {}) {
         if (!this.active || this.active.mediaFinalized) return;
         const session = this.view();
-        await this.stopRecording(session.contestId).catch(() => {});
+        // A launch that never reached the starting gun has no footage worth
+        // waiting for, and every stop is another per-bot round trip. Leaving the
+        // operator staring at idle bots is the worse outcome, so let the stops
+        // land on their own and get the arena cleared.
+        if (discardMedia) {
+            this.stopRecording(session.contestId).catch(() => {});
+        } else {
+            await this.stopRecording(session.contestId).catch(() => {});
+        }
         this.active.mediaFinalized = true;
         if (this.active.recording) {
             this.active.recording.enabled = false;
         }
-        if (contest?.status !== 'completed') return;
+        if (discardMedia || contest?.status !== 'completed') return;
         try {
             const queued = this.queueHighlight({ session, contest });
             queued?.catch?.(this.onHighlightError);

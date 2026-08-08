@@ -529,8 +529,14 @@
         .tally-track span { display: block; height: 100%; background: var(--border-strong); }
         .tally-line.out .tally-track span { background: var(--red); }
         .tally-line .num { font-family: var(--mono); font-size: 1.05rem; text-align: right; }
-        .tally-voters { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 5px; }
-        .tally-voters .mc-av { opacity: 0.85; }
+        .tally-voters { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+        .tally-voters .mc-av { opacity: 0.9; }
+
+        .tally-safe {
+            font-size: 0.76rem;
+            color: var(--lime);
+            padding-bottom: 2px;
+        }
 
         /* Ballots, one card per voter */
         .ballots { display: flex; flex-direction: column; gap: 7px; max-height: 540px; overflow-y: auto; }
@@ -665,6 +671,41 @@
             font-size: 0.76rem;
             color: var(--cyan);
             padding: 8px 20px;
+        }
+
+        .suspended-banner {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 16px 20px 0;
+            padding: 14px 18px;
+            border: 1px solid var(--amber);
+            border-radius: var(--radius);
+            background: var(--bg-elevated);
+        }
+
+        .suspended-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .suspended-copy strong {
+            color: var(--amber);
+            font-size: 0.95rem;
+        }
+
+        .suspended-copy span {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            opacity: 0.8;
+        }
+
+        .suspended-actions {
+            display: flex;
+            gap: 8px;
         }
 
         /* —— Tribal Council console —— */
@@ -870,6 +911,35 @@
 
         .agent-grid { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
         .diag-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+        /* A council nobody can hear looks the same as a council going fine, so
+           voice failures get a banner instead of only a diagnostics row. */
+        .voice-alert {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 11px 14px;
+            margin-bottom: 14px;
+            border-radius: var(--radius);
+            background: var(--red-dim);
+            border: 1px solid rgba(239, 83, 80, 0.45);
+            box-shadow: var(--shadow);
+        }
+        .voice-alert.transient {
+            background: var(--amber-dim);
+            border-color: rgba(240, 180, 41, 0.45);
+        }
+        .voice-alert-body { flex: 1; min-width: 0; }
+        .voice-alert-title { font-weight: 700; color: var(--red); margin-bottom: 2px; }
+        .voice-alert.transient .voice-alert-title { color: var(--amber); }
+        .voice-alert-hint { color: var(--text-dim); font-size: 0.85rem; }
+        .voice-alert-detail {
+            font-family: var(--mono);
+            font-size: 0.74rem;
+            color: var(--text-mute);
+            margin-top: 4px;
+            word-break: break-word;
+        }
     </style>
 </head>
 <body>
@@ -883,9 +953,20 @@
             <a href="/games">Games</a>
             <a href="/survivor" class="active" aria-current="page">Survivor</a>
             <a href="/conversations">Conversations</a>
+            <a href="/seasons">Archive</a>
         </nav>
         <span id="msStatus" class="status-pill offline">mindserver offline</span>
     </header>
+
+    <div id="voiceAlert" class="voice-alert" hidden>
+        <span aria-hidden="true">🔇</span>
+        <div class="voice-alert-body">
+            <div class="voice-alert-title" id="voiceAlertTitle"></div>
+            <div class="voice-alert-hint" id="voiceAlertHint"></div>
+            <div class="voice-alert-detail" id="voiceAlertDetail"></div>
+        </div>
+        <button type="button" class="btn" id="voiceAlertDismiss">Dismiss</button>
+    </div>
 
     <section id="seasonHud" class="hud" hidden>
         <div class="hud-round">
@@ -911,11 +992,24 @@
             </div>
         </div>
         <span id="hudPaused" class="hud-badge" hidden>Paused</span>
+        <span id="hudSuspended" class="hud-badge" hidden>Suspended</span>
         <div class="hud-actions">
             <button type="button" id="pauseBtn" class="btn btn-ghost">Pause</button>
+            <button type="button" id="suspendBtn" class="btn btn-ghost">Suspend season</button>
             <button type="button" id="advanceBtn" class="btn btn-amber">Advance phase</button>
             <a id="watchLiveLink" class="btn btn-ghost" href="/live.html" target="_blank" rel="noopener">Live wall</a>
             <button type="button" id="cancelSeasonBtn" class="btn btn-danger">Cancel season</button>
+        </div>
+    </section>
+
+    <section id="suspendedBanner" class="suspended-banner" hidden>
+        <div class="suspended-copy">
+            <strong id="suspendedTitle">Season waiting to resume</strong>
+            <span id="suspendedDetail"></span>
+        </div>
+        <div class="suspended-actions">
+            <button type="button" id="resumeSeasonBtn" class="btn btn-amber">Resume season</button>
+            <button type="button" id="discardSeasonBtn" class="btn btn-danger">Cancel season</button>
         </div>
     </section>
 
@@ -930,6 +1024,9 @@
             <button type="button" id="startSeasonBtn" class="btn btn-amber" disabled>Loading cast…</button>
             <button type="button" id="startCheapTestBtn" class="btn btn-primary" disabled>
                 Cheap 4-bot test
+            </button>
+            <button type="button" id="startCheapSixTestBtn" class="btn btn-primary" disabled>
+                Cheap 6-bot test
             </button>
             <label class="target-chip" title="Leave this off to host Tribal Council yourself: it stays open until you close it.">
                 <input type="checkbox" id="councilAutoAdvance">

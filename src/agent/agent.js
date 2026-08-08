@@ -26,11 +26,13 @@ import {
     reportContestDeath,
     reportContestEliminated,
     reportContestWinItem,
+    reportVoiceProblem,
 } from './mindserver_proxy.js';
 import { setOutageHandler } from '../models/quota_guard.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
-import { generateSpeech, playSpeech, isSystemSpeakModel } from './speak.js';
+import { generateSpeech, playSpeech, isSystemSpeakModel, silenceBot, allowBot } from './speak.js';
+import { setVoiceHealthHandler } from './tts_health.js';
 import {
     getAudibleChatText,
     getHumanCommandAcknowledgement,
@@ -47,10 +49,14 @@ export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
         this.last_sender = null;
         this.colony_paused = false;
+        this.eliminated = false;
         this.count_id = count_id;
         this._disconnectHandled = false;
         this.contest_recorders = [];
         this.contest_recording_session = null;
+        // Bumped by every start and stop so a start that is still bringing its
+        // renderers up can tell it has been superseded.
+        this.contest_recording_token = 0;
 
         // Initialize components
         this.actions = new ActionManager(this);
@@ -77,6 +83,11 @@ export class Agent {
         this._thinking_label = null;
         convoManager.initAgent(this);
         setOutageHandler(outage => this._handleModelOutage(outage));
+        setVoiceHealthHandler(health => reportVoiceProblem({
+            ...(health.outage || health.lastFailure || { kind: 'ok' }),
+            recovered: health.ok,
+            botName: this.name,
+        }));
         await this.prompter.initExamples();
 
         // load mem first before doing task
@@ -354,7 +365,49 @@ export class Agent {
         convoManager.endAllConversations();
     }
 
+    /**
+     * This bot is out of the game: dead in a contest it cannot re-enter, or
+     * voted out. TTS and the model both run ahead of play, so a bot that is
+     * merely paused keeps talking and acting for a while from an empty seat.
+     * Drop the speech it already generated, stop the work it already started,
+     * and refuse new work until the show hands it the floor again.
+     */
+    markEliminated(reason = 'eliminated') {
+        if (this.eliminated) return;
+        this.eliminated = true;
+        silenceBot(this.name);
+        convoManager.endAllConversations();
+        this.self_prompter.stop(false).catch(error => {
+            console.warn(`Could not stop self-prompting for ${this.name}:`, error.message);
+        });
+        this.actions.cancelResume();
+        this.requestInterrupt();
+        if (this.actions.executing) {
+            this.actions.forceClear(reason);
+        }
+        console.log(`[${this.name}] out of the game (${reason}): speech flushed, play stopped.`);
+        this.history.add(
+            'system',
+            `You are out of the game (${reason}). You have stopped playing and stopped talking.`
+        ).catch(error => console.warn(`Could not record elimination for ${this.name}:`, error.message));
+    }
+
+    /**
+     * The show is addressing this bot again — a new game, or a juror being
+     * called on at final tribal council. Without this, an eliminated bot could
+     * never cast its jury vote or react to a winner.
+     */
+    reinstate() {
+        allowBot(this.name);
+        if (!this.eliminated) return;
+        this.eliminated = false;
+        console.log(`[${this.name}] back in play; voice restored.`);
+    }
+
     async handleMessage(source, message, max_responses=null) {
+        // Out of the game means out of the loop: no model calls, no commands,
+        // no chat. Only reinstate() puts this bot back in.
+        if (this.eliminated) return false;
         await this.checkTaskDone();
         if (!source || !message) {
             console.warn('Received empty message from', source);
@@ -540,7 +593,7 @@ export class Agent {
     }
 
     async routeResponse(to_player, message) {
-        if (this.shut_up) return;
+        if (this.shut_up || this.eliminated) return;
         let self_prompt = to_player === 'system' || to_player === this.name;
         if (self_prompt && this.last_sender) {
             // this is for when the agent is prompted by system while still in conversation
@@ -583,6 +636,7 @@ export class Agent {
     }
 
     async openChat(message, { addressed = false } = {}) {
+        if (this.eliminated) return;
         let command_name = containsCommand(message);
         const to_translate = getSpokenChatText(message);
         const translate_up_to = command_name ? message.indexOf(command_name) : -1;
@@ -962,9 +1016,11 @@ export class Agent {
             label: `contest-${options.contestId}`,
         };
         this.contest_recording_session = options.sessionId;
+        const startToken = ++this.contest_recording_token;
         this.contest_recorders = (options.externalCameras || []).map(camera =>
             new PovRecorder(this.bot, camera.id)
         );
+        const started = [this.pov_recorder, ...this.contest_recorders];
 
         const statuses = await Promise.all([
             this.pov_recorder.start({
@@ -991,6 +1047,19 @@ export class Agent {
                 });
             }),
         ]);
+        // A stop can land while these renderers are still coming up, which is the
+        // normal outcome when the server stopped waiting on us. That stop cleared
+        // contest_recorders, so nothing else can reach the cameras we just opened:
+        // shut them down here or they run untracked for the rest of the match.
+        if (this.contest_recording_token !== startToken) {
+            // The shared POV recorder may already have been handed back to
+            // continuous recording by that stop, so only reclaim it if it is
+            // still holding our session.
+            const orphaned = started.filter(recorder => recorder !== this.pov_recorder
+                || recorder.sessionId === options.sessionId);
+            await Promise.allSettled(orphaned.map(recorder => recorder.stop()));
+            return { sessionId: options.sessionId, recordings: [], superseded: true };
+        }
         const failed = statuses.find(status => status.error);
         if (failed) {
             await this.stopContestRecording();
@@ -1004,6 +1073,7 @@ export class Agent {
         if (!this.contest_recording_session) {
             return { sessionId: null, recordings: [] };
         }
+        this.contest_recording_token++;
         const sessionId = this.contest_recording_session;
         const recorders = [this.pov_recorder, ...this.contest_recorders];
         const statuses = await Promise.all(recorders.map(recorder => recorder.stop()));
@@ -1110,14 +1180,47 @@ export class Agent {
     }
 
     _watchSpleefFall() {
+        const breakStationaryFloor = (position, floorY) => {
+            const stationaryFloorBreakMs = settings.game_session?.stationaryFloorBreakMs;
+            if (
+                !Number.isFinite(stationaryFloorBreakMs)
+                || stationaryFloorBreakMs <= 0
+                || this._spleefFloorBreakPending
+            ) {
+                return;
+            }
+            const x = Math.floor(position.x);
+            const z = Math.floor(position.z);
+            const blockKey = `${x},${floorY},${z}`;
+            if (this._spleefStandingBlock !== blockKey) {
+                this._spleefStandingBlock = blockKey;
+                this._spleefStandingSince = Date.now();
+                return;
+            }
+            if (Date.now() - this._spleefStandingSince < stationaryFloorBreakMs) return;
+
+            const block = this.bot?.blockAt(new Vec3(x, floorY, z));
+            if (block?.name !== 'snow_block') return;
+            this._spleefFloorBreakPending = true;
+            this.bot.dig(block, true).catch(error => {
+                console.warn(`[${this.name}] Could not break stationary Spleef floor:`, error.message);
+            }).finally(() => {
+                this._spleefFloorBreakPending = false;
+                this._spleefStandingSince = Date.now();
+            });
+        };
         const checkFall = () => {
             if (settings.game_session?.contestType !== 'spleef') return;
             if (this._contestEliminatedReported) return;
             const floorY = settings.game_session?.floorY;
             if (!Number.isFinite(floorY)) return;
-            const y = this.bot?.entity?.position?.y;
-            if (!Number.isFinite(y) || y >= floorY) return;
-            this._reportContestEliminated('fell');
+            const position = this.bot?.entity?.position;
+            if (!Number.isFinite(position?.y)) return;
+            if (position.y < floorY) {
+                this._reportContestEliminated('fell');
+                return;
+            }
+            breakStationaryFloor(position, floorY);
         };
         this._spleefFallInterval = setInterval(checkFall, 250);
         this._spleefFallInterval.unref?.();
@@ -1133,6 +1236,10 @@ export class Agent {
             return;
         }
         this._contestEliminatedReported = true;
+        // Elimination is final in these games, so do not wait on the server to
+        // agree before going quiet — the round trip is long enough for a couple
+        // more lines to reach the speakers.
+        this.markEliminated(reason);
         const position = this.bot?.entity?.position;
         reportContestEliminated({
             reason,

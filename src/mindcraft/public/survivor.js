@@ -5,6 +5,7 @@
     const socket = window.io();
     const CHEAP_TEST_PROFILE_ID = 'gpt-5-6-luna-instant';
     const CHEAP_TEST_SCENARIO_ID = 'four_player';
+    const CHEAP_SIX_TEST_SCENARIO_ID = 'six_player';
 
     let state = null;          // SurvivorSessionManager.view()
     let games = [];            // contest game presets, for challenge names
@@ -20,6 +21,8 @@
     let gameSetup = null;
     let askTargets = new Set();   // who the next question goes to
     let pickerRoster = '';        // rebuild the picker only when the cast changes
+    let resultsPick = null;       // which revealed vote the results panel is showing
+    let resultsFollow = true;     // jump to each new reveal until the host looks back
 
     // Jeff's standard openers. These are the questions that make bots commit to a
     // position in public, which is what the rest of the cast then votes on.
@@ -73,9 +76,14 @@
 
     // A phase with no deadline is waiting on the host, not broken.
     function phaseClockLabel() {
+        if (suspended()) return 'suspended';
         if (state?.paused) return 'paused';
         if (!state?.phaseDeadlineAt) return 'you decide';
         return formatCountdown(state.phaseDeadlineAt);
+    }
+
+    function suspended() {
+        return state?.status === 'suspended';
     }
 
     function setStatus(message, isError = false) {
@@ -147,9 +155,11 @@
         el('seasonHud').hidden = !game;
         el('controlGrid').hidden = !game;
         el('startPanel').hidden = Boolean(game && game.status === 'running');
+        renderSuspendedBanner(game);
         renderReadiness();
         updateStartButton();
         if (!game) {
+            el('voteResults').hidden = true;
             renderSecretFeed();
             return;
         }
@@ -159,6 +169,7 @@
         renderStandings();
         renderBootOrder(game);
         renderVoteBoard(game);
+        renderVoteResults(game);
         renderDeck();
         renderChallengeHistory(game);
         renderTimeline(game);
@@ -168,6 +179,9 @@
         renderRooms();
         renderSecretFeed();
         renderDiagnostics();
+        // Portraits are canvases inside markup that was just replaced, so they
+        // are repainted after every render. Decoded skins are cached.
+        window.mcAvatar?.paint();
     }
 
     // —— Tribal Council console ————————————————————————————————————
@@ -197,6 +211,11 @@
         renderTargetPicker(live, game);
         renderPresetQuestions(isFinal);
         renderTranscript(live);
+        // The record stays readable while the season is parked, but nothing can
+        // be put on it until the cast is back in the world.
+        el('councilCloseBtn').disabled = suspended();
+        el('questionText').disabled = suspended();
+        if (suspended()) el('askBtn').disabled = true;
     }
 
     function renderTargetPicker(live, game) {
@@ -327,6 +346,32 @@
 
     // —— Diagnostics ——————————————————————————————————————————————
 
+    /**
+     * Council is meant to be heard, so a dead microphone is a headline rather
+     * than a diagnostics row. Failures needing a human (credits, keys) stay red;
+     * transient ones (rate limits, network) are amber and clear themselves.
+     */
+    function renderVoiceHealth(health) {
+        const box = el('voiceAlert');
+        if (!box) return;
+        const problem = health?.outage || (health?.ok === false ? health.lastFailure : null);
+        if (!problem) {
+            box.hidden = true;
+            return;
+        }
+        box.classList.toggle('transient', !['quota', 'auth', 'config', 'voice'].includes(problem.kind));
+        el('voiceAlertTitle').textContent = health.summary || 'Bot voices are failing.';
+        el('voiceAlertHint').textContent = problem.hint || '';
+        const bits = [problem.kind];
+        if (problem.status != null) bits.push(`status ${problem.status}`);
+        if (problem.code) bits.push(problem.code);
+        if (problem.botName) bits.push(`first seen on ${problem.botName}`);
+        if (health.failureCount > 1) bits.push(`${health.failureCount} dropped lines`);
+        el('voiceAlertDetail').textContent =
+            `${bits.filter(Boolean).join(' · ')}${problem.message ? ` — ${problem.message}` : ''}`;
+        box.hidden = false;
+    }
+
     function renderDiagnostics() {
         const problems = state?.problems || [];
         const failure = state?.lastFailure || null;
@@ -405,6 +450,26 @@
         fire_making: 'Resolve fire-making',
     };
 
+    // A parked season is easy to forget about, and forgetting is what makes it
+    // reappear underneath whatever you started next. Say plainly that it is
+    // waiting and make both ways out of it one click away.
+    function renderSuspendedBanner(game) {
+        const banner = el('suspendedBanner');
+        banner.hidden = !suspended();
+        if (banner.hidden) return;
+        const restarted = state.suspendedReason === 'server-restart';
+        el('suspendedTitle').textContent = restarted
+            ? 'Season waiting to resume after restart'
+            : 'Season suspended';
+        const where = game
+            ? `Round ${game.round}, ${phaseLabel(game.phase)}, ${activeIds(game).length} still in`
+            : '';
+        el('suspendedDetail').textContent = restarted
+            ? `${where}. Its bots are not in the world. Resume to bring the cast back, `
+                + 'or cancel it to free the slot for another game.'
+            : `${where}. Other games can run while it waits here.`;
+    }
+
     function renderHud(game) {
         const remaining = activeIds(game);
         el('hudRound').textContent = game.status === 'completed'
@@ -415,12 +480,16 @@
         el('hudCountdown').textContent = phaseClockLabel();
         el('hudImmunity').textContent = names(game.immunityIds) || '—';
         el('hudJury').textContent = game.juryIds?.length ? String(game.juryIds.length) : '—';
-        el('hudPaused').hidden = !state.paused;
+        el('hudPaused').hidden = !state.paused || suspended();
+        el('hudSuspended').hidden = !suspended();
 
         const inChallenge = game.phase === 'challenge';
-        const running = game.status === 'running';
+        const running = game.status === 'running' && !suspended();
         el('pauseBtn').textContent = state.paused ? 'Resume' : 'Pause';
         el('pauseBtn').disabled = inChallenge || !running;
+        el('suspendBtn').textContent = suspended() ? 'Resume season' : 'Suspend season';
+        el('suspendBtn').disabled = game.status !== 'running'
+            || Boolean(state.challengeContestId);
         const advanceLabel = ADVANCE_LABELS[game.phase];
         el('advanceBtn').textContent = advanceLabel || 'Advance phase';
         el('advanceBtn').disabled = inChallenge || !running || !advanceLabel;
@@ -522,23 +591,11 @@
         }).join('');
     }
 
-    function tallyRows(counts) {
-        const entries = Object.entries(counts || {}).sort((left, right) => right[1] - left[1]);
-        const high = Math.max(1, ...entries.map(entry => entry[1]));
-        return entries.map(([id, count]) => `
-            <div class="tally-row">
-                <div>
-                    <div>${esc(id)}</div>
-                    <div class="tally-bar" style="width:${Math.round((count / high) * 100)}%"></div>
-                </div>
-                <div class="tally-count">${count}</div>
-            </div>
-        `).join('');
-    }
-
+    // One-line form for the timeline. The results panel is where a vote is read
+    // properly, with faces and reasons.
     function ballotText(ballots) {
         return Object.entries(ballots || {})
-            .map(([voter, target]) => `${voter} → ${target}`)
+            .map(([voterId, targetId]) => `${voterId} → ${targetId}`)
             .join(' · ');
     }
 
@@ -591,40 +648,330 @@
         } else {
             live.innerHTML = '<div class="empty">No vote in progress.</div>';
         }
+    }
 
-        const reveals = (game.events || []).filter(event =>
-            event.type === 'vote.revealed'
-            || event.type === 'jury.vote.revealed'
-            || event.type === 'jury.tiebreak.revealed'
-            || event.type === 'rocks.drawn'
-        );
-        if (!reveals.length) {
-            el('voteHistory').innerHTML = '<div class="empty">No votes revealed yet.</div>';
-            return;
+    // —— Post-vote results ————————————————————————————————————————
+    //
+    // A revealed vote is the most consequential thing that happens in a season
+    // and the hardest to read from an event log, so it gets its own panel: who
+    // went home, who wrote whose name down, and the private reason each voter
+    // sealed with their ballot.
+
+    const REVEAL_TYPES = ['vote.revealed', 'jury.vote.revealed', 'jury.tiebreak.revealed'];
+
+    function avatarHtml(name, options) {
+        return window.mcAvatar?.html(name, options) ?? '';
+    }
+
+    function revealPhase(event) {
+        if (event.type === 'jury.vote.revealed') return 'jury_voting';
+        if (event.type === 'jury.tiebreak.revealed') return 'finalist_tiebreak';
+        return event.phase || 'voting';
+    }
+
+    function chapterTab(chapter) {
+        if (chapter.phase === 'jury_voting') return 'Final vote';
+        if (chapter.phase === 'finalist_tiebreak') return 'Tiebreak';
+        if (chapter.phase === 'revote') return `R${chapter.round} revote`;
+        return `R${chapter.round}`;
+    }
+
+    function ordinal(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return '';
+        const tens = number % 100;
+        if (tens >= 11 && tens <= 13) return `${number}th`;
+        return `${number}${['th', 'st', 'nd', 'rd'][number % 10] || 'th'}`;
+    }
+
+    function countBallots(ballots) {
+        const counts = {};
+        for (const targetId of Object.values(ballots || {})) {
+            counts[targetId] = (counts[targetId] || 0) + 1;
         }
-        el('voteHistory').innerHTML = [...reveals].reverse().map(event => {
-            if (event.type === 'rocks.drawn') {
-                return `<div class="vote-block">
-                    <h3>Round ${esc(event.round)} · rocks</h3>
-                    <div>${esc(event.eliminatedId)} drew the purple rock.</div>
-                    <div class="ballot-list">Drawers: ${esc(names(event.drawerIds))}</div>
-                </div>`;
+        return counts;
+    }
+
+    // Ballots the clock filled in for a bot that never voted, keyed by the vote
+    // they belong to, so a reveal can tell a real vote from a forfeit.
+    function autofilledVoters(game) {
+        const byVote = new Map();
+        for (const event of game.events || []) {
+            if (event.type !== 'ballots.autofilled') continue;
+            const key = `${event.round}:${event.phase || 'voting'}`;
+            const voters = byVote.get(key) || new Set();
+            for (const entry of event.ballots || []) voters.add(entry.voterId);
+            byVote.set(key, voters);
+        }
+        return byVote;
+    }
+
+    // Who could not be voted for, by round: an immunity win is half the story of
+    // why a vote landed where it did.
+    function immunityByRound(game) {
+        const byRound = new Map();
+        for (const event of game.events || []) {
+            if (event.type !== 'challenge.completed') continue;
+            const immune = event.winnerId ? [event.winnerId] : (event.immunityIds || []);
+            byRound.set(event.round, immune);
+        }
+        return byRound;
+    }
+
+    // One chapter per set of ballots read out loud, carrying whatever the game
+    // then did about them: a boot, a revote, rocks, or a crowned winner.
+    function voteChapters(game) {
+        const autofilled = autofilledVoters(game);
+        const immunity = immunityByRound(game);
+        const chapters = [];
+        for (const event of game.events || []) {
+            if (REVEAL_TYPES.includes(event.type)) {
+                const phase = revealPhase(event);
+                const ballots = event.type === 'jury.tiebreak.revealed'
+                    ? { [event.voterId]: event.winnerId }
+                    : { ...(event.ballots || {}) };
+                chapters.push({
+                    round: event.round,
+                    phase,
+                    ballots,
+                    reasons: event.reasons || {},
+                    counts: event.counts || countBallots(ballots),
+                    forfeitedIds: autofilled.get(`${event.round}:${phase}`) || new Set(),
+                    // Immunity only shapes a council vote. It has no bearing on
+                    // the jury choosing a winner, even in the same round.
+                    immuneIds: ['voting', 'revote'].includes(phase)
+                        ? (immunity.get(event.round) || [])
+                        : [],
+                    eliminated: null,
+                    winnerId: event.type === 'vote.revealed' ? null : (event.winnerId ?? null),
+                    next: null,
+                    note: null,
+                });
+                continue;
             }
-            if (event.type === 'jury.tiebreak.revealed') {
-                return `<div class="vote-block">
-                    <h3>Round ${esc(event.round)} · finalist tiebreak</h3>
-                    <div>${esc(event.voterId)} crowned ${esc(event.winnerId)}.</div>
-                </div>`;
+            // Anything that follows belongs to the vote that caused it. The round
+            // guard keeps an elimination that no vote produced (a tribe forfeit)
+            // from being pinned on the previous round's ballots.
+            const chapter = chapters[chapters.length - 1];
+            if (!chapter || chapter.round !== event.round) continue;
+            switch (event.type) {
+                case 'player.eliminated':
+                    if (!chapter.eliminated) chapter.eliminated = { ...event };
+                    break;
+                case 'revote.started':
+                    chapter.next = { kind: 'revote', ids: event.tiedIds || [] };
+                    break;
+                case 'deadlock.started':
+                    chapter.next = { kind: 'deadlock', ids: event.tiedIds || [] };
+                    break;
+                case 'fire_making.started':
+                    chapter.next = { kind: 'fire-making', ids: event.contestantIds || [] };
+                    break;
+                case 'rocks.drawn':
+                    chapter.note = `${event.eliminatedId} drew the purple rock.`;
+                    break;
+                case 'fire_making.completed':
+                    chapter.note = `${event.winnerId} won the fire-making tiebreak.`;
+                    break;
+                case 'vote.no_voter_tiebreak':
+                    chapter.note = 'Nobody was left to break the tie, so it was drawn at random.';
+                    break;
+                case 'jury.three_way_tie':
+                    chapter.note = 'The jury split three ways and the win was drawn at random.';
+                    chapter.winnerId = event.winnerId ?? chapter.winnerId;
+                    break;
+                case 'season.completed':
+                    chapter.winnerId = event.winnerId ?? chapter.winnerId;
+                    break;
+                default:
+                    break;
             }
-            const label = event.type === 'jury.vote.revealed'
-                ? 'jury vote'
-                : `${phaseLabel(event.phase || 'vote')}`;
-            return `<div class="vote-block">
-                <h3>Round ${esc(event.round)} · ${esc(label)}</h3>
-                ${tallyRows(event.counts)}
-                <div class="ballot-list">${esc(ballotText(event.ballots))}</div>
+        }
+        return chapters;
+    }
+
+    function chapterStats(chapter) {
+        const voterIds = Object.keys(chapter.ballots);
+        const counts = chapter.counts;
+        const high = Math.max(0, ...Object.values(counts));
+        const leaderIds = Object.keys(counts).filter(id => counts[id] === high);
+        // Whoever the ballots actually decided against (or crowned). With a tie
+        // there is no such player until the revote settles it.
+        const decisiveId = chapter.eliminated?.playerId
+            || chapter.winnerId
+            || (leaderIds.length === 1 ? leaderIds[0] : null);
+        const bootId = chapter.eliminated?.playerId || null;
+        const bootTargetId = bootId ? chapter.ballots[bootId] : null;
+        return {
+            voterIds,
+            counts,
+            leaderIds,
+            decisiveId,
+            bootTargetId,
+            withMajority: voterIds.filter(id => chapter.ballots[id] === decisiveId).length,
+            spread: Object.values(counts).sort((left, right) => right - left).join('–'),
+            // A forfeited ballot is already reported as never voted, so it is not
+            // also counted as a vote that came without an explanation.
+            unexplained: voterIds.filter(id =>
+                !chapter.reasons?.[id] && !chapter.forfeitedIds.has(id)).length,
+            unanimous: leaderIds.length === 1 && high === voterIds.length && voterIds.length > 1,
+            tied: leaderIds.length > 1,
+            // The boot was aiming at someone who never came for them, and still
+            // took a majority: they had no idea it was coming.
+            blindside: Boolean(bootId && bootTargetId
+                && chapter.ballots[bootTargetId] !== bootId
+                && counts[bootId] > voterIds.length / 2),
+        };
+    }
+
+    function resultsSubLine(chapter, stats) {
+        const parts = [`${stats.voterIds.length} ballot${stats.voterIds.length === 1 ? '' : 's'}`];
+        if (stats.spread) parts.push(stats.spread);
+        if (chapter.forfeitedIds.size) parts.push(`${chapter.forfeitedIds.size} never voted`);
+        if (stats.unexplained) parts.push(`${stats.unexplained} gave no reason`);
+        return parts.join(' · ');
+    }
+
+    function chip(text, tone = '', title = '') {
+        return `<span class="chip ${tone}"${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</span>`;
+    }
+
+    function bootCardHtml(chapter, stats) {
+        if (chapter.winnerId) {
+            return `<div class="boot-card win">
+                ${avatarHtml(chapter.winnerId, { mode: 'body', scale: 4 })}
+                <div class="boot-label">Sole Survivor</div>
+                <div class="boot-name">${esc(chapter.winnerId)}</div>
+                <div class="boot-meta">${stats.withMajority} of ${stats.voterIds.length} votes to win</div>
+                <div class="boot-badges">
+                    ${stats.unanimous ? chip('unanimous jury', 'amber') : ''}
+                    ${chapter.note ? chip(chapter.note, 'amber') : ''}
+                </div>
+            </div>`;
+        }
+
+        const boot = chapter.eliminated;
+        if (!boot) {
+            const next = chapter.next;
+            const label = next?.kind === 'revote' ? 'Revote'
+                : next?.kind === 'deadlock' ? 'Deadlock'
+                    : next?.kind === 'fire-making' ? 'Fire-making' : 'No result';
+            return `<div class="boot-card safe">
+                <div class="boot-label">Tied</div>
+                <div class="boot-name">${esc(label)}</div>
+                <div class="boot-meta">${esc(names(next?.ids) || 'nobody')} deadlocked at
+                    ${stats.counts[stats.leaderIds[0]] ?? 0} votes each</div>
+            </div>`;
+        }
+
+        const reasonLabel = {
+            vote: 'Voted out',
+            rocks: 'Drew the purple rock',
+            'fire-making': 'Lost at the fire pit',
+            'unanimous-deadlock': 'Chosen in the deadlock',
+            'no-voter-tiebreak': 'Lost the random draw',
+            'tribe-forfeit': 'Tribe forfeit',
+        }[boot.reason] || 'Eliminated';
+
+        return `<div class="boot-card">
+            ${avatarHtml(boot.playerId, { mode: 'body', scale: 4 })}
+            <div class="boot-label">${esc(reasonLabel)}</div>
+            <div class="boot-name">${esc(boot.playerId)}</div>
+            ${boot.placement ? `<div class="boot-meta">${esc(ordinal(boot.placement))} out of the game</div>` : ''}
+            <div class="boot-meta">${stats.bootTargetId
+                ? `Their own vote: ${esc(stats.bootTargetId)}`
+                : 'Cast no ballot'}</div>
+            <div class="boot-badges">
+                ${stats.unanimous ? chip('unanimous', 'danger') : ''}
+                ${stats.blindside ? chip('blindside', 'danger',
+                    'Took a majority while voting for someone who never voted for them') : ''}
+                ${boot.joinsJury ? chip('joins the jury', 'amber') : ''}
+                ${chapter.note ? chip(chapter.note) : ''}
+            </div>
+        </div>`;
+    }
+
+    function tallyHtml(chapter, stats) {
+        const entries = Object.entries(stats.counts)
+            .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+        if (!entries.length) return '<div class="empty">No ballots were read.</div>';
+        const high = Math.max(1, ...entries.map(entry => entry[1]));
+        const safe = chapter.immuneIds.length
+            ? `<div class="tally-safe">Safe with immunity: ${esc(names(chapter.immuneIds))}</div>`
+            : '';
+        return safe + entries.map(([targetId, count]) => {
+            const voters = stats.voterIds.filter(id => chapter.ballots[id] === targetId);
+            return `<div class="tally-line ${targetId === stats.decisiveId ? 'out' : ''}">
+                ${avatarHtml(targetId, { scale: 4 })}
+                <div>
+                    <div class="who">${esc(targetId)}</div>
+                    <div class="tally-track"><span style="width:${Math.round((count / high) * 100)}%"></span></div>
+                    <div class="tally-voters">${voters.map(id => avatarHtml(id, { scale: 3 })).join('')}</div>
+                </div>
+                <div class="num">${count}</div>
             </div>`;
         }).join('');
+    }
+
+    function ballotsHtml(chapter, stats) {
+        if (!stats.voterIds.length) return '<div class="empty">No ballots were read.</div>';
+        // Blocs read together: the pile that decided the vote comes first.
+        const ordered = [...stats.voterIds].sort((left, right) =>
+            (stats.counts[chapter.ballots[right]] || 0) - (stats.counts[chapter.ballots[left]] || 0)
+            || left.localeCompare(right)
+        );
+        return ordered.map(voterId => {
+            const targetId = chapter.ballots[voterId];
+            const forfeited = chapter.forfeitedIds.has(voterId);
+            const reason = chapter.reasons?.[voterId];
+            const side = stats.decisiveId
+                ? (targetId === stats.decisiveId ? 'majority' : 'minority')
+                : '';
+            const said = forfeited
+                ? '<div class="ballot-say none">Never voted. The clock filled this ballot in at random.</div>'
+                : reason
+                    ? `<div class="ballot-say">“${esc(reason)}”</div>`
+                    : '<div class="ballot-say none">Voted without giving a reason.</div>';
+            return `<div class="ballot ${side} ${forfeited ? 'autofilled' : ''}">
+                <div class="ballot-who">
+                    ${avatarHtml(voterId, { scale: 4 })}<span>${esc(voterId)}</span>
+                </div>
+                <div class="arrow">→</div>
+                <div class="ballot-who">
+                    ${avatarHtml(targetId, { scale: 4 })}<span>${esc(targetId)}</span>
+                </div>
+                ${said}
+            </div>`;
+        }).join('');
+    }
+
+    function renderVoteResults(game) {
+        const chapters = voteChapters(game);
+        const panel = el('voteResults');
+        panel.hidden = chapters.length === 0;
+        if (!chapters.length) return;
+        if (resultsFollow || resultsPick == null || resultsPick >= chapters.length) {
+            resultsPick = chapters.length - 1;
+        }
+        const chapter = chapters[resultsPick];
+        const stats = chapterStats(chapter);
+        const isFinal = ['jury_voting', 'finalist_tiebreak'].includes(chapter.phase);
+        const latest = resultsPick === chapters.length - 1;
+        panel.classList.toggle('fresh', latest && chapter.round === game.round);
+
+        el('resultsTitle').textContent = chapter.phase === 'jury_voting'
+            ? 'The jury votes'
+            : chapter.phase === 'finalist_tiebreak'
+                ? 'The deciding vote'
+                : `Round ${chapter.round} · the vote${chapter.phase === 'revote' ? ' (revote)' : ''}`;
+        el('resultsSub').textContent = resultsSubLine(chapter, stats);
+        el('resultsTallyLabel').textContent = isFinal ? 'Votes to win' : 'Votes against';
+        el('resultsTabs').innerHTML = chapters.map((item, index) => `
+            <button type="button" class="results-tab ${index === resultsPick ? 'on' : ''}"
+                data-index="${index}">${esc(chapterTab(item))}</button>`).join('');
+        el('resultsBoot').innerHTML = bootCardHtml(chapter, stats);
+        el('resultsTally').innerHTML = tallyHtml(chapter, stats);
+        el('resultsBallots').innerHTML = ballotsHtml(chapter, stats);
     }
 
     // —— Challenge deck ——————————————————————————————————————————
@@ -983,14 +1330,22 @@
     function updateStartButton() {
         const button = el('startSeasonBtn');
         const cheapButton = el('startCheapTestBtn');
+        const cheapSixButton = el('startCheapSixTestBtn');
         const game = currentGame();
         const ready = profiles.length > 0 && scenarios.length > 0;
         const cheapProfile = profiles.find(profile => profile.id === CHEAP_TEST_PROFILE_ID);
         const cheapScenario = scenarios.find(scenario => scenario.scenarioId === CHEAP_TEST_SCENARIO_ID);
+        const cheapSixScenario = scenarios.find(
+            scenario => scenario.scenarioId === CHEAP_SIX_TEST_SCENARIO_ID
+        );
         button.disabled = !ready || gameSetup?.isBusy();
         cheapButton.disabled = !cheapProfile || !cheapScenario || gameSetup?.isBusy();
+        cheapSixButton.disabled = !cheapProfile || !cheapSixScenario || gameSetup?.isBusy();
         cheapButton.title = cheapProfile
             ? `Four bots using ${cheapProfile.name} (${cheapProfile.model})`
+            : 'GPT-5.6 Luna Instant is not configured';
+        cheapSixButton.title = cheapProfile
+            ? `Six bots using ${cheapProfile.name} (${cheapProfile.model})`
             : 'GPT-5.6 Luna Instant is not configured';
         button.textContent = !ready
             ? 'Loading cast…'
@@ -1032,7 +1387,13 @@
             participants,
             duration: null,
             minParticipants: Number(scenario?.minimumPlayers) || 4,
-            minParticipantsError: `Survivor needs at least ${Number(scenario?.minimumPlayers) || 4} starting bots`,
+            minParticipantsError: scenario?.maximumPlayers === scenario?.minimumPlayers
+                ? `${scenario.title} requires exactly ${scenario.minimumPlayers} starting bots`
+                : `Survivor needs at least ${Number(scenario?.minimumPlayers) || 4} starting bots`,
+            maxParticipants: Number(scenario?.maximumPlayers) || null,
+            maxParticipantsError: scenario?.maximumPlayers
+                ? `${scenario.title} requires exactly ${scenario.maximumPlayers} starting bots`
+                : null,
             fields: [
                 { id: 'mergeAt', label: 'Merge remaining', min: 4, max: 10, step: 1, value: scenario?.mergeAt || 10 },
                 {
@@ -1092,8 +1453,8 @@
         });
     }
 
-    function openCheapTest() {
-        const scenario = scenarios.find(item => item.scenarioId === CHEAP_TEST_SCENARIO_ID);
+    function openCheapTest(scenarioId) {
+        const scenario = scenarios.find(item => item.scenarioId === scenarioId);
         const profile = profiles.find(item => item.id === CHEAP_TEST_PROFILE_ID);
         if (!scenario || !profile) {
             setStatus('Cheap test requires the configured GPT-5.6 Luna Instant profile.', true);
@@ -1104,8 +1465,8 @@
         openSeasonSetup({
             scenario,
             profileId: profile.id,
-            title: 'Set up cheap Survivor test',
-            footer: `All four bots use ${profile.name} with instant/no reasoning—the lowest-cost model profile available here. Review the cast, then start.`,
+            title: `Set up cheap ${scenario.castSize}-bot Survivor test`,
+            footer: `All ${scenario.castSize} bots use ${profile.name} with instant/no reasoning—the lowest-cost model profile available here. Review the cast, then start.`,
         });
     }
 
@@ -1120,9 +1481,32 @@
     });
 
     el('startSeasonBtn').addEventListener('click', openSeasonSetup);
-    el('startCheapTestBtn').addEventListener('click', openCheapTest);
+    el('startCheapTestBtn').addEventListener('click', () =>
+        openCheapTest(CHEAP_TEST_SCENARIO_ID)
+    );
+    el('startCheapSixTestBtn').addEventListener('click', () =>
+        openCheapTest(CHEAP_SIX_TEST_SCENARIO_ID)
+    );
     el('scenarioSelect').addEventListener('change', renderScenarioBlurb);
     el('pauseBtn').addEventListener('click', () => control(state?.paused ? 'resume' : 'pause'));
+    el('suspendBtn').addEventListener('click', () => {
+        if (suspended()) {
+            control('resume-season');
+            return;
+        }
+        if (window.confirm(
+            'Suspend the season? Its bots leave the world and the season waits here '
+            + 'until you resume it. You can run other games in the meantime.'
+        )) {
+            control('suspend', { reason: 'Suspended from the Survivor control room' });
+        }
+    });
+    el('resumeSeasonBtn').addEventListener('click', () => control('resume-season'));
+    el('discardSeasonBtn').addEventListener('click', () => {
+        if (window.confirm('Cancel the suspended season for good?')) {
+            control('cancel', { reason: 'Cancelled from the Survivor control room' });
+        }
+    });
     el('advanceBtn').addEventListener('click', () => control('advance'));
     el('cancelSeasonBtn').addEventListener('click', () => {
         if (window.confirm('Cancel the active Survivor season and disconnect its bots?')) {
@@ -1165,9 +1549,29 @@
             renderTargetPicker(live, game);
         });
     }
+    // Delegated, because the tabs are rebuilt on every state update. Stepping
+    // back to an earlier vote stops the panel from jumping to the next reveal.
+    el('resultsTabs').addEventListener('click', event => {
+        const tab = event.target.closest('.results-tab');
+        if (!tab) return;
+        const chapters = voteChapters(currentGame() || {});
+        resultsPick = Number(tab.dataset.index);
+        resultsFollow = resultsPick >= chapters.length - 1;
+        render();
+    });
     el('holdPhaseBtn').addEventListener('click', () => control('set-phase-deadline', { seconds: null }));
     el('rushPhaseBtn').addEventListener('click', () => control('set-phase-deadline', { seconds: 5 }));
     el('copyDiagBtn').addEventListener('click', copyDiagnostics);
+    el('voiceAlertDismiss').addEventListener('click', async () => {
+        el('voiceAlert').hidden = true;
+        // Clear it server-side too, so the next real failure reports fresh
+        // instead of being swallowed by the report cooldown.
+        try {
+            await fetch('/api/voice/health/reset', { method: 'POST' });
+        } catch (_) {
+            // The banner is already hidden; a failed reset is not worth surfacing.
+        }
+    });
 
     socket.on('connect', () => {
         el('msStatus').textContent = 'mindserver online';
@@ -1182,6 +1586,8 @@
     });
 
     socket.on('survivor-update', applyState);
+
+    socket.on('voice-health', renderVoiceHealth);
 
     socket.on('survivor-secret-event', event => {
         secretEvents.push(event);

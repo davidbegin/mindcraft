@@ -6,7 +6,10 @@
     const MAX_SYSTEM_PROMPT = 4000;
     const MIN_DURATION_MINUTES = 0.5;
     const MAX_DURATION_MINUTES = 60;
-    const START_TIMEOUT_MS = 180_000;
+    // A cold launch spawns every bot, waits up to 90s for them to join, resets the
+    // arena, and starts a camera per angle, so the ack legitimately arrives minutes
+    // later. This is only a backstop now that a stalled ack no longer fails the launch.
+    const START_TIMEOUT_MS = 360_000;
 
     function esc(value) {
         return String(value ?? '')
@@ -230,6 +233,9 @@
             const box = el('participants');
             const profiles = configuredProfiles();
             box.replaceChildren();
+            action('add').disabled = Boolean(
+                config?.maxParticipants && participants.length >= config.maxParticipants
+            );
 
             participants.forEach((participant, index) => {
                 const row = document.createElement('div');
@@ -424,6 +430,10 @@
                 return config.minParticipantsError
                     || `This game needs at least ${config.minParticipants} bots`;
             }
+            if (config.maxParticipants && participants.length > config.maxParticipants) {
+                return config.maxParticipantsError
+                    || `This game allows at most ${config.maxParticipants} bots`;
+            }
             const seen = new Set();
             const taken = new Set(getReservedNames());
             for (let i = 0; i < participants.length; i++) {
@@ -514,16 +524,28 @@
             const launchToken = ++launchId;
             socket.timeout(timeoutMs).emit(request.event, request.payload, (err, result) => {
                 if (launchToken !== launchId) return;
-                setBusy(false);
                 if (err) {
-                    const message = 'Start game timed out or MindServer did not respond. Copy the debug report for Cursor if one is available.';
+                    // Our ack window closing does not stop the launch, and the
+                    // page behind us is already streaming the real stage-by-stage
+                    // progress. Declaring failure here used to bury the precise
+                    // error the server was still about to send. Only a dead
+                    // socket means no answer is coming.
+                    if (socket.connected) {
+                        const waiting = 'Still launching — MindServer has not answered yet. Watch the launch progress; the roster returns if it fails.';
+                        onStatus(waiting);
+                        el('footer').textContent = waiting;
+                        return;
+                    }
+                    setBusy(false);
+                    const message = 'MindServer did not respond. Copy the debug report for Cursor if one is available.';
                     setError(message);
                     onStatus(message, true);
-                    el('footer').textContent = 'Timed out waiting for MindServer.';
+                    el('footer').textContent = 'Lost contact with MindServer.';
                     reopenAfterFailure();
                     fetchLastReport();
                     return;
                 }
+                setBusy(false);
                 if (!result?.success) {
                     const message = result?.error || 'Failed to start the game';
                     setError(message);
@@ -601,6 +623,7 @@
         action('add').addEventListener('click', () => {
             const profiles = configuredProfiles();
             if (!profiles.length) return;
+            if (config?.maxParticipants && participants.length >= config.maxParticipants) return;
             const used = new Set(participants.map(participant => participant.profileId));
             const rotation = profilesByFamily(profiles);
             const profile = rotation.find(item => !used.has(item.id)) || rotation[0];

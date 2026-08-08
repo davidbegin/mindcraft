@@ -66,6 +66,12 @@
         return others.length ? others.join(', ') : 'nobody else joined';
     }
 
+    // A thread someone walked out of stays in their history, but they are not in
+    // the room any more, which is a different thing from the room being open.
+    function stillIn(thread, playerId) {
+        return thread.open && (thread.currentMemberIds || []).includes(playerId);
+    }
+
     function statsFor(playerId) {
         const own = threadsFor(playerId);
         const spoken = own.reduce(
@@ -76,7 +82,7 @@
             threads: own,
             spoken,
             heard: own.reduce((total, thread) => total + thread.messageCount, 0) - spoken,
-            open: own.filter(thread => thread.open).length,
+            open: own.filter(thread => stillIn(thread, playerId)).length,
             partners: new Set(own.flatMap(thread => partnersOf(thread, playerId))).size,
             lastAt: own.length ? activityAt(own[0]) : 0,
         };
@@ -166,15 +172,18 @@
 
         sections.push(...stats.threads.map(thread => {
             const last = thread.messages.at(-1);
+            const inRoom = stillIn(thread, selectedId);
             const meta = [
-                thread.open ? 'open now' : `closed${thread.closeReason ? ` (${thread.closeReason})` : ''}`,
-                `round ${thread.round ?? '?'} ${phaseLabel(thread.phase)}`,
+                thread.open
+                    ? (inRoom ? 'open now' : 'they walked out')
+                    : `closed${thread.closeReason ? ` (${thread.closeReason})` : ''}`,
+                `opened round ${thread.round ?? '?'} ${phaseLabel(thread.phase)}`,
                 plural(thread.messageCount, 'message'),
             ].join(' · ');
             return `<button type="button" class="thread-row${selectedThreadId === thread.roomId ? ' selected' : ''}" data-thread="${esc(thread.roomId)}">
                 <span class="thread-top">
                     <span class="thread-with">${esc(threadLabel(thread, selectedId))}</span>
-                    ${thread.open ? '<span class="chip open">live</span>' : ''}
+                    ${inRoom ? '<span class="chip open">live</span>' : ''}
                 </span>
                 <span class="thread-meta">${esc(meta)}</span>
                 ${last ? `<span class="thread-snippet">${esc(`${last.senderId}: ${last.message}`)}</span>` : ''}
@@ -229,6 +238,9 @@
                 <div><strong>${esc(thread.memberIds.join(', '))}</strong>
                     <span class="chip ${thread.open ? 'open' : 'gone'}">${thread.open ? 'open' : 'closed'}</span></div>
                 <div class="thread-meta">${esc(`opened by ${thread.ownerId || 'unknown'} in round ${thread.round ?? '?'} ${phaseLabel(thread.phase)} at ${timeLabel(thread.openedAt)}`)}</div>
+                ${thread.open && (thread.currentMemberIds || []).length < thread.memberIds.length
+                    ? `<div class="thread-meta">${esc(`still in the room: ${(thread.currentMemberIds || []).join(', ') || 'nobody'}`)}</div>`
+                    : ''}
                 ${thread.pitch ? `<div class="pitch">“${esc(thread.pitch)}”</div>` : ''}
             </div>`
             : '';

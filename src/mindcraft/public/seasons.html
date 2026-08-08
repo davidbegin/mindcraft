@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mindcraft — Season Archive</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/mc_avatar.js"></script>
+    <script src="/seasons.js" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0e1210;
+            --bg-elevated: #161c19;
+            --bg-card: #1a221e;
+            --bg-inset: #101614;
+            --border: #2a3530;
+            --border-strong: #3d4d45;
+            --text: #e8efe9;
+            --text-dim: #8a9a90;
+            --text-mute: #5f7066;
+            --lime: #9fe870;
+            --lime-dim: rgba(159, 232, 112, 0.15);
+            --amber: #f0b429;
+            --amber-dim: rgba(240, 180, 41, 0.18);
+            --red: #ef5350;
+            --red-dim: rgba(239, 83, 80, 0.16);
+            --cyan: #5ec8c0;
+            --font: "DM Sans", system-ui, sans-serif;
+            --mono: "JetBrains Mono", ui-monospace, monospace;
+            --radius: 12px;
+        }
+
+        * { box-sizing: border-box; }
+        [hidden] { display: none !important; }
+
+        html, body { height: 100%; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 14px;
+            line-height: 1.5;
+            display: flex;
+            flex-direction: column;
+        }
+
+        h1, h2, h3, h4 { margin: 0; }
+
+        /* —— Top bar —— */
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+            flex: none;
+        }
+
+        .brand { display: flex; align-items: baseline; gap: 8px; }
+        .brand h1 { font-size: 1.05rem; letter-spacing: -0.01em; }
+
+        .brand .tag {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .view-nav { display: flex; gap: 4px; margin-left: 8px; }
+
+        .view-nav a {
+            padding: 5px 12px;
+            border-radius: 8px;
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.85rem;
+            border: 1px solid transparent;
+        }
+
+        .view-nav a:hover { color: var(--text); }
+        .view-nav a.active { background: var(--amber-dim); color: var(--amber); }
+
+        .status-pill {
+            margin-left: auto;
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+
+        .status-pill.online { color: var(--lime); border-color: var(--lime); }
+        .status-pill.offline { color: var(--red); border-color: var(--red); }
+
+        /* —— Two-pane layout —— */
+        .panes {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 300px minmax(0, 1fr);
+            gap: 1px;
+            background: var(--border);
+        }
+
+        @media (max-width: 1000px) {
+            .panes { grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(180px, auto); }
+        }
+
+        .pane {
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            min-width: 0;
+        }
+
+        .pane-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-elevated);
+            flex: none;
+        }
+
+        .pane-head h2 {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .pane-head .count {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--text-mute);
+            margin-left: auto;
+            white-space: nowrap;
+        }
+
+        .pane-body { flex: 1; overflow-y: auto; min-height: 0; }
+
+        .filter-input {
+            margin-left: auto;
+            width: 108px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 7px;
+            padding: 4px 8px;
+            font: inherit;
+            font-size: 0.78rem;
+        }
+
+        .filter-input:focus { outline: none; border-color: var(--border-strong); }
+
+        .empty {
+            padding: 18px 16px;
+            color: var(--text-mute);
+            font-size: 0.84rem;
+            font-style: italic;
+        }
+
+        /* —— Season list —— */
+        .season-row {
+            display: block;
+            width: 100%;
+            padding: 10px 14px;
+            background: none;
+            border: none;
+            border-bottom: 1px solid var(--border);
+            border-left: 2px solid transparent;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .season-row:hover { background: var(--bg-elevated); }
+
+        .season-row.selected {
+            background: var(--bg-card);
+            border-left-color: var(--amber);
+        }
+
+        .season-top { display: flex; align-items: center; gap: 8px; }
+
+        .season-title { font-weight: 600; font-size: 0.9rem; flex: 1; min-width: 0; }
+
+        .season-meta {
+            font-family: var(--mono);
+            font-size: 0.67rem;
+            color: var(--text-mute);
+            margin-top: 2px;
+        }
+
+        .season-winner { font-size: 0.8rem; color: var(--lime); margin-top: 3px; }
+        .season-winner.none { color: var(--text-mute); font-style: italic; }
+
+        .chip {
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 2px 6px;
+            border-radius: 999px;
+            border: 1px solid var(--border-strong);
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .chip.completed { border-color: var(--lime); color: var(--lime); }
+        .chip.running { border-color: var(--amber); color: var(--amber); }
+        .chip.cancelled { border-color: var(--red); color: var(--red); }
+        .chip.unfinished { border-color: var(--border); color: var(--text-mute); }
+        .chip.tribe { border-color: var(--cyan); color: var(--cyan); }
+        .chip.jury { border-color: var(--amber); color: var(--amber); }
+        .chip.merge { border-color: var(--cyan); color: var(--cyan); }
+
+        /* —— Tabs —— */
+        .tabs { display: flex; gap: 4px; padding: 8px 16px 0; flex-wrap: wrap; flex: none; }
+
+        .tab {
+            padding: 6px 14px;
+            border-radius: 8px 8px 0 0;
+            border: 1px solid transparent;
+            border-bottom: none;
+            background: none;
+            color: var(--text-dim);
+            font: inherit;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+
+        .tab:hover { color: var(--text); }
+
+        .tab.active {
+            background: var(--bg-card);
+            border-color: var(--border);
+            color: var(--amber);
+        }
+
+        .detail-body { padding: 16px 20px 40px; }
+
+        /* —— Cards —— */
+        .card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-elevated);
+            padding: 14px 16px;
+            margin-bottom: 14px;
+        }
+
+        .card > h3 {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+            margin-bottom: 10px;
+        }
+
+        .card.winner {
+            border-color: var(--lime);
+            background: linear-gradient(90deg, var(--lime-dim), var(--bg-elevated) 60%);
+        }
+
+        .winner-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+        .winner-name { font-size: 1.4rem; font-weight: 700; }
+        .winner-sub { font-size: 0.85rem; color: var(--text-dim); }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 10px 16px;
+        }
+
+        .stat .label {
+            display: block;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+        }
+
+        .stat .value { font-family: var(--mono); font-size: 0.95rem; }
+
+        /* —— Tables —— */
+        table.grid { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+
+        table.grid th {
+            text-align: left;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+            font-weight: 600;
+            padding: 4px 8px 6px 0;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+
+        table.grid td {
+            padding: 6px 8px 6px 0;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        table.grid tr:last-child td { border-bottom: none; }
+        table.grid td.num { font-family: var(--mono); color: var(--text-dim); }
+        table.grid tr.winner-row-line td { color: var(--lime); }
+
+        .who { display: inline-flex; align-items: center; gap: 7px; vertical-align: middle; }
+
+        /* —— Rounds —— */
+        .round-head {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        .round-head h3 { font-size: 1rem; color: var(--text); text-transform: none; letter-spacing: 0; }
+        .round-head .when { font-family: var(--mono); font-size: 0.7rem; color: var(--text-mute); }
+
+        .block { margin-top: 12px; }
+
+        .block > h4 {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+            margin-bottom: 6px;
+        }
+
+        .line { font-size: 0.86rem; color: var(--text-dim); }
+        .line strong { color: var(--text); font-weight: 600; }
+
+        .qa { border-left: 2px solid var(--border-strong); padding: 2px 0 2px 10px; margin-bottom: 10px; }
+        .qa .prompt { font-style: italic; color: var(--text); }
+        .qa .answer { font-size: 0.85rem; color: var(--text-dim); margin-top: 4px; }
+        .qa .answer strong { color: var(--cyan); font-weight: 600; }
+
+        /* —— Ballots —— */
+        .ballots { display: flex; flex-wrap: wrap; gap: 8px; }
+
+        .ballot {
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--bg-inset);
+            padding: 7px 10px;
+            min-width: 190px;
+            flex: 1 1 220px;
+        }
+
+        .ballot .cast { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; }
+        .ballot .arrow { color: var(--text-mute); }
+        .ballot .target { font-weight: 600; color: var(--red); }
+        .ballot .auto { color: var(--text-mute); font-size: 0.68rem; font-family: var(--mono); }
+
+        .ballot .reason {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            font-style: italic;
+            margin-top: 4px;
+        }
+
+        .tally { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+
+        .tally-item {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            border: 1px solid var(--border-strong);
+            border-radius: 999px;
+            padding: 3px 10px 3px 4px;
+            font-size: 0.85rem;
+        }
+
+        .tally-item.out { border-color: var(--red); color: var(--red); }
+        .tally-item .count { font-family: var(--mono); font-weight: 600; }
+
+        .boot-line {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+            margin-top: 8px;
+        }
+
+        .boot-line .name { font-weight: 600; }
+        .boot-line .why { color: var(--text-dim); font-size: 0.82rem; }
+
+        /* —— Conversations —— */
+        .thread {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg-inset);
+            padding: 10px 12px;
+            margin-bottom: 10px;
+        }
+
+        .thread-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .thread-head .with { display: flex; flex-wrap: wrap; gap: 12px; font-weight: 600; }
+
+        .thread-meta {
+            font-family: var(--mono);
+            font-size: 0.67rem;
+            color: var(--text-mute);
+            margin-top: 2px;
+        }
+
+        .thread .pitch { font-style: italic; color: var(--text-dim); margin-top: 4px; font-size: 0.85rem; }
+
+        .msg {
+            display: grid;
+            grid-template-columns: 140px minmax(0, 1fr);
+            gap: 12px;
+            padding: 5px 0;
+            border-top: 1px solid var(--border);
+            margin-top: 8px;
+        }
+
+        .msg-side { text-align: right; font-family: var(--mono); font-size: 0.68rem; color: var(--text-mute); }
+        .msg-who { display: block; font-size: 0.78rem; color: var(--text-dim); font-weight: 600; }
+        .msg-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-dim); }
+
+        @media (max-width: 700px) {
+            .msg { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+            .msg-side { text-align: left; }
+        }
+
+        /* —— Timeline —— */
+        .event {
+            display: grid;
+            grid-template-columns: 130px 60px minmax(0, 1fr);
+            gap: 12px;
+            padding: 5px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+        }
+
+        .event .stamp { font-family: var(--mono); font-size: 0.68rem; color: var(--text-mute); }
+        .event .round { font-family: var(--mono); font-size: 0.68rem; color: var(--cyan); }
+        .event .what strong { font-weight: 600; }
+        .event .detail { color: var(--text-dim); font-size: 0.82rem; }
+
+        @media (max-width: 700px) {
+            .event { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+        }
+
+        /* —— Bot portraits (composited from /skins by mc_avatar.js) —— */
+        .mc-av {
+            display: block;
+            image-rendering: pixelated;
+            border-radius: 3px;
+            background: var(--bg-inset);
+        }
+
+        .page-empty { padding: 60px 24px; text-align: center; color: var(--text-mute); }
+        .page-empty a { color: var(--amber); }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <h1>Season Archive</h1>
+            <span class="tag">post-season analysis</span>
+        </div>
+        <nav class="view-nav">
+            <a href="/colony">Colony</a>
+            <a href="/games">Games</a>
+            <a href="/survivor">Survivor</a>
+            <a href="/conversations">Conversations</a>
+            <a href="/seasons" class="active" aria-current="page">Archive</a>
+        </nav>
+        <span id="msStatus" class="status-pill offline">mindserver offline</span>
+    </header>
+
+    <main class="panes" id="panes">
+        <aside class="pane">
+            <div class="pane-head">
+                <h2>Seasons</h2>
+                <input id="seasonFilter" class="filter-input" type="text" placeholder="Filter" aria-label="Filter seasons">
+            </div>
+            <div class="pane-body" id="seasonList">
+                <div class="empty">Loading seasons…</div>
+            </div>
+        </aside>
+        <section class="pane">
+            <div class="pane-head">
+                <h2 id="detailTitle">Season</h2>
+                <span class="count" id="detailCount"></span>
+            </div>
+            <div class="tabs" id="tabs" hidden></div>
+            <div class="pane-body" id="detail">
+                <div class="empty">Pick a season on the left.</div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

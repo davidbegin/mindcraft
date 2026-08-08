@@ -78,6 +78,58 @@ test('a four-player season plays two councils and ends at a final two', () => {
     );
 });
 
+test('a six-player season merges at four and every boot joins the final jury', () => {
+    const players = PLAYERS.slice(0, 6);
+    const game = new SurvivorGame({
+        participantIds: players,
+        mergeAt: 4,
+        finalistCount: 2,
+        juryEligibility: 'all_eliminated',
+    });
+    const opening = game.snapshot();
+    assert.deepEqual(opening.tribes.Ember, [players[0], players[2], players[4]]);
+    assert.deepEqual(opening.tribes.Tide, [players[1], players[3], players[5]]);
+    assert.equal(opening.merged, false);
+
+    beginPreMergeVote(game, 'Ember');
+    let state = castPlurality(game, players[1]);
+    assert.equal(state.merged, false);
+    assert.deepEqual(state.preMergeBootIds, [players[1]]);
+    assert.deepEqual(state.juryIds, [players[1]]);
+
+    beginPreMergeVote(game, 'Tide');
+    state = castPlurality(game, players[0]);
+    assert.equal(state.merged, true);
+    assert.deepEqual(state.preMergeBootIds, [players[1], players[0]]);
+    assert.deepEqual(state.juryIds, [players[1], players[0]]);
+    assert.equal(state.phase, 'challenge');
+
+    state = playIndividualRound(game, players[2], players[3]);
+    assert.equal(state.phase, 'challenge');
+    assert.deepEqual(state.juryIds, [players[1], players[0], players[3]]);
+
+    state = playIndividualRound(game, players[2], players[4]);
+    assert.equal(state.phase, 'jury_questioning');
+    assert.deepEqual(state.finalistIds, [players[2], players[5]]);
+    assert.deepEqual(
+        state.juryIds,
+        [players[1], players[0], players[3], players[4]]
+    );
+    assert.deepEqual(
+        state.council.attendeeIds,
+        [players[2], players[5], players[1], players[0], players[3], players[4]]
+    );
+
+    game.beginJuryVote();
+    game.castVote(players[1], players[2]);
+    game.castVote(players[0], players[2]);
+    game.castVote(players[3], players[2]);
+    game.castVote(players[4], players[5]);
+    const completed = game.revealVotes();
+    assert.equal(completed.status, 'completed');
+    assert.deepEqual(completed.winnerIds, [players[2]]);
+});
+
 test('a deadlocked jury in a final two is settled by fire-making', () => {
     const players = PLAYERS.slice(0, 4);
     const game = new SurvivorGame({ participantIds: players, mergeAt: 10, random: () => 0 });
@@ -406,4 +458,99 @@ test('a council question needs a prompt, a target, and room on the docket', () =
         () => game.answerCouncilQuestion(attendee, 'x'.repeat(1201)),
         /1200 characters or fewer/
     );
+});
+
+test('a ballot carries private reasoning that only the reveal makes public', () => {
+    const game = new SurvivorGame({ participantIds: PLAYERS, mergeAt: 10, random: () => 0 });
+    const state = beginPreMergeVote(game);
+    const [firstVoter, secondVoter] = state.eligibleVoterIds;
+    const target = state.eligibleTargetIds.find(id => id !== firstVoter && id !== secondVoter);
+
+    game.castVote(firstVoter, target, '  He lied to me on the mat.  ');
+    game.castVote(secondVoter, target, '');
+
+    // Sealed until the votes are read: the cast event says a ballot landed and
+    // that it came with reasoning, never who it named.
+    const cast = game.snapshot().events.filter(event => event.type === 'ballot.cast');
+    assert.deepEqual(cast.map(event => event.explained), [true, false]);
+    assert.equal(Object.hasOwn(cast[0], 'targetId'), false);
+    assert.equal(game.snapshot().ballotReasons[firstVoter], 'He lied to me on the mat.');
+    assert.equal(Object.hasOwn(game.snapshot().ballotReasons, secondVoter), false);
+
+    for (const voterId of state.eligibleVoterIds.slice(2)) {
+        game.castVote(
+            voterId,
+            voterId === target ? firstVoter : target,
+            `${voterId} agrees`
+        );
+    }
+    game.revealVotes();
+
+    const revealed = game.snapshot().events.findLast(event => event.type === 'vote.revealed');
+    assert.equal(revealed.reasons[firstVoter], 'He lied to me on the mat.');
+    assert.equal(Object.hasOwn(revealed.reasons, secondVoter), false);
+});
+
+test('reasoning is capped and never leaks from one vote into the next', () => {
+    const game = new SurvivorGame({
+        participantIds: ['Alice', 'Billy', 'Cara', 'Dev'],
+        mergeAt: 4,
+        finalistCount: 2,
+        random: () => 0,
+    });
+    game.startChallenge({ id: 'cake_race' });
+    game.completeChallenge({ winnerId: 'Alice' });
+    game.openCouncil();
+    game.beginVoting();
+
+    game.castVote('Alice', 'Dev', 'x'.repeat(600));
+    assert.equal(game.snapshot().ballotReasons.Alice.length, 500);
+
+    // Alice and Billy split from Cara and Dev, so this vote ties and revotes.
+    game.castVote('Billy', 'Dev', 'Following Alice.');
+    game.castVote('Cara', 'Billy', 'Billy is the shield.');
+    game.castVote('Dev', 'Billy', 'Cara and I agreed on Billy.');
+    game.revealVotes();
+
+    const state = game.snapshot();
+    assert.equal(state.phase, 'revote');
+    assert.deepEqual(state.ballots, {});
+    assert.deepEqual(state.ballotReasons, {});
+});
+
+test('an autofilled ballot records the vote it stood in for', () => {
+    const game = new SurvivorGame({ participantIds: PLAYERS, mergeAt: 10, random: () => 0 });
+    beginPreMergeVote(game);
+    game.fillMissingBallots();
+
+    const autofilled = game.snapshot().events.findLast(event => event.type === 'ballots.autofilled');
+    assert.equal(autofilled.phase, 'voting');
+    assert.equal(autofilled.ballots.length, game.snapshot().eligibleVoterIds.length);
+});
+
+test('the jury says why it crowned a winner', () => {
+    const game = new SurvivorGame({
+        participantIds: ['Alice', 'Billy', 'Cara', 'Dev'],
+        mergeAt: 4,
+        finalistCount: 2,
+        random: () => 0,
+    });
+    for (const target of ['Dev', 'Cara']) {
+        game.startChallenge({ id: 'cake_race' });
+        game.completeChallenge({ winnerId: 'Alice' });
+        game.openCouncil();
+        game.beginVoting();
+        castPlurality(game, target);
+    }
+    game.beginJuryVote();
+    for (const jurorId of game.snapshot().eligibleVoterIds) {
+        game.castVote(jurorId, 'Alice', `${jurorId} respects the cut.`);
+    }
+    game.revealVotes();
+
+    const state = game.snapshot();
+    assert.deepEqual(state.winnerIds, ['Alice']);
+    assert.equal(state.finalVote.reasons.Dev, 'Dev respects the cut.');
+    const revealed = state.events.findLast(event => event.type === 'jury.vote.revealed');
+    assert.equal(revealed.reasons.Cara, 'Cara respects the cut.');
 });

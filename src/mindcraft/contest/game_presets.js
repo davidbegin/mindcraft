@@ -176,9 +176,44 @@ export const SURVIVOR_FOUR_PLAYER_PRESET = Object.freeze({
     ]),
 });
 
+// A compact full-format season: two tribes of three lose one player apiece
+// before merging at four, then two individual votes produce a final two. Every
+// boot serves on the jury so the finale is decided by the other four players.
+export const SURVIVOR_SIX_PLAYER_PRESET = Object.freeze({
+    id: 'survivor',
+    scenarioId: 'six_player',
+    title: 'Survivor Six-Player Test',
+    blurb: 'Two tribes of three merge at four, play down to a final two, and face all four eliminated players on the jury.',
+    defaultCharacters: Object.freeze(CONTEST_BOT_CHARACTERS.slice(0, 6)),
+    castSize: 6,
+    minimumPlayers: 6,
+    maximumPlayers: 6,
+    mergeAt: 4,
+    finalistCount: 2,
+    juryEligibility: 'all_eliminated',
+    tribeNames: Object.freeze(['Ember', 'Tide']),
+    phaseDurationsMs: Object.freeze({
+        strategy: 90_000,
+        tribalCouncil: 3 * 60_000,
+        voting: 45_000,
+        revote: 30_000,
+        deadlock: 45_000,
+        juryQuestioning: 2 * 60_000,
+        juryVoting: 45_000,
+    }),
+    challengeGameIds: Object.freeze([
+        'team_tower_battle',
+        'deepest_2_5',
+        'tower_battle',
+        'cake_race',
+        'spleef',
+    ]),
+});
+
 export const SURVIVOR_SCENARIOS = Object.freeze({
     classic: SURVIVOR_SEASON_PRESET,
     four_player: SURVIVOR_FOUR_PLAYER_PRESET,
+    six_player: SURVIVOR_SIX_PLAYER_PRESET,
 });
 
 export const DEFAULT_SURVIVOR_SCENARIO_ID = 'classic';
@@ -380,6 +415,7 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
         durationMs: 5 * 60_000,
         prompt:
             'CONTEST: Spleef. You stand on a single thin platform of snow blocks suspended over a deep water pit, holding a diamond shovel. There is only ONE layer of snow: every block anyone breaks becomes a permanent hole, and the instant you drop off the snow into the pit you are eliminated for good. Weakness is active so you cannot fight — the floor itself is your only weapon. Do not place blocks and do not punch or attack anyone.'
+            + '\n\nNEVER STOP MOVING: constantly run across the arena while destroying snow across as many different areas as possible. Standing on the same block for 2 seconds makes that block automatically break beneath you. Sitting still, waiting safely, camping an island, or choosing any plan that leaves you stationary is forbidden and will make you fall. Every game plan must combine continuous movement with aggressive floor removal.'
             + '\n\nTHE WHOLE POINT: you win by making OTHER players fall, never by digging your own way down. The last competitor still standing on the snow wins. Falling into the pit loses instantly — and a hole you dug under yourself counts exactly the same as being outplayed. Most losers in Spleef defeat themselves by digging beneath their own feet; do not be one of them.'
             + '\n\nSURVIVAL RULE #1 — PROTECT YOUR OWN FEET: never break the block you are standing on, and never break a block you are about to step onto. Never dig straight down and never use any dig-down behavior. Never walk, run, jump, or pathfind into or across a hole. Before EVERY dig, confirm the block you are about to break is under or beside a RIVAL — never under you — and that you still have solid snow on all sides of your own feet. When you break blocks, aim at a rival\'s coordinates, not your own position.'
             + '\n\nHOW TO ACTUALLY ELIMINATE A RIVAL: break the snow directly beneath an opponent, or in the exact spot they are moving toward, while you stay on intact snow a couple of blocks away from the gap. Since you cannot touch them, every kill is a trick: (1) open a hole just AHEAD of a moving rival so they run into it, (2) dig the snow BETWEEN a rival and the nearest solid ground to cut off their escape, or (3) carve a ring around a rival so they are stranded on a shrinking island that finally collapses under them. Bait rivals into chasing you across thin, half-dug ground, then side-step onto solid snow and let the gaps swallow them. Read where each rival is heading and dig for where they WILL be, not where they are.'
@@ -389,6 +425,7 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
             type: 'spleef',
             scoring: 'last-standing',
             floorY: 100,
+            stationaryFloorBreakMs: 2_000,
         }),
         metadata: Object.freeze({
             arena: 'spleef-v1',

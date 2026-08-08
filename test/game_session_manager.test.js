@@ -259,6 +259,78 @@ test('provisions, records, and holds competitors on podiums until cleanup', asyn
     });
 });
 
+test('a lost camera angle costs footage, not the match', async () => {
+    const incomplete = [];
+    await withManager(async ({ manager, calls }) => {
+        const result = await manager.start({
+            gameId: 'tower',
+            participants: [
+                { profileId: 'fast', name: 'speedy' },
+                { profileId: 'smart', name: 'thinker' },
+            ],
+        });
+
+        assert.equal(result.contest.status, 'running');
+        assert.equal(manager.view().status, 'running');
+        assert.deepEqual(
+            calls.filter(([type]) => type === 'directive').map(([, name]) => name),
+            ['speedy', 'thinker'],
+            'both competitors are told to play even though one has no camera'
+        );
+        assert.deepEqual(manager.view().recording.failures, [
+            { agentName: 'thinker', error: 'start-contest-recording timed out for thinker' },
+        ]);
+        assert.deepEqual(incomplete, [
+            [{ agentName: 'thinker', error: 'start-contest-recording timed out for thinker' }],
+        ]);
+    }, {
+        startRecording: async options => ({
+            sessionId: `contest-${options.contestId}`,
+            participants: ['speedy'],
+            cameraCount: 4,
+            failures: [
+                { agentName: 'thinker', error: 'start-contest-recording timed out for thinker' },
+            ],
+        }),
+        onRecordingIncomplete: failures => incomplete.push(failures),
+    });
+});
+
+test('a launch that never reaches the starting gun clears the arena without waiting on media', async () => {
+    let releaseStop;
+    const stopRequested = new Promise(resolve => { releaseStop = resolve; });
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await assert.rejects(
+            manager.start({
+                gameId: 'tower',
+                participants: [{ profileId: 'fast', name: 'speedy' }],
+            }),
+            /arena is flooded/
+        );
+
+        assert.equal(manager.view(), null);
+        assert.deepEqual(
+            calls.filter(([type]) => type === 'destroy').map(([, id]) => id),
+            ['speedy#1'],
+            'the bot is removed instead of standing in a half-built arena'
+        );
+        assert.deepEqual(
+            calls.filter(([type]) => type === 'highlight'),
+            [],
+            'a launch with no match has no highlight reel'
+        );
+        assert.equal(coordinator.snapshot().contests['game-1'].status, 'cancelled');
+        await stopRequested;
+    }, {
+        prepareArena: async () => { throw new Error('arena is flooded'); },
+        stopRecording: async () => {
+            releaseStop();
+            // A stop that never settles must not delay the teardown.
+            return new Promise(() => {});
+        },
+    });
+});
+
 test('an explicit next-game start ends the podium ceremony early', async () => {
     let now = 1_000;
     let nextId = 0;

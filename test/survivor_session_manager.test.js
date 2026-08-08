@@ -213,6 +213,29 @@ test('starts a four-player season already merged', async () => {
     assert.ok(directives.some(item => item.prompt.includes('tribes have merged')));
 });
 
+test('starts a six-player season in tribes with every boot eligible for the jury', async () => {
+    const { manager, coordinator, contestCoordinator, directives } = await createManager();
+    await manager.start({
+        participants: participants(6),
+        mergeAt: 4,
+        finalistCount: 2,
+        juryEligibility: 'all_eliminated',
+        challengeGameIds: ['cake_race'],
+    });
+
+    const game = coordinator.view();
+    assert.equal(game.merged, false);
+    assert.equal(game.juryEligibility, 'all_eliminated');
+    assert.deepEqual(game.tribes.Ember, ['Bot1', 'Bot3', 'Bot5']);
+    assert.deepEqual(game.tribes.Tide, ['Bot2', 'Bot4', 'Bot6']);
+    assert.equal(
+        contestCoordinator.contests[manager.view().challengeContestId].metadata.survivorMode,
+        'tribe'
+    );
+    assert.ok(directives.some(item => item.prompt.includes('Tribe: Ember')));
+    assert.ok(directives.some(item => item.prompt.includes('Tribe: Tide')));
+});
+
 test('a four-player season runs end to end to a two-juror finale', async () => {
     const { manager, coordinator, contestCoordinator, advance } = await createManager();
     await manager.start({
@@ -429,12 +452,23 @@ test('agent commands keep ballot contents private from status responses', async 
     const state = coordinator.view();
     const voterId = state.eligibleVoterIds[0];
     const targetId = state.eligibleTargetIds.find(id => id !== voterId);
-    await manager.handleAgentCommand(voterId, 'cast-vote', { targetId });
+    await manager.handleAgentCommand(voterId, 'cast-vote', {
+        targetId,
+        reason: 'He is the only one who can beat me.',
+    });
     const status = await manager.handleAgentCommand(voterId, 'status');
     assert.equal(status.data.ballotReceived, true);
     assert.ok(!Object.hasOwn(status.data, 'ballots'));
     assert.deepEqual(manager.view().game.ballots, {});
     assert.equal(manager.view().game.ballotCount, 1);
+
+    // The reason reaches the game sealed, and the dashboard is told no more than
+    // it is told about the ballot itself until the votes are read.
+    assert.equal(
+        coordinator.view().ballotReasons[voterId],
+        'He is the only one who can beat me.'
+    );
+    assert.deepEqual(manager.view().game.ballotReasons, {});
 });
 
 test('failed challenge resolution remains retryable', async () => {
@@ -453,7 +487,7 @@ test('failed challenge resolution remains retryable', async () => {
     assert.equal(manager.view().challengeContestId, contestId);
 });
 
-test('recovers a running season from persisted coordinator and session state', async () => {
+test('a restart parks the running season instead of putting its cast back', async () => {
     const { manager, root, options } = await createManager();
     await manager.start({
         participants: participants(),
@@ -466,15 +500,165 @@ test('recovers a running season from persisted coordinator and session state', a
         root,
         random: () => 0,
     });
+    const spawned = [];
+    const directives = [];
     const recovered = new SurvivorSessionManager({
         ...options,
         coordinator: recoveredCoordinator,
         rooms: new PrivateRoomRegistry({ idFactory: () => 'recovered-room' }),
+        createAgent: settings => {
+            spawned.push(settings.profile.name);
+            return { success: true, agentId: `agent-${settings.profile.name}` };
+        },
+        sendDirective: (id, prompt) => directives.push({ id, prompt }),
     });
     const view = await recovered.recover();
+
     assert.equal(view.id, manager.view().id);
     assert.equal(view.game.phase, 'challenge');
     assert.equal(view.participantIds.length, 11);
+    assert.equal(view.status, 'suspended');
+    assert.equal(view.suspendedReason, 'server-restart');
+    assert.deepEqual(spawned, [], 'no bot is put back in the world without being asked');
+    assert.deepEqual(directives, [], 'no survivor prompt goes out to a parked season');
+    // The old contest died with the process, so nothing is waiting on it.
+    assert.equal(view.challengeContestId, null);
+});
+
+test('a parked season lets another game have the world and refuses to play', async () => {
+    const { manager, root, options } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    await manager._persistOperation;
+
+    const recovered = new SurvivorSessionManager({
+        ...options,
+        coordinator: await SurvivorCoordinator.load({ root, random: () => 0 }),
+        rooms: new PrivateRoomRegistry({ idFactory: () => 'recovered-room' }),
+    });
+    await recovered.recover();
+
+    assert.equal(recovered.occupiesWorld(), false);
+    // Nothing about a parked season may move on its own while something else
+    // is using the world.
+    assert.equal(await recovered.tick(), null);
+    await assert.rejects(recovered.control('advance'), /suspended/i);
+    await assert.rejects(recovered.control('pause'), /suspended/i);
+    await assert.rejects(
+        recovered.handleAgentCommand('Bot1', 'status'),
+        /suspended/i
+    );
+    await assert.rejects(
+        recovered.start({ participants: participants(4), mergeAt: 4 }),
+        /Resume it or cancel it/
+    );
+});
+
+test('suspending frees the world and resuming brings the same season back', async () => {
+    const { manager, coordinator, contestCoordinator, directives } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    // Get off the challenge phase: a season mid-challenge cannot be suspended.
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+    const seasonId = manager.view().id;
+    assert.equal(manager.view().game.phase, 'strategy');
+
+    await manager.control('suspend');
+    assert.equal(manager.view().status, 'suspended');
+    assert.equal(manager.view().suspendedReason, 'operator');
+    assert.equal(manager.view().createdAgents.length, 0, 'the cast leaves the world');
+    assert.equal(manager.occupiesWorld(), false);
+    // The season itself is untouched — only the session is parked.
+    assert.equal(coordinator.view().status, 'running');
+    assert.equal(coordinator.view().phase, 'strategy');
+
+    directives.length = 0;
+    await manager.control('resume-season');
+
+    assert.equal(manager.view().status, 'running');
+    assert.equal(manager.view().suspendedReason, null);
+    assert.equal(manager.view().id, seasonId, 'the same season picks up where it left off');
+    assert.equal(manager.view().createdAgents.length, 4, 'the cast is back');
+    assert.equal(manager.occupiesWorld(), true);
+    assert.ok(
+        directives.some(item => item.prompt.includes('strategy')),
+        'everyone is told where the season stands'
+    );
+});
+
+test('a season parked during a challenge is refused, not torn in half', async () => {
+    const { manager } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    assert.equal(manager.view().game.phase, 'challenge');
+    await assert.rejects(manager.control('suspend'), /immunity challenge/);
+    assert.equal(manager.view().status, 'running');
+});
+
+test('resuming a season parked in the challenge phase runs its challenge again', async () => {
+    const { manager, root, options, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    await manager._persistOperation;
+    // A restart kills the contest that was driving the challenge.
+    contestCoordinator.activeContestId = null;
+
+    const recovered = new SurvivorSessionManager({
+        ...options,
+        coordinator: await SurvivorCoordinator.load({ root, random: () => 0 }),
+        rooms: new PrivateRoomRegistry({ idFactory: () => 'recovered-room' }),
+    });
+    await recovered.recover();
+    await recovered.control('resume-season');
+
+    assert.equal(recovered.view().status, 'running');
+    assert.ok(
+        recovered.view().challengeContestId,
+        'the round gets a live challenge instead of waiting on a dead one'
+    );
+});
+
+test('cancelling clears a season stranded on disk with no session record', async () => {
+    const { manager, root, options } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+
+    const orphanCoordinator = await SurvivorCoordinator.load({ root, random: () => 0 });
+    const orphaned = new SurvivorSessionManager({
+        ...options,
+        coordinator: orphanCoordinator,
+        rooms: new PrivateRoomRegistry({ idFactory: () => 'orphan-room' }),
+    });
+    // No recover() call, so there is no session overlay — but the season on
+    // disk is still running and would otherwise block every later game.
+    assert.equal(orphaned.view(), null);
+    assert.equal(orphaned.occupiesWorld(), true);
+
+    await orphaned.cancel('clearing the orphan');
+
+    assert.equal(orphanCoordinator.view().status, 'cancelled');
+    assert.equal(orphaned.occupiesWorld(), false);
 });
 
 test('recovery replays private alliance memory from the journal', async () => {
@@ -525,7 +709,7 @@ test('recovery replays private alliance memory from the journal', async () => {
     assert.match(recovered.briefingFor('Bot3'), /told you privately/);
 });
 
-test('recovery respawns every reachable bot even when one fails to launch', async () => {
+test('a resume that cannot get a bot back stays parked and names it', async () => {
     const { manager, root, options } = await createManager();
     await manager.start({
         participants: participants(),
@@ -554,11 +738,15 @@ test('recovery respawns every reachable bot even when one fails to launch', asyn
         },
     });
 
-    await assert.rejects(recovered.recover(), /Bot3/);
+    await recovered.recover();
+    await assert.rejects(recovered.control('resume-season'), /Bot3/);
     assert.deepEqual(attempted, ['Bot3']);
-    assert.equal(recovered.lastFailure.stage, 'recovery');
+    assert.equal(recovered.lastFailure.stage, 'resume');
     assert.match(recovered.lastFailure.error, /did not join/);
     assert.ok(recovered.lastFailure.agents.some(agent => agent.name === 'Bot3'));
+    // A failed resume must not leave a season half-running with no cast.
+    assert.equal(recovered.view().status, 'suspended');
+    assert.equal(recovered.occupiesWorld(), false);
 });
 
 test('provisioning reports which bots the season is still waiting on', async () => {
@@ -1036,6 +1224,100 @@ test('closing council leaves the record available to the bots who then vote', as
     assert.match(voteDirective, /reconsider everything that just came out on the mat/);
     assert.match(voteDirective, /you win because the people/);
     assert.equal(coordinator.view().phase, 'voting');
+});
+
+test('a challenge directive is about winning the challenge and nothing else', async () => {
+    const { manager, coordinator, directives } = await createManager();
+    await manager.start({
+        participants: participants(6),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['deepest_2_5'],
+    });
+
+    assert.equal(coordinator.view().phase, 'challenge');
+    const directive = directives.at(-1).prompt;
+    // The contest's own rules are the goal, and how the tribe is scored is the
+    // part that changes what a bot should do with them.
+    assert.match(directive, /CONTEST: Deepest Wins/);
+    assert.match(directive, /AVERAGE depth/);
+    assert.match(directive, /losing tribe goes to Tribal Council/);
+    // None of the season's social game rides along with it.
+    assert.doesNotMatch(directive, /you win because the people/);
+    assert.doesNotMatch(directive, /!requestPrivateChat/);
+    assert.doesNotMatch(directive, /!castSurvivorVote/);
+});
+
+test('after the merge a challenge is played for one immunity, not for a tribe', async () => {
+    const { manager, directives } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+
+    const directive = directives.at(-1).prompt;
+    assert.match(directive, /CONTEST: First Cake/);
+    assert.match(directive, /the winner cannot be voted out tonight/);
+    assert.doesNotMatch(directive, /Tribe:/);
+});
+
+test('the social phases keep the memory, the jury lens, and the private toolbox', async () => {
+    const { manager, coordinator, contestCoordinator, directives } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    assert.equal(coordinator.view().phase, 'strategy');
+    const directive = directives.at(-1).prompt;
+    assert.match(directive, /you win because the people/);
+    assert.match(directive, /!requestPrivateChat/);
+    // The challenge is over, so its rules are no longer anybody's goal.
+    assert.doesNotMatch(directive, /CONTEST: First Cake/);
+});
+
+test('an immunity challenge closes private talk without erasing the alliance', async () => {
+    const { manager, coordinator, contestCoordinator, advance } = await createManager();
+    await manager.start({
+        participants: participants(6),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race', 'spleef'],
+        councilAutoAdvance: true,
+    });
+
+    await assert.rejects(
+        manager.handleAgentCommand('Bot2', 'talk-request', { inviteeIds: ['Bot4'] }),
+        /closed during an immunity challenge/
+    );
+
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+    assert.equal(coordinator.view().phase, 'strategy');
+    await openPrivateRoom(manager, 'Bot2', ['Bot4']);
+    await manager.handleAgentCommand('Bot2', 'room-send', {
+        message: 'we go to the end together',
+    });
+    assert.equal(manager.view().rooms.length, 1);
+
+    for (let step = 0; step < 12 && coordinator.view().round === 1; step++) {
+        advance(2);
+        await manager.tick();
+    }
+
+    assert.equal(coordinator.view().phase, 'challenge');
+    assert.equal(manager.view().rooms.length, 0, 'the room is closed for the challenge');
+    assert.match(
+        manager.briefingFor('Bot4'),
+        /we go to the end together/,
+        'the alliance is on hold, not forgotten'
+    );
 });
 
 test('the host can hold a phase open or cut it short', async () => {

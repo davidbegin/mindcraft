@@ -14,6 +14,7 @@ const PHASES = Object.freeze([
 ]);
 
 export const MIN_SURVIVOR_PLAYERS = 4;
+const JURY_ELIGIBILITY = Object.freeze(['post_merge', 'all_eliminated']);
 
 // Phases where the host is running a live Tribal Council and answers are public.
 export const COUNCIL_PHASES = Object.freeze(['tribal_council', 'jury_questioning']);
@@ -91,6 +92,10 @@ export function createSurvivorState(options = {}) {
     if (participantIds.length <= finalistCount) {
         throw new Error(`A final ${finalistCount} needs more than ${finalistCount} participants`);
     }
+    const juryEligibility = options.juryEligibility ?? 'post_merge';
+    if (!JURY_ELIGIBILITY.includes(juryEligibility)) {
+        throw new Error(`Unknown jury eligibility: ${juryEligibility}`);
+    }
     const tribeNames = uniqueNames(options.tribeNames || ['Ember', 'Tide'], 'tribeNames');
     if (tribeNames.length !== 2) throw new Error('Survivor requires exactly two tribes');
 
@@ -116,6 +121,7 @@ export function createSurvivorState(options = {}) {
         round: 1,
         mergeAt,
         finalistCount,
+        juryEligibility,
         merged: participantIds.length <= mergeAt,
         tribeNames,
         tribes,
@@ -156,6 +162,7 @@ export class SurvivorGame {
             : createSurvivorState(options);
         this.state.councilVoterIds ||= [...(this.state.eligibleVoterIds || [])];
         this.state.finalistCount ||= 3;
+        this.state.juryEligibility ||= 'post_merge';
         this.state.council ??= null;
         this.state.ballotReasons ??= {};
         this._assertState();
@@ -569,11 +576,15 @@ export class SurvivorGame {
         player.placement = remainingBefore;
         this.state.bootOrder.push(playerId);
         const isFinalist = this.state.finalistIds.includes(playerId);
-        if (this.state.merged && !isFinalist) {
+        if (!this.state.merged) {
+            this.state.preMergeBootIds.push(playerId);
+        }
+        if (!isFinalist && (
+            this.state.merged
+            || this.state.juryEligibility === 'all_eliminated'
+        )) {
             player.jury = true;
             this.state.juryIds.push(playerId);
-        } else if (!this.state.merged) {
-            this.state.preMergeBootIds.push(playerId);
         }
         this._event('player.eliminated', {
             playerId,
