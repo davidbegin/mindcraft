@@ -20,6 +20,7 @@
     let tab = 'overview';
     let filter = '';
     let error = null;
+    let cancelBusy = false;
     // Which speakers are hidden in the transcript, per game.
     const hiddenSpeakers = new Set();
     const details = new Map();
@@ -100,8 +101,15 @@
         return `<span class="chip ${known}">${esc(label)}</span>`;
     }
 
+    function isLiveGame(game) {
+        return Boolean(
+            game
+            && (game.inProgress || ['draft', 'running', 'judging'].includes(game.status))
+        );
+    }
+
     function integrityChip(summary) {
-        if (summary.inProgress || ['draft', 'running', 'judging'].includes(summary.status)) {
+        if (isLiveGame(summary)) {
             return '';
         }
         if (summary.integrityClean) {
@@ -185,7 +193,7 @@
             const outcome = game.winnerId
                 ? `<div class="game-winner">${who(game.winnerId)} won${game.winItem ? ` (${esc(game.winItem)})` : ''}</div>`
                 : `<div class="game-winner none">${esc(
-                    game.inProgress || ['draft', 'running', 'judging'].includes(game.status)
+                    isLiveGame(game)
                         ? (game.status === 'draft' ? 'planning / provisioning' : 'still playing')
                         : 'no winner'
                 )}</div>`;
@@ -217,19 +225,29 @@
         ).join('');
     }
 
+    function syncCancelButton(game = null) {
+        const button = el('cancelGameBtn');
+        const live = isLiveGame(game);
+        button.hidden = !live;
+        button.disabled = cancelBusy;
+        button.textContent = cancelBusy ? 'Cancelling…' : 'Cancel & remove';
+        button.dataset.contestId = live ? game.id : '';
+    }
+
     function renderDetail() {
         const body = el('detail');
         const summary = games.find(game => game.id === selectedId);
+        const game = selectedId ? details.get(selectedId) : null;
         el('detailTitle').textContent = summary ? gameTitle(summary) : 'Game';
         el('detailCount').textContent = summary
             ? `${summary.status}${summary.endedAt ? ` · ${dateLabel(summary.endedAt)}` : ''}`
             : '';
+        syncCancelButton(game || summary);
 
         if (!selectedId) {
             body.innerHTML = '<div class="empty">Pick a game on the left.</div>';
             return;
         }
-        const game = details.get(selectedId);
         if (!game) {
             body.innerHTML = '<div class="empty">Reading the game back from the journal…</div>';
             return;
@@ -265,15 +283,25 @@
                     </div>
                 </div>
             </div>`);
+        } else if (isLiveGame(game)) {
+            cards.push(`<div class="card">
+                <h3>How it ended</h3>
+                <div class="msg-text">${esc(
+                    game.status === 'draft'
+                        ? 'This game is still planning / provisioning.'
+                        : 'This game is still being played.'
+                )}</div>
+                <div class="cancel-hint">
+                    Stuck or done watching? Use Cancel &amp; remove above to stop it and clear it from the active process.
+                </div>
+            </div>`);
         } else {
             cards.push(`<div class="card">
                 <h3>How it ended</h3>
                 <div class="msg-text">${esc(
-                    game.inProgress || ['draft', 'running', 'judging'].includes(game.status)
-                        ? 'This game is still being played.'
-                        : game.status === 'cancelled'
-                            ? 'This game was cancelled.'
-                            : 'This game ended without a winner.'
+                    game.status === 'cancelled'
+                        ? 'This game was cancelled.'
+                        : 'This game ended without a winner.'
                 )}</div>
             </div>`);
         }
@@ -322,7 +350,7 @@
     function renderTranscript(game) {
         if (!game.messages || !game.messages.length) {
             return `<div class="card"><div class="empty">${esc(
-                game.inProgress || ['draft', 'running', 'judging'].includes(game.status)
+                isLiveGame(game)
                     ? 'No messages captured yet.'
                     : 'No messages were captured for this game. Message capture only records games played after it was added.'
             )}</div></div>`;
@@ -520,14 +548,39 @@
         const targetId = contestId || selectedId;
         const open = games.find(game => game.id === targetId)
             || (targetId === selectedId ? details.get(selectedId) : null);
-        const live = open && (
-            open.inProgress
-            || ['draft', 'running', 'judging'].includes(open.status)
-        );
-        if (live && targetId === selectedId) {
+        if (isLiveGame(open) && targetId === selectedId) {
             details.delete(selectedId);
             loadGame(selectedId, { force: true });
         }
+    }
+
+    function cancelSelectedGame() {
+        const button = el('cancelGameBtn');
+        const contestId = button.dataset.contestId || selectedId;
+        const game = details.get(contestId) || games.find(entry => entry.id === contestId);
+        if (!contestId || !isLiveGame(game) || cancelBusy) return;
+        const title = gameTitle(game);
+        const ok = window.confirm(
+            `Cancel “${title}” and remove it from the active process?\n\n`
+            + 'This stops the game, frees the arena slot, and marks it cancelled in the archive.'
+        );
+        if (!ok) return;
+        cancelBusy = true;
+        syncCancelButton(game);
+        socket.emit('contest-control', {
+            action: 'cancel',
+            contestId,
+            reason: 'Cancelled from the Games Archive',
+        }, result => {
+            cancelBusy = false;
+            if (!result?.success) {
+                syncCancelButton(details.get(contestId) || games.find(entry => entry.id === contestId));
+                window.alert(result?.error || 'Cancel failed.');
+                return;
+            }
+            details.delete(contestId);
+            loadGames();
+        });
     }
 
     socket.on('contest-update', () => {
@@ -584,6 +637,10 @@
         tab = button.dataset.tab;
         writeUrl();
         render();
+    });
+
+    el('cancelGameBtn').addEventListener('click', () => {
+        cancelSelectedGame();
     });
 
     el('detail').addEventListener('click', domEvent => {

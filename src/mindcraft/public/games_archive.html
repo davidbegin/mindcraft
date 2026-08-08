@@ -145,6 +145,36 @@
             white-space: nowrap;
         }
 
+        .pane-head .btn { margin-left: 8px; flex: none; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 5px 10px;
+            border-radius: 8px;
+            font: inherit;
+            font-weight: 600;
+            font-size: 0.78rem;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+
+        .btn:disabled {
+            opacity: 0.55;
+            cursor: wait;
+        }
+
+        .btn-danger {
+            background: var(--red-dim);
+            border-color: rgba(239, 83, 80, 0.4);
+            color: #ffb4b2;
+        }
+
+        .btn-danger:hover:not(:disabled) { background: rgba(239, 83, 80, 0.28); }
+
         .pane-body { flex: 1; overflow-y: auto; min-height: 0; }
 
         .filter-input {
@@ -253,6 +283,11 @@
 
         .card.alarm { border-color: var(--red); background: linear-gradient(90deg, var(--red-dim), var(--bg-elevated) 60%); }
         .card.ok { border-color: var(--lime); }
+
+        .cancel-hint {
+            margin-top: 10px;
+            color: var(--text-dim);
+        }
 
         .winner-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
         .winner-name { font-size: 1.4rem; font-weight: 700; }
@@ -413,6 +448,9 @@
             <div class="pane-head">
                 <h2 id="detailTitle">Game</h2>
                 <span class="count" id="detailCount"></span>
+                <button type="button" id="cancelGameBtn" class="btn btn-danger" hidden>
+                    Cancel &amp; remove
+                </button>
             </div>
             <div class="tabs" id="tabs" hidden></div>
             <div class="pane-body" id="detail">
