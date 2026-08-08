@@ -246,9 +246,10 @@
         }
 
         function applySelectedLineup({ preserveCount = false } = {}) {
-            const count = preserveCount
-                ? participants.length
-                : (config?.preferredParticipantCount || null);
+            // Pack length is the showcase size; only pad when the game requires more
+            // seats (team minimum / Survivor cast). preserveCount keeps the current
+            // roster size when re-applying after a manual add/remove.
+            const count = preserveCount ? participants.length : null;
             const characters = charactersFromLineup(selectedLineupId, count);
             if (!characters?.length) return false;
             participants = defaultParticipantsFor(characters, characters.length);
@@ -820,6 +821,12 @@
                 onStatus(`Could not copy automatically: ${error.message}`, true);
             }
         });
+        el('lineupSelect').addEventListener('change', event => {
+            selectedLineupId = event.target.value;
+            applySelectedLineup();
+            renderLineup();
+            renderParticipants();
+        });
         el('systemPrompt').addEventListener('input', event => {
             el('promptCount').textContent = String(event.target.value.length);
         });
@@ -848,36 +855,7 @@
             setFooter: text => { el('footer').textContent = text; },
             setStatusMessage: setError,
             showReport,
-            defaultParticipantsFor(characters, count) {
-                const profiles = configuredProfiles();
-                if (!profiles.length) return [];
-                const rotation = profilesByFamily(profiles);
-                const reserved = new Set(getReservedNames());
-                const rows = [];
-                const total = count || characters?.length || Math.min(2, profiles.length);
-                // A cast can be larger than the character list (Survivor seats eleven), so
-                // the unnamed slots take families the characters left unused before any
-                // family repeats at a slower effort.
-                const usedFamilies = new Set();
-                for (let i = 0; i < total; i++) {
-                    const character = characters?.[i] || null;
-                    const profile = profiles.find(item => item.id === character?.profileId)
-                        || rotation.find(item => !usedFamilies.has(item.family || item.id))
-                        || rotation[i % rotation.length];
-                    usedFamilies.add(profile.family || profile.id);
-                    const name = character
-                        ? sanitizeMinecraftName(character.name)
-                        : nextUniqueMinecraftName(profile.name || profile.id || 'bot', reserved);
-                    reserved.add(name);
-                    rows.push({
-                        profileId: profile.id,
-                        name,
-                        voice: character?.voice || null,
-                        systemPrompt: character?.systemPrompt || '',
-                    });
-                }
-                return rows;
-            },
+            defaultParticipantsFor,
         };
     };
 })();

@@ -120,11 +120,6 @@ export const BOT_MODEL_LINEUPS = Object.freeze({
             'composer-2-5',
             'gpt-5-6-terra-fast',
             'glm-5-2-thorough',
-            // Survivor overflow seats (Carl / glm is skipped there; see survivorVarietyIds)
-            'gpt-5-6-luna-fast',
-            'gpt-5-6-terra-instant',
-            'gpt-5-6-sol-instant',
-            'claude-opus-5-fast',
         ]),
     }),
     opus: Object.freeze({
@@ -243,14 +238,16 @@ export const BOT_MODEL_LINEUPS = Object.freeze({
 
 /**
  * Variety pack profile ids for Survivor: contest variety without glm, then the
- * four overflow ids that trail the contest eight in `variety.profileIds`.
+ * four overflow quick presets (luna/terra/sol/opus) that fill seats 8–11.
  */
 export function survivorVarietyProfileIds() {
-    const variety = BOT_MODEL_LINEUPS.variety.profileIds;
-    // Contest seats 0–6 (Billy…Leviticus), skip Carl at index 7, then overflow 8–11.
+    const contest = BOT_MODEL_LINEUPS.variety.profileIds;
     return Object.freeze([
-        ...variety.slice(0, 7),
-        ...variety.slice(8, 12),
+        ...contest.filter(id => id !== 'glm-5-2-thorough'),
+        'gpt-5-6-luna-fast',
+        'gpt-5-6-terra-instant',
+        'gpt-5-6-sol-instant',
+        'claude-opus-5-fast',
     ]);
 }
 
