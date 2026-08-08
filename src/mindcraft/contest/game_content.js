@@ -109,38 +109,14 @@ export function buildBaseSiegePlanningDirective({
     presetPrompt = '',
     planningMs = 0,
     participantName,
-    teamId,
-    teammateIds = [],
-    enemyIds = [],
-    captainId = null,
 }) {
     const seconds = Math.max(1, Math.round(planningMs / 1000));
-    const teammateList = teammateIds.join(', ') || 'none';
-    const isCaptain = captainId === participantName;
     const lines = [
-        `PLANNING PHASE — ${title}. The fight clock is NOT running yet.`,
-        `You have about ${seconds} seconds to agree on a plan. A short BUILD phase comes next, then open combat.`,
-        `YOUR TEAM: ${teamId}. Your teammates are ${teammateList}.`,
-        'Win condition: last team with anyone alive. Death eliminates you permanently. Hiding forever fails — if both teams survive the fight timer, the arena shrinks and combat continues.',
-        captainId
-            ? `${captainId} is the team captain and has the final word. Settle disagreements in one line, then commit.`
-            : 'Pick one teammate as captain immediately and commit to their call.',
-        `Use !startConversation with ${teammateIds.join(' and ') || 'your team'} right now and settle:`,
-        '1. THE BASE: one exact x z coordinate for a quick fort. Put numbers only in the conversation command, never in spoken dialogue.',
-        '2. THE ROLES: who builds walls/cover in the build phase, and who leaves cover to hunt when combat starts — keep a balance of offense and defense, not an all-team suicide rush.',
-        '3. THE ATTACK PLAN: do not agree to turtle forever, and do not abandon every bit of cover. Name how you will find and kill the other team while still using the fort.',
-        isCaptain
-            ? 'You are the captain. Open first, put your current x and z only in the conversation command as the base, and get a yes from every teammate.'
-            : 'Confirm the captain\'s base and your role. Be ready to build fast when the build phase starts.',
+        `WAITING — ${title}. The build timer has NOT started yet.`,
+        `Stand still for about ${seconds} seconds. Do not build, craft, dig, attack, or wander.`,
+        `${participantName}, wait quietly until the build phase is announced.`,
     ];
     if (presetPrompt) lines.push(`MATCH RULES FOR REFERENCE: ${presetPrompt}`);
-    if (enemyIds.length > 0) {
-        lines.push(`The opposing team is ${enemyIds.join(', ')}. Do not talk to them or reveal your base during planning.`);
-    }
-    lines.push(
-        'During planning: do NOT place or break blocks, do not attack anyone, and stay near your team.',
-        'Use !endConversation as soon as the plan is set. Then say one short line naming your team\'s plan for the audience.'
-    );
     return lines.join('\n');
 }
 
@@ -188,25 +164,19 @@ export function buildBaseSiegeBuildDirective({
     title = 'Base Siege',
     buildPhaseMs = 0,
     participantName,
-    teamId,
-    teammateIds = [],
-    enemyIds = [],
-    captainId = null,
+    rivalIds = [],
 }) {
     const seconds = Math.max(1, Math.round(buildPhaseMs / 1000));
     const lines = [
-        `BUILD PHASE — ${title}. You have about ${seconds} seconds to build the quickest useful base.`,
-        `YOUR TEAM: ${teamId}. Teammates: ${teammateIds.join(', ') || 'none'}.`,
-        captainId
-            ? `Build at ${captainId}'s agreed base. Walls, cover, and a high ground or doorway beat empty ground.`
-            : 'Build at the base your team agreed on during planning.',
-        'Do NOT attack enemies yet. Do not wander across the arena. Place blocks fast, then be ready to fight.',
-        'When combat starts, balance offense and defense: use the fort as cover and a regroup point, then hunt. A tiny fort plus coordinated aggression beats both a mansion of cowards and a naked all-out rush.',
+        `BUILD PHASE — ${title}. The timer is live: you have about ${seconds} seconds.`,
+        'Use this time to fortify cover on the main platform and craft better weapons or armor.',
+        'Do NOT attack anyone yet. Stay on the main platform — leaving the platform or falling off loses later in combat.',
+        'When the timer ends, combat starts and hiding forever is not allowed.',
     ];
-    if (enemyIds.length > 0) {
-        lines.push(`Enemies (${enemyIds.join(', ')}) are building too. Stay on your side until the fight starts.`);
+    if (rivalIds.length > 0) {
+        lines.push(`Rivals (${rivalIds.join(', ')}) are building too. Prepare to fight them when combat begins.`);
     }
-    lines.push(`${participantName}, place blocks now. Say one short line about what you are building, then keep stacking.`);
+    lines.push(`${participantName}, build and craft now. Say one short line about your fort or gear, then keep working.`);
     return lines.join('\n');
 }
 
@@ -256,15 +226,12 @@ export function buildParticipantGameDirective(
             'Split the cake ingredients across teammates (milk, sugar cane, eggs, wheat), share what you gather, and craft as soon as your team has three milk buckets, two sugar, one egg, and three wheat.',
             'Any teammate crafting the cake wins for the whole team. Prefer !startConversation for short handoffs with teammates; do not give ingredients or help to the enemy.',
         );
-    } else if (team.teamId && isBaseSiege) {
+    } else if (isBaseSiege) {
         lines.push(
-            `YOUR TEAM: ${team.teamId}. Your teammates are ${teammates.join(', ') || 'none'}.`,
-            team.captainId
-                ? `${team.captainId} called the base. Use that fort as cover, then leave it to hunt.`
-                : 'Use the base your team agreed on as cover, then hunt.',
-            'COMBAT IS ON. Death eliminates you permanently. Kill every enemy. Friendly fire is off.',
-            `Balance offense and defense: use your fort as cover, then hunt ${rivals.join(', ') || 'the other team'} with !attackPlayer. Do not turtle forever — if the timer ends with both teams alive, the arena shrinks and you fight again in a tighter space. Do not all charge with zero cover either.`,
-            'Coordinate with !startConversation only for a short tactical update, then resume fighting.'
+            `ACTIVE RIVALS: ${rivals.join(', ') || 'none'}.`,
+            'COMBAT IS ON. Last person alive wins. Death eliminates you permanently.',
+            'Stay on the main platform. Falling below the floor or leaving the arena bounds eliminates you immediately.',
+            `Hunt ${rivals.join(', ') || 'every rival'} with !attackPlayer. You are not allowed to hide — leave cover to fight and finish them.`
         );
     } else if (team.teamId) {
         lines.push(
