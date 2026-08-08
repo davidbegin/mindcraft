@@ -56,6 +56,18 @@ export function buildTeamPlanningDirective({
             captainId,
         });
     }
+    if (contestType === 'cake_race') {
+        return buildCakeRacePlanningDirective({
+            title,
+            presetPrompt,
+            planningMs,
+            participantName,
+            teamId,
+            teammateIds,
+            enemyIds,
+            captainId,
+        });
+    }
     const seconds = Math.max(1, Math.round(planningMs / 1000));
     const teammateList = teammateIds.join(', ') || 'none';
     const isCaptain = captainId === participantName;
@@ -127,6 +139,46 @@ export function buildBaseSiegePlanningDirective({
     lines.push(
         'During planning: do NOT place or break blocks, do not attack anyone, and stay near your team.',
         'Use !endConversation as soon as the plan is set. Then say one short line naming your team\'s plan for the audience.'
+    );
+    return lines.join('\n');
+}
+
+export function buildCakeRacePlanningDirective({
+    title = 'First Cake',
+    presetPrompt = '',
+    planningMs = 0,
+    participantName,
+    teamId,
+    teammateIds = [],
+    enemyIds = [],
+    captainId = null,
+}) {
+    const seconds = Math.max(1, Math.round(planningMs / 1000));
+    const teammateList = teammateIds.join(', ') || 'none';
+    const isCaptain = captainId === participantName;
+    const lines = [
+        `PLANNING PHASE — ${title}. The match has NOT started and the clock is not running.`,
+        `You have about ${seconds} seconds to agree on a plan with your team before the countdown.`,
+        `YOUR TEAM: ${teamId}. Your teammates are ${teammateList}.`,
+        'Win condition: the first team to craft a cake wins, and any teammate crafting it wins for everyone — so speed and coordination beat solo hoarding.',
+        captainId
+            ? `${captainId} is the team captain and has the final word. Settle disagreements in one line, then commit.`
+            : 'Pick one teammate as captain immediately and commit to their call.',
+        `Use !startConversation with ${teammateIds.join(' and ') || 'your team'} right now and settle:`,
+        '1. THE INGREDIENT SPLIT: divide the shopping list — three milk buckets from cows, three wheat, two sugar from sugar cane, and one egg from chickens — so no two teammates chase the same thing.',
+        '2. THE CRAFTER: name one teammate who camps a crafting table; everyone else funnels ingredients to that person the moment they have them.',
+        '3. THE HANDOFF: agree how you will pass items — meet at the crafter, drop items, and call it out — so the full set lands in one inventory fast.',
+        isCaptain
+            ? 'You are the captain. Open the conversation first, assign each teammate an ingredient, and get an explicit yes on who crafts.'
+            : 'Confirm the captain\'s ingredient assignment for you and who the crafter is, then commit to running your items to them.',
+    ];
+    if (presetPrompt) lines.push(`MATCH RULES FOR REFERENCE: ${presetPrompt}`);
+    if (enemyIds.length > 0) {
+        lines.push(`The opposing team is ${enemyIds.join(', ')}. Do not talk to them, hand them ingredients, or reveal your plan during planning.`);
+    }
+    lines.push(
+        'During planning: do NOT gather, milk, harvest, or craft anything — the clock is not running yet — and stay near your team.',
+        'Use !endConversation as soon as the plan is set. Then say one short line naming your team\'s cake plan for the audience.'
     );
     return lines.join('\n');
 }

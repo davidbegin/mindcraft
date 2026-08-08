@@ -73,6 +73,23 @@
                     <span class="games-sub">0.5–60 minutes</span>
                 </div>
                 <div class="game-setup-duration" data-el="fields" hidden></div>
+                <div class="game-setup-recording">
+                    <label>
+                        <input type="checkbox" data-el="recordingEnabled">
+                        <span>
+                            <strong>Record gameplay</strong>
+                            <small>Capture the full game. Uses substantially more CPU and storage.</small>
+                        </span>
+                    </label>
+                    <label>
+                        <input type="checkbox" data-el="autoRecordingEnabled">
+                        <span>
+                            <strong>Auto-record actions</strong>
+                            <small>Save shorter clips when bots are active.</small>
+                        </span>
+                    </label>
+                    <div class="games-sub">Recording is off by default. Choose at most one mode.</div>
+                </div>
                 <div class="game-setup-prompt">
                     <label data-el="promptLabel">Match-wide system prompt (optional)</label>
                     <textarea maxlength="4000" rows="4" spellcheck="true" data-el="systemPrompt"
@@ -109,6 +126,10 @@
         const onStatus = options.onStatus || (() => {});
         const onBusyChange = options.onBusyChange || (() => {});
         const onLaunchReport = options.onLaunchReport || (() => {});
+        // A launch outlives this dialog: a connection blip hands the roster back
+        // while MindServer keeps going, and starting again from that roster only
+        // gets refused. The page tells us when a launch is still out there.
+        const getLaunchInProgress = options.getLaunchInProgress || (() => null);
 
         const backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop';
@@ -483,6 +504,12 @@
 
         function submit() {
             if (busy) return;
+            const alreadyLaunching = getLaunchInProgress();
+            if (alreadyLaunching) {
+                setError(alreadyLaunching);
+                onStatus(alreadyLaunching, true);
+                return;
+            }
             const problem = validate();
             if (problem) {
                 setError(problem);
@@ -505,6 +532,8 @@
                 durationMs: Number(el('durationInput').value) * 60_000,
                 fields: fieldValues(),
                 teamNames: submittedTeamNames,
+                recordingEnabled: el('recordingEnabled').checked,
+                autoRecordingEnabled: el('autoRecordingEnabled').checked,
             });
             const started = config;
 
@@ -550,8 +579,15 @@
                     const message = result?.error || 'Failed to start the game';
                     setError(message);
                     onStatus(message, true);
-                    el('footer').textContent = 'Fix the error and try again.';
                     reopenAfterFailure();
+                    // Being refused because something already owns the arena is
+                    // not that game's failure: there is nothing to diagnose, and
+                    // a report would point at a game that is still fine.
+                    if (result?.launchRefused) {
+                        el('footer').textContent = 'Nothing failed — the arena is taken. Let it finish or cancel it, then start again.';
+                        return;
+                    }
+                    el('footer').textContent = 'Fix the error and try again.';
                     if (result?.report) showReport(result.report);
                     else fetchLastReport();
                     return;
@@ -609,6 +645,8 @@
             action('submit').textContent = nextConfig.submitLabel || 'Start game';
             el('duration').hidden = nextConfig.duration === null;
             el('durationInput').value = String(nextConfig.duration?.minutes ?? 1);
+            el('recordingEnabled').checked = false;
+            el('autoRecordingEnabled').checked = false;
             el('systemPrompt').value = '';
             el('promptCount').textContent = '0';
             renderFields();
@@ -658,6 +696,12 @@
         });
         el('systemPrompt').addEventListener('input', event => {
             el('promptCount').textContent = String(event.target.value.length);
+        });
+        el('recordingEnabled').addEventListener('change', event => {
+            if (event.target.checked) el('autoRecordingEnabled').checked = false;
+        });
+        el('autoRecordingEnabled').addEventListener('change', event => {
+            if (event.target.checked) el('recordingEnabled').checked = false;
         });
 
         return {

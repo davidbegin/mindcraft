@@ -1427,11 +1427,19 @@
                 }
                 return null;
             },
-            buildRequest: ({ participants, systemPrompt, fields }) => ({
+            buildRequest: ({
+                participants,
+                systemPrompt,
+                fields,
+                recordingEnabled,
+                autoRecordingEnabled,
+            }) => ({
                 event: 'survivor-start',
                 payload: {
                     participants,
                     systemPrompt,
+                    recordingEnabled,
+                    autoRecordingEnabled,
                     scenarioId: scenario?.scenarioId,
                     mergeAt: fields.mergeAt,
                     councilAutoAdvance: el('councilAutoAdvance').checked,

@@ -504,6 +504,21 @@ export class ContestCoordinator {
         });
     }
 
+    /**
+     * Append a game event to the journal without touching contest state. Used
+     * for high-volume, read-only records (in-game chat, inventory audits) that
+     * feed the archive but should never mutate scoring or status. Queued behind
+     * the same operation chain so a burst of messages never interleaves with a
+     * state commit mid-write.
+     */
+    async recordGameEvent(type, data = {}) {
+        assertNonEmptyString(type, 'type');
+        return this._enqueue(async () => {
+            await this._appendJournal(type, data);
+            return true;
+        });
+    }
+
     async tick() {
         return this._enqueue(async () => {
             const contest = this.state.activeContestId

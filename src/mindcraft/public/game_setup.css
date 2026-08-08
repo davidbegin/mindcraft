@@ -139,6 +139,48 @@
     gap: 6px;
 }
 
+.game-setup-recording {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.game-setup-recording > label {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-inset);
+    cursor: pointer;
+}
+
+.game-setup-recording input {
+    margin-top: 3px;
+}
+
+.game-setup-recording span {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.game-setup-recording strong {
+    color: var(--text);
+    font-size: 0.85rem;
+}
+
+.game-setup-recording small {
+    color: var(--text-mute);
+    line-height: 1.35;
+}
+
+.game-setup-recording > .games-sub {
+    grid-column: 1 / -1;
+}
+
 .game-setup-duration {
     display: flex;
     align-items: center;
@@ -237,4 +279,10 @@
     border: 1px solid var(--border, #333);
     border-radius: 6px;
     padding: 8px;
+}
+
+@media (max-width: 640px) {
+    .game-setup-recording {
+        grid-template-columns: 1fr;
+    }
 }

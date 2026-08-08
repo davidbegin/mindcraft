@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mindcraft — Games Archive</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/mc_avatar.js"></script>
+    <script src="/games_archive.js" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0e1210;
+            --bg-elevated: #161c19;
+            --bg-card: #1a221e;
+            --bg-inset: #101614;
+            --border: #2a3530;
+            --border-strong: #3d4d45;
+            --text: #e8efe9;
+            --text-dim: #8a9a90;
+            --text-mute: #5f7066;
+            --lime: #9fe870;
+            --lime-dim: rgba(159, 232, 112, 0.15);
+            --amber: #f0b429;
+            --amber-dim: rgba(240, 180, 41, 0.18);
+            --red: #ef5350;
+            --red-dim: rgba(239, 83, 80, 0.16);
+            --cyan: #5ec8c0;
+            --font: "DM Sans", system-ui, sans-serif;
+            --mono: "JetBrains Mono", ui-monospace, monospace;
+            --radius: 12px;
+        }
+
+        * { box-sizing: border-box; }
+        [hidden] { display: none !important; }
+        html, body { height: 100%; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 14px;
+            line-height: 1.5;
+            display: flex;
+            flex-direction: column;
+        }
+
+        h1, h2, h3, h4 { margin: 0; }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+            flex: none;
+        }
+
+        .brand { display: flex; align-items: baseline; gap: 8px; }
+        .brand h1 { font-size: 1.05rem; letter-spacing: -0.01em; }
+
+        .brand .tag {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--amber);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .view-nav { display: flex; gap: 4px; margin-left: 8px; }
+
+        .view-nav a {
+            padding: 5px 12px;
+            border-radius: 8px;
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.85rem;
+            border: 1px solid transparent;
+        }
+
+        .view-nav a:hover { color: var(--text); }
+        .view-nav a.active { background: var(--amber-dim); color: var(--amber); }
+
+        .status-pill {
+            margin-left: auto;
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+
+        .status-pill.online { color: var(--lime); border-color: var(--lime); }
+        .status-pill.offline { color: var(--red); border-color: var(--red); }
+
+        .panes {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 320px minmax(0, 1fr);
+            gap: 1px;
+            background: var(--border);
+        }
+
+        @media (max-width: 1000px) {
+            .panes { grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(180px, auto); }
+        }
+
+        .pane {
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            min-width: 0;
+        }
+
+        .pane-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-elevated);
+            flex: none;
+        }
+
+        .pane-head h2 {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .pane-head .count {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            color: var(--text-mute);
+            margin-left: auto;
+            white-space: nowrap;
+        }
+
+        .pane-body { flex: 1; overflow-y: auto; min-height: 0; }
+
+        .filter-input {
+            margin-left: auto;
+            width: 120px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 7px;
+            padding: 4px 8px;
+            font: inherit;
+            font-size: 0.78rem;
+        }
+
+        .filter-input:focus { outline: none; border-color: var(--border-strong); }
+
+        .empty {
+            padding: 18px 16px;
+            color: var(--text-mute);
+            font-size: 0.84rem;
+            font-style: italic;
+        }
+
+        .game-row {
+            display: block;
+            width: 100%;
+            padding: 10px 14px;
+            background: none;
+            border: none;
+            border-bottom: 1px solid var(--border);
+            border-left: 2px solid transparent;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .game-row:hover { background: var(--bg-elevated); }
+        .game-row.selected { background: var(--bg-card); border-left-color: var(--amber); }
+
+        .game-top { display: flex; align-items: center; gap: 8px; }
+        .game-title { font-weight: 600; font-size: 0.9rem; flex: 1; min-width: 0; }
+        .game-meta { font-family: var(--mono); font-size: 0.67rem; color: var(--text-mute); margin-top: 2px; }
+        .game-winner { font-size: 0.8rem; color: var(--lime); margin-top: 3px; }
+        .game-winner.none { color: var(--text-mute); font-style: italic; }
+
+        .chip {
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 2px 6px;
+            border-radius: 999px;
+            border: 1px solid var(--border-strong);
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .chip.completed { border-color: var(--lime); color: var(--lime); }
+        .chip.running { border-color: var(--amber); color: var(--amber); }
+        .chip.cancelled { border-color: var(--red); color: var(--red); }
+        .chip.clean { border-color: var(--lime); color: var(--lime); }
+        .chip.flagged { border-color: var(--red); color: var(--red); }
+
+        .tabs { display: flex; gap: 4px; padding: 8px 16px 0; flex-wrap: wrap; flex: none; }
+
+        .tab {
+            padding: 6px 14px;
+            border-radius: 8px 8px 0 0;
+            border: 1px solid transparent;
+            border-bottom: none;
+            background: none;
+            color: var(--text-dim);
+            font: inherit;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+
+        .tab:hover { color: var(--text); }
+        .tab.active { background: var(--bg-card); border-color: var(--border); color: var(--amber); }
+
+        .detail-body { padding: 16px 20px 40px; }
+
+        .card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-elevated);
+            padding: 14px 16px;
+            margin-bottom: 14px;
+        }
+
+        .card > h3 {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+            margin-bottom: 10px;
+        }
+
+        .card.winner {
+            border-color: var(--lime);
+            background: linear-gradient(90deg, var(--lime-dim), var(--bg-elevated) 60%);
+        }
+
+        .card.alarm { border-color: var(--red); background: linear-gradient(90deg, var(--red-dim), var(--bg-elevated) 60%); }
+        .card.ok { border-color: var(--lime); }
+
+        .winner-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+        .winner-name { font-size: 1.4rem; font-weight: 700; }
+        .winner-sub { font-size: 0.85rem; color: var(--text-dim); }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 10px 16px;
+        }
+
+        .stat .label {
+            display: block;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+        }
+
+        .stat .value { font-family: var(--mono); font-size: 0.95rem; }
+
+        table.grid { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+
+        table.grid th {
+            text-align: left;
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-mute);
+            font-weight: 600;
+            padding: 4px 8px 6px 0;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+
+        table.grid td {
+            padding: 6px 8px 6px 0;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        table.grid tr:last-child td { border-bottom: none; }
+        table.grid td.num { font-family: var(--mono); color: var(--text-dim); }
+        table.grid td.bad { color: var(--red); }
+        table.grid td.good { color: var(--lime); }
+
+        .who { display: inline-flex; align-items: center; gap: 7px; vertical-align: middle; }
+
+        /* —— Transcript —— */
+        .transcript-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+
+        .pill-toggle {
+            border: 1px solid var(--border-strong);
+            border-radius: 999px;
+            background: none;
+            color: var(--text-dim);
+            font: inherit;
+            font-size: 0.78rem;
+            padding: 3px 10px 3px 4px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .pill-toggle.off { opacity: 0.4; }
+
+        .msg {
+            display: grid;
+            grid-template-columns: 150px minmax(0, 1fr);
+            gap: 12px;
+            padding: 6px 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .msg-side { text-align: right; font-family: var(--mono); font-size: 0.68rem; color: var(--text-mute); }
+        .msg-who { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-dim); font-weight: 600; }
+        .msg-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+        .msg-pos { font-family: var(--mono); font-size: 0.66rem; color: var(--text-mute); margin-top: 2px; }
+
+        @media (max-width: 700px) {
+            .msg { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+            .msg-side { text-align: left; }
+        }
+
+        .flag {
+            display: flex;
+            gap: 10px;
+            align-items: baseline;
+            padding: 8px 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .flag .sev {
+            font-family: var(--mono);
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            padding: 2px 6px;
+            border-radius: 6px;
+            border: 1px solid var(--red);
+            color: var(--red);
+        }
+
+        .flag .sev.medium { border-color: var(--amber); color: var(--amber); }
+        .flag .body strong { color: var(--text); }
+        .flag .body .detail { color: var(--text-dim); font-size: 0.85rem; }
+
+        .event {
+            display: grid;
+            grid-template-columns: 140px 150px minmax(0, 1fr);
+            gap: 12px;
+            padding: 5px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+        }
+
+        .event .stamp { font-family: var(--mono); font-size: 0.68rem; color: var(--text-mute); }
+        .event .kind { font-family: var(--mono); font-size: 0.68rem; color: var(--cyan); }
+        .event .detail { color: var(--text-dim); font-size: 0.82rem; overflow-wrap: anywhere; }
+
+        @media (max-width: 700px) {
+            .event { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+        }
+
+        .mc-av { display: block; image-rendering: pixelated; border-radius: 3px; background: var(--bg-inset); }
+
+        .page-empty { padding: 60px 24px; text-align: center; color: var(--text-mute); }
+        .page-empty a { color: var(--amber); }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <h1>Games Archive</h1>
+            <span class="tag">post-game analysis</span>
+        </div>
+        <nav class="view-nav">
+            <a href="/colony">Colony</a>
+            <a href="/games">Games</a>
+            <a href="/games/archive" class="active" aria-current="page">Archive</a>
+            <a href="/survivor">Survivor</a>
+            <a href="/seasons">Seasons</a>
+        </nav>
+        <span id="msStatus" class="status-pill offline">mindserver offline</span>
+    </header>
+
+    <main class="panes" id="panes">
+        <aside class="pane">
+            <div class="pane-head">
+                <h2>Games</h2>
+                <input id="gameFilter" class="filter-input" type="text" placeholder="Filter" aria-label="Filter games">
+            </div>
+            <div class="pane-body" id="gameList">
+                <div class="empty">Loading games…</div>
+            </div>
+        </aside>
+        <section class="pane">
+            <div class="pane-head">
+                <h2 id="detailTitle">Game</h2>
+                <span class="count" id="detailCount"></span>
+            </div>
+            <div class="tabs" id="tabs" hidden></div>
+            <div class="pane-body" id="detail">
+                <div class="empty">Pick a game on the left.</div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

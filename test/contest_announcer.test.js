@@ -6,6 +6,7 @@ import {
     buildContestResultAnnouncement,
     buildContestStartAnnouncement,
     buildPlanningAnnouncement,
+    describeCompetitor,
 } from '../src/mindcraft/contest/contest_announcer.js';
 
 test('builds game start and winner announcements', () => {
@@ -59,12 +60,70 @@ test('builds game start and winner announcements', () => {
     );
 });
 
+test('names the model each winner is running when metadata is present', () => {
+    const gameSession = {
+        participants: [
+            { name: 'billy', model: 'gpt-4o' },
+            { name: 'jane', model: { api: 'anthropic', model: 'claude-sonnet-4' } },
+        ],
+    };
+    assert.equal(
+        buildContestResultAnnouncement({ winnerIds: ['billy'], metadata: { gameSession } }),
+        'And the winner is... billy, playing gpt-4o! billy wins!'
+    );
+    assert.equal(
+        buildContestResultAnnouncement({ winnerIds: ['billy', 'jane'], metadata: { gameSession } }),
+        'And the winners are... billy, playing gpt-4o and jane, playing claude-sonnet-4! '
+        + 'billy and jane win!'
+    );
+    // A winner without a stored model still degrades to just the name.
+    assert.equal(
+        buildContestResultAnnouncement({ winnerIds: ['ghost'], metadata: { gameSession } }),
+        'And the winner is... ghost! ghost wins!'
+    );
+});
+
+test('names the winning team roster and their models', () => {
+    assert.equal(
+        buildContestResultAnnouncement({
+            rules: { type: 'team_tower_battle' },
+            winnerIds: ['alice', 'amy'],
+            results: [
+                { participantId: 'alice', rank: 1, details: { teamName: 'Ember' } },
+                { participantId: 'amy', rank: 1, details: { teamName: 'Ember' } },
+            ],
+            metadata: {
+                gameSession: {
+                    participants: [
+                        { name: 'alice', model: 'gpt-4o' },
+                        { name: 'amy', model: 'claude-sonnet-4' },
+                    ],
+                },
+            },
+        }),
+        'And the winning team is... Ember! Ember wins! '
+        + "That's alice, playing gpt-4o and amy, playing claude-sonnet-4."
+    );
+});
+
+test('describeCompetitor falls back to the bare name without a model', () => {
+    assert.equal(describeCompetitor('billy', 'gpt-4o'), 'billy, playing gpt-4o');
+    assert.equal(describeCompetitor('billy', null), 'billy');
+    assert.equal(describeCompetitor('billy', { api: 'openai', model: 'gpt-4o' }), 'billy, playing gpt-4o');
+});
+
 test('opens the planning phase without holding the clock itself', async () => {
     assert.equal(
         buildPlanningAnnouncement({ title: 'Team Tower Battle' }, 45_000),
         'Team Tower Battle. Teams, you have 45 seconds to plan. '
         + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
         + 'All builders use only the captain\'s structure. No building until the countdown.'
+    );
+    assert.equal(
+        buildPlanningAnnouncement({ title: 'First Cake', rules: { type: 'cake_race' } }, 60_000),
+        'First Cake. Teams, you have 60 seconds to plan. '
+        + 'Split the ingredients — milk, wheat, sugar cane, and eggs — across your teammates and pick one crafter. '
+        + 'First team to bake a cake wins. No gathering until the countdown.'
     );
 
     const calls = [];

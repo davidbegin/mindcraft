@@ -119,6 +119,7 @@ async function createManager() {
     const directives = [];
     const notifications = [];
     const spoken = [];
+    const agentSettings = [];
     let requestSequence = 0;
     let roomSequence = 0;
     const options = {
@@ -150,11 +151,14 @@ async function createManager() {
         getExistingAgentNames: () => [],
         resolveParticipantVoice: (_name, voice) => voice,
         reclaimNames: () => Promise.resolve(),
-        buildAgentSettings: profile => ({ profile }),
-        createAgent: settings => ({
-            success: true,
-            agentId: `agent-${settings.profile.name}`,
-        }),
+        buildAgentSettings: (profile, gameSession) => ({ profile, gameSession }),
+        createAgent: settings => {
+            agentSettings.push(settings);
+            return {
+                success: true,
+                agentId: `agent-${settings.profile.name}`,
+            };
+        },
         destroyAgent: () => Promise.resolve(),
         isAgentReady: () => true,
         getContestPreset: getContestGamePreset,
@@ -185,6 +189,7 @@ async function createManager() {
         directives,
         notifications,
         spoken,
+        agentSettings,
         advance: milliseconds => {
             now += milliseconds;
         },
@@ -192,7 +197,13 @@ async function createManager() {
 }
 
 test('provisions a persistent roster and starts a team challenge', async () => {
-    const { manager, coordinator, contestCoordinator, directives } = await createManager();
+    const {
+        manager,
+        coordinator,
+        contestCoordinator,
+        directives,
+        agentSettings,
+    } = await createManager();
     await manager.start({
         participants: participants(),
         mergeAt: 10,
@@ -202,6 +213,37 @@ test('provisions a persistent roster and starts a team challenge', async () => {
     assert.equal(coordinator.view().phase, 'challenge');
     assert.ok(contestCoordinator.activeContestId);
     assert.ok(directives.some(item => item.prompt.includes('Tribe:')));
+    assert.equal(manager.view().recordingEnabled, false);
+    assert.equal(manager.view().autoRecordingEnabled, false);
+    assert.ok(agentSettings.every(settings => settings.gameSession.recordBotView === false));
+    assert.ok(agentSettings.every(settings => settings.gameSession.autoRecordingEnabled === false));
+});
+
+test('passes the selected Survivor recording mode to every bot', async () => {
+    const full = await createManager();
+    await full.manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+        recordingEnabled: true,
+        autoRecordingEnabled: true,
+    });
+    assert.ok(full.agentSettings.every(settings => settings.gameSession.recordBotView === true));
+    assert.ok(full.agentSettings.every(settings => settings.gameSession.autoRecordingEnabled === false));
+
+    const automatic = await createManager();
+    await automatic.manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+        autoRecordingEnabled: true,
+    });
+    assert.ok(automatic.agentSettings.every(
+        settings => settings.gameSession.recordBotView === false
+            && settings.gameSession.autoRecordingEnabled === true
+    ));
 });
 
 test('starts a four-player season already merged', async () => {

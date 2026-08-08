@@ -218,6 +218,7 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(cake.rules.winItem, 'cake');
     assert.equal(cake.rules.teamCount, 2);
     assert.equal(cake.rules.minimumPlayersPerTeam, 3);
+    assert.equal(cake.rules.planningMs, 60_000);
     assert.equal(cake.defaultParticipantCount, 6);
     assert.deepEqual(
         cake.defaultCharacters.map(character => character.name),
@@ -238,6 +239,7 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.match(cake.prompt, /ends automatically/i);
     const cakeListed = listContestGamePresets().find(game => game.id === 'cake_race');
     assert.equal(cakeListed.teamCount, 2);
+    assert.equal(cakeListed.planningMs, 60_000);
     assert.equal(cakeListed.defaultParticipantCount, 6);
     assert.equal(cakeListed.defaultCharacters.length, 6);
 

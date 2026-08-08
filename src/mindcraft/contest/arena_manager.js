@@ -1,6 +1,7 @@
 import { runMinecraftCommand } from '../minecraft_server.js';
 import { modelInfo } from '../skins.js';
 import { buildDogRaceResetCommand } from './dog_race.js';
+import { diffAgainstKit, parseInventory } from './inventory_audit.js';
 
 const ARENA = Object.freeze({
     centerX: 100000,
@@ -86,6 +87,12 @@ const PODIUM_GAP = 1;
 // How often the world rebuild reports in. Every command would flood the launch
 // log for no extra insight.
 const PROGRESS_COMMAND_INTERVAL = 25;
+
+// Every game stands its cast on the block directly above the arena floor. In
+// Spleef that layer is the snow platform and everything below it is the pit, so
+// "did the teleport land?" and "is this bot still in the game?" are the same
+// question.
+const TOP_LAYER_Y = ARENA.floorY + 1;
 
 const DEPTH_RACE_KIT = Object.freeze([
     'diamond_pickaxe 1',
@@ -361,8 +368,8 @@ function flatFloorCommands({ minX, maxX, minZ, maxZ }) {
     ];
 }
 
-function spawnPositions(participantCount, maxRadius = 22) {
-    const radius = Math.min(maxRadius, Math.max(8, participantCount * 3));
+function spawnPositions(participantCount, maxRadius = 22, minRadius = 8) {
+    const radius = Math.min(maxRadius, Math.max(minRadius, participantCount * 3));
     return Array.from({ length: participantCount }, (_, index) => {
         const angle = (index / participantCount) * Math.PI * 2;
         return {
@@ -676,9 +683,7 @@ function buildWorldResetCommands(gameId, options = {}) {
             `fill ${minX} ${pitBottomY} ${minZ} `
             + `${maxX} ${pitBottomY} ${maxZ} bedrock`,
             `fill ${minX} ${pitBottomY + 1} ${minZ} `
-            + `${maxX} ${ARENA.floorY - 1} ${maxZ} water`,
-            `fill ${minX} ${ARENA.floorY} ${minZ} `
-            + `${maxX} ${ARENA.floorY} ${maxZ} snow_block`
+            + `${maxX} ${ARENA.floorY - 1} ${maxZ} water`
         );
     } else {
         commands.push(...flatFloorCommands(bounds));
@@ -694,6 +699,15 @@ function buildWorldResetCommands(gameId, options = {}) {
         `fill ${minX} ${ARENA.floorY + 1} ${maxZ} `
         + `${maxX} ${ARENA.clearTopY} ${maxZ} barrier`
     );
+    if (gameId === 'spleef') {
+        // Repair every hole as the final world-build operation. Participant
+        // setup and the synchronized starting teleport happen only after this
+        // command completes, so every round begins on a pristine platform.
+        commands.push(
+            `fill ${minX} ${ARENA.floorY} ${minZ} `
+            + `${maxX} ${ARENA.floorY} ${maxZ} snow_block`
+        );
+    }
 
     return commands;
 }
@@ -800,27 +814,50 @@ export function buildContestTeamCommands(participants, options = {}) {
     return commands;
 }
 
-function buildParticipantCommands(gameId, participants, options = {}) {
-    const commands = [];
-    // Dog racers must all start on the bare plain, inside the wilderness ring.
+/**
+ * The exact block each participant is sent to at the opening bell, keyed by
+ * name. The starting teleport and the placement audit that checks it both read
+ * from here, so a bot can never be graded against a spot it was never sent to.
+ */
+export function participantSpawnPositions(gameId, participants, options = {}) {
+    // Dog racers start inside the wilderness ring. Spleef players always use
+    // a wide circle, even with a small cast, so nobody begins clustered at the
+    // center of the freshly repaired platform.
+    const spawnRadius = gameId === 'dog_race'
+        ? DOG_ARENA.plainRadius - 3
+        : gameId === 'spleef'
+            ? ARENA.halfSize - 8
+            : undefined;
     const positions = spawnPositions(
         participants.length,
-        gameId === 'dog_race' ? DOG_ARENA.plainRadius - 3 : undefined
+        spawnRadius,
+        gameId === 'spleef' ? spawnRadius : undefined
     );
     const teamPositions = isTeamArenaGame(gameId)
         ? teamSpawnPositions(participants, options.teamNames || [], options.teamByParticipant || {}, options.halfSize)
         : null;
+    const assigned = new Map();
     participants.forEach((name, index) => {
         assertPlayerName(name);
         const position = teamPositions?.get(name) || positions[index];
+        assigned.set(name, { x: position.x, y: TOP_LAYER_Y, z: position.z });
+    });
+    return assigned;
+}
+
+function buildParticipantCommands(gameId, participants, options = {}) {
+    const commands = [];
+    const positions = participantSpawnPositions(gameId, participants, options);
+    participants.forEach(name => {
+        const position = positions.get(name);
         commands.push(
             `clear ${name}`,
             `effect clear ${name}`,
             `experience set ${name} 0 points`,
             `experience set ${name} 0 levels`,
             `gamemode survival ${name}`,
-            `tp ${name} ${position.x} ${ARENA.floorY + 1} ${position.z}`,
-            `spawnpoint ${name} ${position.x} ${ARENA.floorY + 1} ${position.z}`,
+            `tp ${name} ${position.x} ${position.y} ${position.z}`,
+            `spawnpoint ${name} ${position.x} ${position.y} ${position.z}`,
             `effect give ${name} saturation 2 10 true`
         );
         if (gameId === 'dog_race') {
@@ -837,6 +874,100 @@ function buildParticipantCommands(gameId, participants, options = {}) {
         }
     });
     return commands;
+}
+
+function buildKitRepairCommands(gameId, name) {
+    const commands = [`clear ${name}`];
+    for (const item of GAME_KITS[gameId] || []) {
+        commands.push(`give ${name} ${item}`);
+    }
+    return commands;
+}
+
+/**
+ * Prove — and, if needed, repair — that every contestant starts with exactly the
+ * game's kit and nothing carried over from a previous match. Reads each bot's
+ * inventory over RCON, diffs it against `GAME_KITS[gameId]`, and on any surplus
+ * or shortfall re-clears and re-gives the kit once before re-reading. Returns one
+ * audit per participant so the launch can journal a permanent record that the
+ * field was even.
+ */
+export async function verifyParticipantInventories(runCommand, gameId, participants, options = {}) {
+    const run = runCommand || runMinecraftCommand;
+    const kit = GAME_KITS[gameId] || [];
+    const allowRepair = options.repair !== false;
+    const audits = [];
+    for (const name of participants) {
+        assertPlayerName(name);
+        let actual = parseInventory(await run(`data get entity ${name} Inventory`));
+        let diff = diffAgainstKit(actual, kit);
+        let repaired = false;
+        if (!diff.matches && allowRepair) {
+            for (const command of buildKitRepairCommands(gameId, name)) {
+                await run(command);
+            }
+            repaired = true;
+            actual = parseInventory(await run(`data get entity ${name} Inventory`));
+            diff = diffAgainstKit(actual, kit);
+        }
+        audits.push({
+            participantId: name,
+            expected: diff.expected,
+            actual: diff.actual,
+            matches: diff.matches,
+            extras: diff.extras,
+            missing: diff.missing,
+            repaired,
+        });
+    }
+    return audits;
+}
+
+/**
+ * A bot standing on the arena floor rests at exactly `TOP_LAYER_Y`. Allow a hair
+ * of downward physics jitter and the block of headroom above, so a bot caught
+ * mid-step still reads as standing while anything that fell into the Spleef pit
+ * or never left its login spot does not.
+ */
+function onTopLayer(position) {
+    if (!position) return false;
+    return position.y >= TOP_LAYER_Y - 0.1 && position.y < TOP_LAYER_Y + 1;
+}
+
+/**
+ * Prove — and, if needed, repair — that every contestant is standing on the
+ * arena's top layer before the opening bell. The starting teleport fires through
+ * a command-block rig that is torn down on the same tick, so a dropped link in
+ * that chain leaves a bot wherever it logged in with nothing to report it. In
+ * Spleef that is the difference between starting on the snow and starting in the
+ * water pit, which is an instant elimination. Reads every position back over
+ * RCON, re-teleports anyone off the floor once, and re-reads. Returns one audit
+ * per participant so a launch can journal that the whole cast started level.
+ */
+export async function verifyParticipantPlacement(runCommand, gameId, participants, options = {}) {
+    const run = runCommand || runMinecraftCommand;
+    const allowRepair = options.repair !== false;
+    const assigned = participantSpawnPositions(gameId, participants, options);
+    const audits = [];
+    for (const name of participants) {
+        assertPlayerName(name);
+        const expected = assigned.get(name);
+        let actual = parsePlayerPosition(await run(`data get entity ${name} Pos`));
+        let repaired = false;
+        if (!onTopLayer(actual) && allowRepair) {
+            await run(`tp ${name} ${expected.x} ${expected.y} ${expected.z}`);
+            repaired = true;
+            actual = parsePlayerPosition(await run(`data get entity ${name} Pos`));
+        }
+        audits.push({
+            participantId: name,
+            expected,
+            actual,
+            onTopLayer: onTopLayer(actual),
+            repaired,
+        });
+    }
+    return audits;
 }
 
 /**
@@ -1132,12 +1263,66 @@ export class ContestArenaManager {
         for (const command of teleportRigCommands) {
             await this.runCommand(command);
         }
+
+        // The rig is fire-and-forget, so read every bot's position back and
+        // re-send anyone who is not standing on the arena floor. A Spleef player
+        // the chain skipped would otherwise open the match in the pit.
+        onProgress?.('Verifying every bot is standing on the arena floor');
+        let placementAudits = [];
+        let placementCommandCount = 0;
+        try {
+            placementAudits = await verifyParticipantPlacement(
+                command => {
+                    placementCommandCount += 1;
+                    return this.runCommand(command);
+                },
+                preset.id,
+                participants,
+                options
+            );
+            const misplaced = placementAudits.filter(audit => !audit.onTopLayer);
+            if (misplaced.length) {
+                console.warn(
+                    '[contest] Not standing on the arena floor after re-teleport: '
+                    + misplaced.map(audit => audit.participantId).join(', ')
+                );
+            }
+        } catch (error) {
+            console.warn(`Could not verify starting positions: ${error.message}`);
+        }
+
         const teamCommands = isTeamArenaGame(preset.id)
             ? buildContestTeamCommands(participants, options)
             : [];
         if (teamCommands.length) onProgress?.('Assigning teams and nametags');
         for (const command of teamCommands) {
             await this.runCommand(command);
+        }
+
+        // Confirm everyone begins with the identical kit and nothing extra
+        // carried over. A mismatch is re-kitted once and re-checked; whatever
+        // remains is reported so the launch can flag it.
+        onProgress?.('Verifying starting inventories are identical');
+        let inventoryAudits = [];
+        let inventoryCommandCount = 0;
+        try {
+            inventoryAudits = await verifyParticipantInventories(
+                command => {
+                    inventoryCommandCount += 1;
+                    return this.runCommand(command);
+                },
+                preset.id,
+                participants
+            );
+            const unclean = inventoryAudits.filter(audit => !audit.matches);
+            if (unclean.length) {
+                console.warn(
+                    '[contest] Inventory still not clean after repair for: '
+                    + unclean.map(audit => audit.participantId).join(', ')
+                );
+            }
+        } catch (error) {
+            console.warn(`Could not verify starting inventories: ${error.message}`);
         }
 
         const commands = [
@@ -1179,8 +1364,13 @@ export class ContestArenaManager {
         return {
             ...join.arena,
             seed,
-            resetCommandCount: commands.length,
+            // Placement and inventory verification run their reads and any repair
+            // through the same RCON channel, so those calls count toward the
+            // reset total alongside the world/participant/team commands.
+            resetCommandCount: commands.length + placementCommandCount + inventoryCommandCount,
             spectators: warpedSpectators,
+            inventoryAudits,
+            placementAudits,
             teleportCommand: join.teleportCommand,
             sameServer: true,
         };
@@ -1245,4 +1435,15 @@ export class ContestArenaManager {
     }
 }
 
-export { buildResetCommands, buildWorldResetCommands, buildParticipantCommands, spectatorWarpCommands };
+export {
+    buildResetCommands,
+    buildWorldResetCommands,
+    buildParticipantCommands,
+    spectatorWarpCommands,
+    ARENA,
+    TOP_LAYER_Y,
+    GAME_KITS,
+    DIAMOND_RACE_ORES,
+    NETHERITE_RACE_DIAMOND_ORES,
+    NETHERITE_RACE_ANCIENT_DEBRIS,
+};

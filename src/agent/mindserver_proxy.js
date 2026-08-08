@@ -151,6 +151,9 @@ class MindServerProxy {
                 if (directive.react === true || directive.pause !== true) {
                     this.agent.reinstate();
                 }
+                if (directive.gameStarted === true) {
+                    this.agent.gameStarted = true;
+                }
                 if (directive.react === true) {
                     await this.agent.self_prompter.pause();
                     this.agent.requestInterrupt();
@@ -324,6 +327,9 @@ class MindServerProxy {
                 this.agent._contestDeathReported = false;
                 this.agent._contestWinReported = false;
                 this.agent._contestEliminatedReported = false;
+                // The next challenge has not started yet; its goal directive says
+                // when it has.
+                this.agent.gameStarted = false;
                 // A new challenge is a clean slate: losing the last one must not
                 // leave a bot mute for the rest of the season.
                 this.agent.reinstate();
@@ -534,9 +540,17 @@ export function requestSurvivorCommand(type, payload = {}) {
     });
 }
 
-// for sending general output to server for display
-export function sendOutputToServer(agentName, message) {
-    serverProxy.getSocket().emit('bot-output', agentName, message);
+// for sending general output to server for display. The optional position is a
+// travel breadcrumb: the contest archive stamps each spoken line with where the
+// bot was standing when it said it.
+export function sendOutputToServer(agentName, message, position = null) {
+    const point = position
+        && Number.isFinite(position.x)
+        && Number.isFinite(position.y)
+        && Number.isFinite(position.z)
+        ? { x: position.x, y: position.y, z: position.z }
+        : null;
+    serverProxy.getSocket().emit('bot-output', agentName, message, point);
 }
 
 /**

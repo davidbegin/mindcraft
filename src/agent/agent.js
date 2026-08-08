@@ -50,6 +50,10 @@ export class Agent {
         this.last_sender = null;
         this.colony_paused = false;
         this.eliminated = false;
+        // A launch teleports bots around a half-built arena, so "below the floor"
+        // means nothing until the show hands out the goals. Set by the goal
+        // directive that starts the clock.
+        this.gameStarted = false;
         this.count_id = count_id;
         this._disconnectHandled = false;
         this.contest_recorders = [];
@@ -653,7 +657,7 @@ export class Agent {
         else {
             this._speakChat(to_translate, addressed);
             if (settings.chat_ingame) {this.bot.chat(message);}
-            sendOutputToServer(this.name, message);
+            sendOutputToServer(this.name, message, this.bot?.entity?.position ?? null);
         }
     }
 
@@ -1204,6 +1208,10 @@ export class Agent {
         ) {
             return;
         }
+        // Nobody is out before the clock starts. A launch teleports bots over a
+        // half-built arena, and treating that fall as an elimination silenced
+        // them and stopped their play for a match that had not begun.
+        if (!this.gameStarted) return;
         this._contestEliminatedReported = true;
         // Elimination is final in these games, so do not wait on the server to
         // agree before going quiet — the round trip is long enough for a couple

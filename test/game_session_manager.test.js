@@ -151,6 +151,7 @@ test('provisions, records, and holds competitors on podiums until cleanup', asyn
             ],
             systemPrompt: 'Be entertaining.',
             durationMs: 150_000,
+            recordingEnabled: true,
         });
 
         assert.equal(result.contest.status, 'running');
@@ -259,6 +260,32 @@ test('provisions, records, and holds competitors on podiums until cleanup', asyn
     });
 });
 
+test('keeps recording off by default and can arm action clips without full cameras', async () => {
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'tower',
+            participants: [{ profileId: 'fast', name: 'speedy' }],
+            autoRecordingEnabled: true,
+        });
+
+        const session = manager.view();
+        assert.equal(session.recordingEnabled, false);
+        assert.equal(session.autoRecordingEnabled, true);
+        assert.equal(session.recording, null);
+        assert.equal(session.launch.steps.some(step => step.id === 'start_recording'), false);
+        assert.equal(calls.some(([type]) => type === 'record-start'), false);
+        const createdSettings = calls.find(([type]) => type === 'create')[1];
+        assert.equal(createdSettings.game_session.recordBotView, false);
+        assert.equal(createdSettings.game_session.autoRecordingEnabled, true);
+
+        await coordinator.submit('game-1', 'speedy', {});
+        await manager.syncWithContestView(coordinator.view());
+        await manager.finish('game-1');
+        assert.equal(calls.some(([type]) => type === 'record-stop'), false);
+        assert.equal(calls.some(([type]) => type === 'highlight'), false);
+    });
+});
+
 test('publishes a launch timeline so a slow start is legible', async () => {
     const updates = [];
     await withManager(async ({ manager }) => {
@@ -268,6 +295,7 @@ test('publishes a launch timeline so a slow start is legible', async () => {
                 { profileId: 'fast', name: 'speedy' },
                 { profileId: 'smart', name: 'thinker' },
             ],
+            recordingEnabled: true,
         });
 
         const launch = manager.view().launch;
@@ -352,6 +380,7 @@ test('a failed launch marks the step that broke', async () => {
             manager.start({
                 gameId: 'tower',
                 participants: [{ profileId: 'fast', name: 'speedy' }],
+                recordingEnabled: true,
             }),
             /arena is flooded/
         );
@@ -373,6 +402,7 @@ test('a lost camera angle costs footage, not the match', async () => {
                 { profileId: 'fast', name: 'speedy' },
                 { profileId: 'smart', name: 'thinker' },
             ],
+            recordingEnabled: true,
         });
 
         assert.equal(result.contest.status, 'running');
@@ -409,6 +439,7 @@ test('a launch that never reaches the starting gun clears the arena without wait
             manager.start({
                 gameId: 'tower',
                 participants: [{ profileId: 'fast', name: 'speedy' }],
+                recordingEnabled: true,
             }),
             /arena is flooded/
         );
@@ -954,6 +985,29 @@ test('first cake team directives emphasize shared ingredient routes', () => {
     assert.doesNotMatch(directive, /tower/);
 });
 
+test('first cake planning brief splits ingredients and names a crafter, not a tower', () => {
+    const directive = buildTeamPlanningDirective({
+        title: 'First Cake',
+        presetPrompt: 'CONTEST: First Cake.',
+        planningMs: 60_000,
+        participantName: 'Kimmy',
+        teamId: 'Ember',
+        teammateIds: ['Billy', 'Marcus'],
+        enemyIds: ['Dario', 'ChipChipperson', 'bridget'],
+        captainId: 'Billy',
+        contestType: 'cake_race',
+    });
+    assert.match(directive, /The match has NOT started/);
+    assert.match(directive, /first team to craft a cake wins/i);
+    assert.match(directive, /THE INGREDIENT SPLIT/);
+    assert.match(directive, /THE CRAFTER/);
+    assert.match(directive, /!startConversation with Billy and Marcus/);
+    assert.match(directive, /The opposing team is Dario, ChipChipperson, bridget/);
+    assert.match(directive, /!endConversation/);
+    assert.doesNotMatch(directive, /tower/i);
+    assert.doesNotMatch(directive, /ATTACKER/i);
+});
+
 test('a refused second game leaves the running bots alone', async () => {
     const reclaimed = [];
     await withManager(async ({ manager, coordinator }) => {
@@ -968,7 +1022,13 @@ test('a refused second game leaves the running bots alone', async () => {
                 gameId: 'tower',
                 participants: [{ profileId: 'fast', name: 'speedy' }],
             }),
-            /already active/
+            error => {
+                assert.match(error.message, /already active/);
+                // The refusal is not the running game's failure, and callers use
+                // this flag to keep it out of that game's diagnostics.
+                assert.equal(error.launchRefused, true);
+                return true;
+            }
         );
         assert.deepEqual(reclaimed, []);
 
@@ -976,6 +1036,73 @@ test('a refused second game leaves the running bots alone', async () => {
         await manager.syncWithContestView(coordinator.view());
     }, {
         reclaimNames: names => reclaimed.push(names),
+    });
+});
+
+// Pressing Start twice — a reopened roster after a connection blip, a second
+// dashboard — used to answer with a failure report describing the launch that
+// was still running, filing its current step as the thing that broke.
+test('a second start mid-launch is refused by name and step, not blamed on the launch', async () => {
+    let releaseArena = null;
+    const arenaReached = new Promise(resolve => {
+        releaseArena = resolve;
+    });
+    await withManager(async ({ manager, coordinator }) => {
+        const launch = manager.start({
+            gameId: 'tower',
+            participants: [{ profileId: 'fast', name: 'speedy' }],
+        });
+        await arenaReached;
+
+        await assert.rejects(
+            manager.start({
+                gameId: 'tower',
+                participants: [{ profileId: 'smart', name: 'thinker' }],
+            }),
+            error => {
+                assert.match(error.message, /Tower is already active \(still on "Build the arena"\)/);
+                assert.equal(error.launchRefused, true);
+                return true;
+            }
+        );
+
+        await launch;
+        assert.equal(manager.view().status, 'running');
+        assert.equal(manager.lastFailure, null, 'the running launch has no failure to report');
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+    }, {
+        prepareArena: async () => {
+            releaseArena();
+            // Hold the step open long enough for the refused start to run.
+            await new Promise(resolve => setImmediate(resolve));
+            return { center: { x: 1, y: 2, z: 3 } };
+        },
+    });
+});
+
+test('only the goal that starts the clock tells a bot it can be knocked out', async () => {
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'tower',
+            participants: [{ profileId: 'fast', name: 'speedy' }],
+        });
+        const goals = calls.filter(([type, , , options]) =>
+            type === 'directive' && options?.gameStarted === true
+        );
+        assert.deepEqual(goals.map(([, name]) => name), ['speedy']);
+
+        await coordinator.cancelContest('game-1', 'test complete');
+        await manager.syncWithContestView(coordinator.view());
+        // Podium and cleanup directives leave the flag off: nothing after the
+        // match can knock a bot out of it.
+        assert.equal(
+            calls.filter(([type, , , options]) =>
+                type === 'directive' && options?.gameStarted === true
+            ).length,
+            1
+        );
     });
 });
 

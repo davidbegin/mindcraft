@@ -24,6 +24,7 @@ export {
     buildPressureRoundAnnouncement,
     buildSurvivorAnnouncement,
     buildSurvivorPhaseAnnouncement,
+    describeCompetitor,
 } from './contest_announcer.js';
 export {
     ContestHud,
@@ -89,10 +90,12 @@ export {
     parseOnlinePlayers,
     spectatorWarpCommands,
 } from './arena_manager.js';
+export { ContestArchive } from './contest_archive.js';
 export { ContestRecordingManager } from './contest_recording.js';
 export { SpectatorDirector } from './spectator_director.js';
 export {
     GameSessionManager,
+    launchRefusedError,
     resolveBuildPhaseMs,
     resolvePlanningMs,
     validateGameParticipants,

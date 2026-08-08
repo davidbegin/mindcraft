@@ -16,6 +16,11 @@ export function buildPlanningAnnouncement(contest, planningMs) {
             + 'Captain, call one quick base. Agree who builds and who hunts. '
             + 'Hiding forever loses — the arena will shrink if both teams survive. No building until the build phase.';
     }
+    if (contest?.rules?.type === 'cake_race') {
+        return `${title}. Teams, you have ${seconds} seconds to plan. `
+            + 'Split the ingredients — milk, wheat, sugar cane, and eggs — across your teammates and pick one crafter. '
+            + 'First team to bake a cake wins. No gathering until the countdown.';
+    }
     return `${title}. Teams, you have ${seconds} seconds to plan. `
         + 'Captain, call one shared tower base. Assigned attacker, confirm you will destroy the enemy tower. '
         + 'All builders use only the captain\'s structure. No building until the countdown.';
@@ -34,7 +39,46 @@ export function buildPressureRoundAnnouncement(halfSize, pressureRound) {
         + `The arena shrinks to ${size} by ${size}. No more hiding — fight!`;
 }
 
+// A profile's model is stored either as a bare slug or as a settings object,
+// so both shapes collapse to the readable name the audience should hear.
+function formatModelName(model) {
+    if (!model) return null;
+    if (typeof model === 'string') return model.trim() || null;
+    if (typeof model === 'object') {
+        const label = model.model || model.api;
+        return label ? String(label).trim() || null : null;
+    }
+    return null;
+}
+
+// The game session manager stamps each competitor's model onto the contest
+// metadata, so the winner announcement can name the LLM, not just the handle.
+function buildParticipantModelMap(contest) {
+    const participants = contest?.metadata?.gameSession?.participants;
+    const map = new Map();
+    if (Array.isArray(participants)) {
+        for (const participant of participants) {
+            const name = String(participant?.name || '').trim();
+            const model = formatModelName(participant?.model);
+            if (name && model) map.set(name, model);
+        }
+    }
+    return map;
+}
+
+// "billy, playing gpt-4o" when the model is known, otherwise just the name, so
+// callers without model metadata degrade to the plain handle.
+export function describeCompetitor(name, model) {
+    const label = formatModelName(model);
+    return label ? `${name}, playing ${label}` : String(name);
+}
+
+function joinCompetitors(names, models) {
+    return joinNames(names.map(name => describeCompetitor(name, models.get(name))));
+}
+
 export function buildContestResultAnnouncement(contest) {
+    const models = buildParticipantModelMap(contest);
     const winningTeams = [...new Set(
         (contest.results || [])
             .filter(result => result.rank === 1)
@@ -46,17 +90,26 @@ export function buildContestResultAnnouncement(contest) {
         && winningTeams.length > 0
     ) {
         if (winningTeams.length === 1) {
-            return `And the winning team is... ${winningTeams[0]}! ${winningTeams[0]} wins!`;
+            const teamWinnerIds = [...new Set(
+                (contest.results || [])
+                    .filter(result => result.rank === 1 && result.participantId)
+                    .map(result => result.participantId)
+            )];
+            const roster = teamWinnerIds.some(name => models.has(name))
+                ? ` That's ${joinCompetitors(teamWinnerIds, models)}.`
+                : '';
+            return `And the winning team is... ${winningTeams[0]}! ${winningTeams[0]} wins!${roster}`;
         }
         return `The game ends in a tie between ${winningTeams.join(' and ')}!`;
     }
     const winners = Array.isArray(contest?.winnerIds) ? contest.winnerIds.filter(Boolean) : [];
     if (winners.length === 0) return 'Game over. There was no winner.';
     if (winners.length === 1) {
-        return `And the winner is... ${winners[0]}! ${winners[0]} wins!`;
+        return `And the winner is... ${describeCompetitor(winners[0], models.get(winners[0]))}! `
+            + `${winners[0]} wins!`;
     }
     const names = winners.join(' and ');
-    return `And the winners are... ${names}! ${names} win!`;
+    return `And the winners are... ${joinCompetitors(winners, models)}! ${names} win!`;
 }
 
 function joinNames(names) {

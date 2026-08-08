@@ -235,6 +235,7 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
             winItem: 'cake',
             teamCount: 2,
             minimumPlayersPerTeam: 3,
+            planningMs: 60_000,
             ingredients: Object.freeze({
                 milk_bucket: 3,
                 sugar: 2,

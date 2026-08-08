@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ContestArenaManager } from '../src/mindcraft/contest/arena_manager.js';
+import {
+    ContestArenaManager,
+    buildParticipantCommands,
+    buildWorldResetCommands,
+    participantSpawnPositions,
+    verifyParticipantPlacement,
+} from '../src/mindcraft/contest/arena_manager.js';
 import { ContestCoordinator } from '../src/mindcraft/contest/contest_coordinator.js';
 import { formatContestScore } from '../src/mindcraft/contest/contest_hud.js';
 import { getContestGamePreset } from '../src/mindcraft/contest/game_presets.js';
@@ -41,10 +47,16 @@ async function withCoordinator(run, options = {}) {
 
 test('builds a snow platform over a water pit with shovel kits', async () => {
     const commands = [];
+    const spawns = participantSpawnPositions('spleef', ['alice', 'bob']);
     const manager = new ContestArenaManager({
-        runCommand: async command => {
+        runCommand: command => {
             commands.push(command);
             if (command === 'list') return listReply(['alice', 'bob']);
+            if (command.startsWith('data get entity ') && command.endsWith(' Pos')) {
+                const name = command.split(' ')[3];
+                const { x, y, z } = spawns.get(name);
+                return `${name} has the following entity data: [${x}.0d, ${y}.0d, ${z}.0d]`;
+            }
             return 'ok';
         },
     });
@@ -67,6 +79,116 @@ test('builds a snow platform over a water pit with shovel kits', async () => {
         assert.ok(commands.includes(`give ${name} bread 16`));
         assert.ok(commands.includes(`effect give ${name} weakness infinite 255 true`));
     }
+});
+
+test('repairs the Spleef platform last and starts every player in a wide circle', () => {
+    const worldCommands = buildWorldResetCommands('spleef');
+    assert.equal(
+        worldCommands.at(-1),
+        'fill 99968 100 99968 100032 100 100032 snow_block',
+        'the final world-build command repairs the complete platform'
+    );
+
+    const participants = ['alice', 'bob', 'chip', 'dana'];
+    const teleports = buildParticipantCommands('spleef', participants)
+        .filter(command => command.startsWith('tp '));
+    assert.equal(teleports.length, participants.length);
+
+    for (const command of teleports) {
+        const [, , x, y, z] = command.split(' ');
+        assert.equal(Number(y), 101);
+        assert.ok(
+            Math.abs(Math.hypot(Number(x) - 100000, Number(z) - 100000) - 24) < 0.75,
+            `Spleef spawn is not on the wide starting circle: ${command}`
+        );
+    }
+    assert.equal(new Set(teleports).size, participants.length);
+});
+
+test('every Spleef round rebuilds the arena before anyone is teleported onto it', async () => {
+    const spawns = participantSpawnPositions('spleef', ['alice', 'bob']);
+    const rounds = [];
+    const manager = new ContestArenaManager({
+        runCommand: command => {
+            rounds.at(-1).push(command);
+            if (command === 'list') return listReply(['alice', 'bob']);
+            if (command.startsWith('data get entity ') && command.endsWith(' Pos')) {
+                const name = command.split(' ')[3];
+                const { x, y, z } = spawns.get(name);
+                return `${name} has the following entity data: [${x}.0d, ${y}.0d, ${z}.0d]`;
+            }
+            return 'ok';
+        },
+    });
+
+    // Two back-to-back rounds: the second must rebuild just as completely as the
+    // first, so a platform chewed up by the previous match never carries over.
+    for (const _round of [1, 2]) {
+        rounds.push([]);
+        const reset = await manager.prepare(
+            getContestGamePreset('spleef'),
+            ['alice', 'bob'],
+            { spectators: [] }
+        );
+        assert.deepEqual(
+            reset.placementAudits.map(audit => [audit.participantId, audit.onTopLayer]),
+            [['alice', true], ['bob', true]]
+        );
+    }
+
+    for (const commands of rounds) {
+        const repair = commands.indexOf('fill 99968 100 99968 100032 100 100032 snow_block');
+        assert.ok(repair >= 0, 'the round never repaired the snow platform');
+        assert.ok(
+            commands.some(command => command.includes(' water')),
+            'the round never refilled the pit under the platform'
+        );
+        const firstMove = commands.findIndex(command => command.includes('tp alice'));
+        assert.ok(firstMove >= 0, 'the round never teleported alice');
+        assert.ok(repair < firstMove, 'a player was teleported before the platform was repaired');
+    }
+});
+
+test('a player the teleport rig missed is put back on the top layer', async () => {
+    const commands = [];
+    const positions = new Map([
+        ['alice', { x: 100024, y: 101, z: 100000 }],
+        // The chain skipped bob, so he is still standing where he logged in.
+        ['bob', { x: 99990, y: 71, z: 100010 }],
+    ]);
+    const audits = await verifyParticipantPlacement(
+        command => {
+            commands.push(command);
+            if (command.startsWith('tp ')) {
+                const [, name, x, y, z] = command.split(' ');
+                positions.set(name, { x: Number(x), y: Number(y), z: Number(z) });
+                return 'ok';
+            }
+            const name = command.split(' ')[3];
+            const { x, y, z } = positions.get(name);
+            return `${name} has the following entity data: [${x}.0d, ${y}.0d, ${z}.0d]`;
+        },
+        'spleef',
+        ['alice', 'bob']
+    );
+
+    const alice = audits.find(audit => audit.participantId === 'alice');
+    assert.equal(alice.onTopLayer, true);
+    assert.equal(alice.repaired, false, 'a bot already on the snow was teleported again');
+
+    const bob = audits.find(audit => audit.participantId === 'bob');
+    assert.equal(bob.repaired, true);
+    assert.equal(bob.onTopLayer, true);
+    assert.equal(bob.actual.y, 101);
+    assert.ok(
+        Math.abs(Math.hypot(bob.actual.x - 100000, bob.actual.z - 100000) - 24) < 0.75,
+        'the recovered bot was not returned to the wide starting circle'
+    );
+    assert.equal(
+        commands.filter(command => command.startsWith('tp ')).length,
+        1,
+        'only the bot that was off the platform should be teleported again'
+    );
 });
 
 test('a bot never targets the floor holding itself up, however a rival moves', () => {

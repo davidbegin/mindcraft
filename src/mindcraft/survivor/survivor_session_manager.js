@@ -543,6 +543,9 @@ export class SurvivorSessionManager {
                     provider: participant.provider,
                     systemPrompt: this.active.systemPrompt || '',
                     personalityPrompt: participant.systemPrompt,
+                    recordBotView: this.active.recordingEnabled === true,
+                    autoRecordingEnabled: this.active.recordingEnabled !== true
+                        && this.active.autoRecordingEnabled === true,
                     contestType: 'survivor',
                 });
                 const result = await this.createAgent(settings);
@@ -648,6 +651,8 @@ export class SurvivorSessionManager {
             phaseDurationsMs[key] = value;
         }
         const participantIds = participants.map(participant => participant.name);
+        const recordingEnabled = request.recordingEnabled === true;
+        const autoRecordingEnabled = !recordingEnabled && request.autoRecordingEnabled === true;
         this.roomHistory = [];
         this.secretEventLog = [];
         this.refusals = [];
@@ -674,6 +679,8 @@ export class SurvivorSessionManager {
                 provider: participant.provider,
             })),
             systemPrompt: request.systemPrompt || '',
+            recordingEnabled,
+            autoRecordingEnabled,
             createdAgents: [],
             challengeDeck: buildChallengeDeck(challengeGameIds, {
                 rounds: participantIds.length,
@@ -709,6 +716,8 @@ export class SurvivorSessionManager {
                     provider: participant.provider,
                     systemPrompt: request.systemPrompt || '',
                     personalityPrompt: participant.systemPrompt,
+                    recordBotView: recordingEnabled,
+                    autoRecordingEnabled,
                     contestType: 'survivor',
                 });
                 const result = await this.createAgent(settings);
@@ -1316,6 +1325,8 @@ export class SurvivorSessionManager {
                 // behind that chat, so a challenge would start with the cast
                 // arguing and no idea what the contest is. Cut the talk instead.
                 endConversations: state.phase === 'challenge',
+                // Only a challenge is a game a bot can be knocked out of.
+                gameStarted: state.phase === 'challenge',
             })
         ));
         const undelivered = recipients.filter((_, index) => results[index].status === 'rejected');

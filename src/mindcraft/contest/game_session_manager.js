@@ -46,13 +46,17 @@ const LAUNCH_STEP_LABELS = {
     send_goals: 'Send the goals to the bots',
 };
 
-export function buildLaunchSteps({ teamPlanning = false, teamBuild = false } = {}) {
+export function buildLaunchSteps({
+    recording = false,
+    teamPlanning = false,
+    teamBuild = false,
+} = {}) {
     const ids = [
         'reclaim_names',
         'create_agent',
         'wait_ready',
         'prepare_arena',
-        'start_recording',
+        ...(recording ? ['start_recording'] : []),
         ...(teamPlanning ? ['team_planning'] : []),
         ...(teamBuild ? ['team_build'] : []),
         'announce',
@@ -99,6 +103,16 @@ export function buildWinnerReactionDirective(contest, participantId) {
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
+}
+
+// Pressing Start while a launch is still on its way is a refused request, not a
+// failure of the launch already running. Callers key off this flag to leave the
+// healthy launch's diagnostics alone instead of filing a failure report that
+// describes whatever step it happened to be on.
+export function launchRefusedError(message) {
+    const error = new Error(message);
+    error.launchRefused = true;
+    return error;
 }
 
 export function validateGameParticipants(participants, profiles, existingNames = []) {
@@ -380,12 +394,18 @@ export class GameSessionManager {
     async start(request = {}) {
         if (this.active) {
             if (this.active.status !== 'awaiting-next-game') {
-                throw new Error(`Game session ${this.active.contestId} is already active`);
+                const step = this.launch?.steps
+                    ?.find(item => item.id === this.active.progress?.stage);
+                const where = step ? ` (still on "${step.label}")` : '';
+                throw launchRefusedError(
+                    `${this.active.title} is already active${where}. Let it finish, `
+                    + 'or cancel it before starting another game.'
+                );
             }
             await this.releasePodiumHold();
         }
         if (this.coordinator.snapshot().activeContestId) {
-            throw new Error('A game is already running. Cancel it first.');
+            throw launchRefusedError('A game is already running. Cancel it first.');
         }
 
         this.lastFailure = null;
@@ -430,6 +450,8 @@ export class GameSessionManager {
         const buildPhaseMs = teamSetup && preset.rules?.type === 'team_base_siege'
             ? resolveBuildPhaseMs(request.buildPhaseMs, preset)
             : 0;
+        const recordingEnabled = request.recordingEnabled === true;
+        const autoRecordingEnabled = !recordingEnabled && request.autoRecordingEnabled === true;
         const captainByTeam = teamSetup
             ? Object.fromEntries(
                 teamSetup.teamNames.map(name => [name, pickTeamCaptain(teamSetup.teams[name])])
@@ -452,6 +474,7 @@ export class GameSessionManager {
             stage: 'create_agent',
             endedAt: null,
             steps: buildLaunchSteps({
+                recording: recordingEnabled,
                 teamPlanning: Boolean(teamSetup) && planningMs > 0,
                 teamBuild: Boolean(teamSetup) && buildPhaseMs > 0,
             }),
@@ -481,6 +504,8 @@ export class GameSessionManager {
                     planningMs,
                     buildPhaseMs,
                     pressureRound: 0,
+                    recordingEnabled,
+                    autoRecordingEnabled,
                     arenaHalfSize: getArenaJoinInfo().arena.halfSize ?? 32,
                     teamNames: teamSetup?.teamNames ?? null,
                     teamByParticipant: teamSetup?.teamByParticipant ?? null,
@@ -509,6 +534,8 @@ export class GameSessionManager {
             participantIds,
             planningMs,
             buildPhaseMs,
+            recordingEnabled,
+            autoRecordingEnabled,
             arenaHalfSize: getArenaJoinInfo().arena.halfSize ?? 32,
             teamNames: teamSetup?.teamNames ?? null,
             teamByParticipant: teamSetup?.teamByParticipant ?? null,
@@ -589,6 +616,8 @@ export class GameSessionManager {
                     provider: participant.provider,
                     systemPrompt,
                     personalityPrompt: participant.systemPrompt,
+                    recordBotView: false,
+                    autoRecordingEnabled,
                     winItem: preset.rules?.winItem ?? null,
                     contestType: preset.rules?.type ?? null,
                     floorY: Number.isFinite(preset.rules?.floorY)
@@ -636,23 +665,39 @@ export class GameSessionManager {
                 ),
             });
 
-            this._setStatus('recording', 'start_recording', 'Starting synchronized recording…');
-            const recording = await this.startRecording({
-                contestId: contest.id,
-                participants: participantIds,
-                arena: arenaReset,
-                onProgress: detail => this._setStageDetail('start_recording', detail),
-            });
-            this.active.recording = { enabled: true, ...recording };
-            if (recording?.failures?.length) {
-                const detail = recording.failures
-                    .map(failure => `${failure.agentName}: ${failure.error}`)
-                    .join('; ');
-                this._record({
-                    stage: 'start_recording',
-                    message: `Recording ${recording.cameraCount} of the planned angles (${detail})`,
+            // File a permanent record that everyone started with the identical
+            // kit. This feeds the archive's integrity view and is the proof that
+            // no one carried inventory into a fresh game.
+            for (const audit of arenaReset?.inventoryAudits || []) {
+                await this.coordinator.recordGameEvent?.('inventory.audit', {
+                    contestId: contest.id,
+                    ...audit,
+                }).catch?.(error =>
+                    this._log(`Could not journal inventory audit: ${error.message}`, { level: 'warn' })
+                );
+            }
+
+            let recording = null;
+            if (recordingEnabled) {
+                this._setStatus('recording', 'start_recording', 'Starting synchronized recording…');
+                this.active.recording = { enabled: true };
+                recording = await this.startRecording({
+                    contestId: contest.id,
+                    participants: participantIds,
+                    arena: arenaReset,
+                    onProgress: detail => this._setStageDetail('start_recording', detail),
                 });
-                this.onRecordingIncomplete(recording.failures);
+                this.active.recording = { enabled: true, ...recording };
+                if (recording?.failures?.length) {
+                    const detail = recording.failures
+                        .map(failure => `${failure.agentName}: ${failure.error}`)
+                        .join('; ');
+                    this._record({
+                        stage: 'start_recording',
+                        message: `Recording ${recording.cameraCount} of the planned angles (${detail})`,
+                    });
+                    this.onRecordingIncomplete(recording.failures);
+                }
             }
 
             if (teamSetup && planningMs > 0) {
@@ -719,6 +764,7 @@ export class GameSessionManager {
                     // conversation timeout.
                     {
                         endConversations: true,
+                        gameStarted: true,
                         automaticAction: preset.rules?.type === 'spleef'
                             ? 'play-spleef'
                             : null,
@@ -1113,6 +1159,10 @@ export class GameSessionManager {
 
     async _finalizeMedia(contest, { discardMedia = false } = {}) {
         if (!this.active || this.active.mediaFinalized) return;
+        if (!this.active.recordingEnabled) {
+            this.active.mediaFinalized = true;
+            return;
+        }
         const session = this.view();
         // A launch that never reached the starting gun has no footage worth
         // waiting for, and every stop is another per-bot round trip. Leaving the
