@@ -933,7 +933,7 @@ export class ContestArenaManager {
         return parseOnlinePlayers(output);
     }
 
-    async waitForPlayersOnline(participants) {
+    async waitForPlayersOnline(participants, onProgress = null) {
         const needed = [...new Set(participants)];
         const deadline = Date.now() + this.playerWaitTimeoutMs;
         let missing = needed;
@@ -941,6 +941,7 @@ export class ContestArenaManager {
             const online = new Set(await this.listOnlinePlayers());
             missing = needed.filter(name => !online.has(name));
             if (missing.length === 0) return;
+            onProgress?.(`Waiting for Minecraft to show ${missing.join(', ')}`);
             await this.sleep(this.playerWaitPollMs);
         }
         throw new Error(
@@ -955,17 +956,28 @@ export class ContestArenaManager {
         }
         participants.forEach(assertPlayerName);
 
+        // Rebuilding the world is the longest silent stretch of a launch — a few
+        // hundred RCON calls with nothing to show for them — so the caller gets
+        // a running count instead of one unchanging line.
+        const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
         const seed = options.seed ?? randomSeed();
         const worldCommands = buildWorldResetCommands(preset.id, { seed });
+        let done = 0;
         for (const command of worldCommands) {
             await this.runCommand(command);
+            done += 1;
+            if (done % PROGRESS_COMMAND_INTERVAL === 0 || done === worldCommands.length) {
+                onProgress?.(`Rebuilding the arena (${done}/${worldCommands.length} commands)`);
+            }
         }
 
         // Player-targeted commands (/clear, /tp, /give) fail with
         // "No player was found" if bots dropped between MindServer ready and
         // RCON setup — wait on `list` so the error is clear and early.
-        await this.waitForPlayersOnline(participants);
+        onProgress?.('Checking that every bot is visible to Minecraft');
+        await this.waitForPlayersOnline(participants, onProgress);
 
+        onProgress?.(`Teleporting and equipping ${participants.length} bots`);
         const participantCommands = buildParticipantCommands(preset.id, participants, options);
         for (const command of participantCommands) {
             await this.runCommand(command);
@@ -973,6 +985,7 @@ export class ContestArenaManager {
         const teamCommands = isTeamArenaGame(preset.id)
             ? buildContestTeamCommands(participants, options)
             : [];
+        if (teamCommands.length) onProgress?.('Assigning teams and nametags');
         for (const command of teamCommands) {
             await this.runCommand(command);
         }
@@ -994,6 +1007,7 @@ export class ContestArenaManager {
 
         // Seating the audience is cosmetic, so a spectator who logs out between
         // `list` and `gamemode` is skipped instead of failing the whole launch.
+        if (spectators.length) onProgress?.(`Seating ${spectators.length} spectators`);
         const warpedSpectators = [];
         for (const name of spectators) {
             try {

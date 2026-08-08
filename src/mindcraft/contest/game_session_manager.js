@@ -265,6 +265,7 @@ export class GameSessionManager {
         this.getAgentLaunchStatus = options.getAgentLaunchStatus || null;
         this.telemetry = options.telemetry || null;
         this.active = null;
+        this.launch = null;
         this.lastFailure = null;
     }
 
@@ -881,13 +882,14 @@ export class GameSessionManager {
         const session = this.view();
         this.active.status = 'cleaning-up';
         this._setProgress('cleanup', 'Cleaning up temporary contest bots…');
-        this._record({ stage: 'cleanup', message: `Cleaning up session ${session.contestId}` });
+        this._log(`Cleaning up session ${session.contestId}`, { stage: 'cleanup' });
         this._emit();
         await this._finalizeMedia(contest, { discardMedia });
         await Promise.allSettled(
             session.createdAgents.map(agent => this.destroyAgent(agent.id))
         );
         this.active = null;
+        this.launch = null;
         this._emit();
         return session;
     }
