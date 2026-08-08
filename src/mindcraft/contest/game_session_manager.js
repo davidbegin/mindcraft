@@ -302,7 +302,9 @@ export class GameSessionManager {
             step.endedAt = this.clock();
         }
         const current = index >= 0 ? steps[index] : null;
-        if (current && current.status !== 'active') {
+        // A failed step stays failed: the error path re-reports its own stage on
+        // the way out, and that must not look like the step started over.
+        if (current && current.status !== 'active' && current.status !== 'failed') {
             current.status = 'active';
             current.startedAt = this.clock();
             current.endedAt = null;
@@ -620,6 +622,7 @@ export class GameSessionManager {
             }
             this._setStatus('preparing', 'prepare_arena', 'Preparing arena…');
             const arenaReset = await this.prepareArena(preset, participantIds, {
+                onProgress: detail => this._setStageDetail('prepare_arena', detail),
                 teamNames: teamSetup?.teamNames,
                 teamByParticipant: teamSetup?.teamByParticipant,
                 teams: teamSetup?.teams,
@@ -638,6 +641,7 @@ export class GameSessionManager {
                 contestId: contest.id,
                 participants: participantIds,
                 arena: arenaReset,
+                onProgress: detail => this._setStageDetail('start_recording', detail),
             });
             this.active.recording = { enabled: true, ...recording };
             if (recording?.failures?.length) {
@@ -675,9 +679,23 @@ export class GameSessionManager {
             }
 
             this._setStatus('announcing-start', 'announce', 'Announcing match start…');
-            await this._announce(this.announceStart, contest);
-            this._record({ stage: 'start_contest', message: `Starting contest ${contest.id}` });
+            await this._announce(
+                current => this.announceStart(current, {
+                    onProgress: detail => this._setStageDetail('announce', detail),
+                }),
+                contest
+            );
+            this._log(`Starting contest ${contest.id}`, { stage: 'start_contest' });
             const started = await this.coordinator.startContest(contest.id);
+            // The clock is running now, so this last fan-out is the most
+            // confusing place to go quiet: bots stand still until their goal
+            // lands, and each one can take seconds.
+            this._setStatus(
+                'announcing-start',
+                'send_goals',
+                `Sending the goals to the bots (0/${participantIds.length})…`
+            );
+            let goalsSent = 0;
             await Promise.all(participantIds.map(name =>
                 this.sendDirective(
                     name,
@@ -700,11 +718,18 @@ export class GameSessionManager {
                     // clock; a queued directive would idle the bot for the whole
                     // conversation timeout.
                     { endConversations: true }
-                )
+                ).then(result => {
+                    goalsSent += 1;
+                    this._setStageDetail(
+                        'send_goals',
+                        `${name} has its goal (${goalsSent}/${participantIds.length})`
+                    );
+                    return result;
+                })
             ));
             this.active.arenaReset = arenaReset;
             this._setStatus('running', 'running', 'Contest running');
-            this._record({ stage: 'running', message: `Game ${preset.id} is running` });
+            this._log(`Game ${preset.id} is running`, { stage: 'running' });
             return {
                 contest: started,
                 participants: participantIds,
@@ -713,6 +738,7 @@ export class GameSessionManager {
                 recordingSession: recording,
             };
         } catch (error) {
+            this._failLaunch();
             if (this.active) {
                 this.active.status = 'failed';
                 this.active.error = error.message;
@@ -1001,14 +1027,23 @@ export class GameSessionManager {
             if (!this.active || this.active.contestId !== contestId) {
                 throw new Error('Game session was cancelled during startup');
             }
-            const ready = names.filter(name => this.isAgentReady(name)).length;
+            const pending = names.filter(name => !this.isAgentReady(name));
+            const ready = names.length - pending.length;
             if (ready !== lastReady && this.active) {
                 lastReady = ready;
                 this._setProgress(
                     'wait_ready',
                     `Waiting for agents to join the world (${ready}/${names.length})…`,
-                    { ready }
+                    { ready, pending, waitingUntil: deadline }
                 );
+                // Naming the bots still missing turns a 90 second stare into
+                // something an operator can act on.
+                if (pending.length) {
+                    this._log(
+                        `Waiting on ${pending.map(name => this._describeAgentStatus(name)).join(', ')}`,
+                        { stage: 'wait_ready' }
+                    );
+                }
                 this._emit();
             }
             if (ready === names.length) return;

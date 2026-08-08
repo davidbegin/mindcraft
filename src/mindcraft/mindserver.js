@@ -552,6 +552,7 @@ async function ensureContest(options) {
                 announce: (text, options) => speakSurvivorAnnouncement(text, options),
                 speakAs: (playerId, text) => speakSurvivorPlayerLine(playerId, text),
                 onEliminated: async (playerId, state) => {
+                    silenceEliminatedAgent(playerId, 'voted out');
                     await Promise.allSettled(
                         buildSurvivorEliminationCommands(playerId).map(command =>
                             runMinecraftCommand(command)
@@ -752,6 +753,21 @@ function sendGameDirective(agentRef, prompt, options = {}) {
             }
         );
     });
+}
+
+/**
+ * A bot that just left the game stops mid-sentence. TTS and the model both run
+ * ahead of play, so its backlog is dropped from the host queue and the browser
+ * mirror, and its process is told to stop speaking, thinking, and acting.
+ * Everyone still playing keeps their voice, as does the narrator about to call
+ * this very elimination.
+ */
+function silenceEliminatedAgent(agentRef, reason = 'eliminated') {
+    const connection = getConnection(agentRef);
+    voiceOutput.silence(connection?.name || agentRef);
+    if (connection?.socket?.connected) {
+        connection.socket.emit('game-eliminated', { reason });
+    }
 }
 
 function clearContestVoice(contest) {
@@ -2695,6 +2711,7 @@ export function createMindServer(host_public = false, port = 8080) {
                         elapsedMs: Date.now() - active.startedAt,
                     }
                 );
+                silenceEliminatedAgent(connection.id, request?.reason || 'eliminated');
                 try {
                     for (const command of spectatorWarpCommands([connection.name])) {
                         await runMinecraftCommand(command);
