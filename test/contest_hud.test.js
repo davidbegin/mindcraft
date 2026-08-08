@@ -329,6 +329,49 @@ test('celebrates an automatic dog-race winner', async () => {
     assert.ok(commands.some(command => command.includes('1. alice — dog tamed')));
 });
 
+test('celebrates a Hot Button safe-button winner', async () => {
+    const commands = [];
+    const contest = runningContest({
+        title: 'Hot Button',
+        rules: { type: 'hot_button', scoring: 'last-standing', winItem: 'nether_star' },
+    });
+    const hud = new ContestHud({
+        clock: () => 10_000,
+        runCommand: async command => commands.push(command),
+    });
+    await hud.sync({ activeContest: contest, contests: [contest] });
+    commands.length = 0;
+
+    const completed = {
+        ...contest,
+        status: 'completed',
+        winnerIds: ['alice'],
+        results: [
+            {
+                participantId: 'alice',
+                score: 2_000_005_000,
+                rank: 1,
+                details: { surviving: true, pressed: true, chicken: false },
+            },
+            {
+                participantId: 'bob',
+                score: 1_000,
+                rank: 2,
+                details: { surviving: false, pressed: true, survivedMs: 4_000 },
+            },
+        ],
+    };
+    await hud.sync({ activeContest: null, contests: [completed] });
+
+    assert.ok(commands.some(command =>
+        command.includes('title @a title {"text":"SAFE BUTTON!","color":"gold"')
+    ));
+    assert.ok(commands.some(command => command.includes('"alice WINS!"')));
+    assert.ok(commands.some(command =>
+        command.startsWith('playsound entity.firework_rocket.large_blast')
+    ));
+});
+
 test('celebrates the first competitor to die', async () => {
     const commands = [];
     const contest = runningContest({

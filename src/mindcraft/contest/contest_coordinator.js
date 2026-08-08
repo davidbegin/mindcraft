@@ -492,9 +492,9 @@ export class ContestCoordinator {
     }
 
     /**
-     * Record that a Hot Button competitor pressed a station. Crowns them early
-     * when they are already the sole survivor (safe button after everyone else
-     * exploded); a lone chicken is never crowned here.
+     * Record that a Hot Button competitor pressed a station. A confirmed safe
+     * press crowns them immediately. Otherwise they only win early when they
+     * are already the sole survivor; a lone chicken is never crowned here.
      */
     async markPressed(contestId, participantId, payload = {}) {
         assertNonEmptyString(participantId, 'participantId');
@@ -522,6 +522,24 @@ export class ContestCoordinator {
                     participantId,
                     payload: clone(payload),
                 });
+            }
+            if (payload?.safe === true) {
+                contest.submissions[participantId] = {
+                    participantId,
+                    payload: {
+                        event: 'safe_button',
+                        item: payload?.item || null,
+                        elapsedMs: now - contest.startedAt,
+                    },
+                    submittedAt: now,
+                };
+                await this._commit('winner.detected', {
+                    contestId,
+                    participantId,
+                    payload: clone(contest.submissions[participantId].payload),
+                });
+                await this._finalizeContest(contest, 'winner-detected');
+                return clone(contest);
             }
             const survivors = contest.participantIds.filter(
                 id => !contest.eliminations?.[id]

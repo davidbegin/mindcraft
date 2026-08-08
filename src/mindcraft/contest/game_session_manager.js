@@ -109,6 +109,33 @@ export function buildWinnerReactionDirective(contest, participantId) {
     ].join(' ');
 }
 
+// A full cast all shouting about the winner stacks TTS and drowns the ceremony.
+// Prefer winners, then fill with anyone else, and keep the chorus to one or two.
+export function pickWinnerReactionParticipants(participantIds = [], contest = null, random = Math.random) {
+    const ids = [...new Set((participantIds || []).filter(Boolean))];
+    if (ids.length === 0) return [];
+
+    const maxCount = Math.min(2, ids.length);
+    const count = maxCount === 1 || random() < 0.5 ? 1 : maxCount;
+
+    const winners = (Array.isArray(contest?.winnerIds) ? contest.winnerIds : [])
+        .filter(id => ids.includes(id));
+    const others = ids.filter(id => !winners.includes(id));
+    const pool = [
+        ...shuffleInPlace([...winners], random),
+        ...shuffleInPlace([...others], random),
+    ];
+    return pool.slice(0, count);
+}
+
+function shuffleInPlace(list, random = Math.random) {
+    for (let i = list.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(random() * (i + 1));
+        [list[i], list[j]] = [list[j], list[i]];
+    }
+    return list;
+}
+
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
@@ -256,6 +283,7 @@ export class GameSessionManager {
         Object.assign(this, options);
         this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
         this.clock = options.clock || (() => Date.now());
+        this.random = options.random || Math.random;
         this.podiumHoldMs = options.podiumHoldMs ?? DEFAULT_PODIUM_HOLD_MS;
         this.winnerRevealMs = options.winnerRevealMs ?? DEFAULT_WINNER_REVEAL_MS;
         // Frees the requested names from bots left over by earlier matches, so
@@ -1135,7 +1163,12 @@ export class GameSessionManager {
                         contest
                     );
                 }
-                await Promise.allSettled(this.active.participantIds.map(name =>
+                const reactors = pickWinnerReactionParticipants(
+                    this.active.participantIds,
+                    contest,
+                    this.random
+                );
+                await Promise.allSettled(reactors.map(name =>
                     this.sendDirective(
                         name,
                         buildWinnerReactionDirective(contest, name),

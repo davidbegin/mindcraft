@@ -44,6 +44,8 @@ test('detectProvider identifies the model maker, not the serving API', () => {
         ['claude-4-sonnet', 'anthropic'],
         ['gemini-2.5-pro', 'gemini'],
         ['gemma-3-27b', 'gemini'],
+        ['meta/muse-spark-1.2', 'meta'],
+        ['muse-spark-1.2', 'meta'],
         ['mistral-large', 'mistral'],
         ['mixtral-8x7b', 'mistral'],
         [{ api: 'groq', model: 'llama-3.3-70b' }, 'meta'],

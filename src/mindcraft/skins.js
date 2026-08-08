@@ -27,6 +27,7 @@ const MODEL_FAMILIES = [
     { match: /fable/i,    key: 'fable',    word: 'FABL', color: '#e2b6ff', mcColor: 'dark_purple' },
     { match: /grok/i,     key: 'grok',     word: 'GROK', color: '#1d9bf0', mcColor: 'blue' },
     { match: /gemini/i,   key: 'gemini',   word: 'GEM',  color: '#4285f4', mcColor: 'dark_aqua' },
+    { match: /muse|spark/i, key: 'muse',   word: 'MUSE', color: '#0668e1', mcColor: 'yellow' },
     { match: /kimi/i,     key: 'kimi',     word: 'KIMI', color: '#6f7bff', mcColor: 'dark_blue' },
     { match: /glm/i,      key: 'glm',      word: 'GLM',  color: '#2f9e44', mcColor: 'dark_green' },
 ];
@@ -39,7 +40,7 @@ const PROVIDER_PATTERNS = [
     [/claude|anthropic/i, 'anthropic'],
     [/gemini|gemma|palm|bard/i, 'gemini'],
     [/mistral|mixtral|codestral|ministral/i, 'mistral'],
-    [/llama|meta/i, 'meta'],
+    [/llama|muse|spark|meta/i, 'meta'],
     [/deepseek/i, 'deepseek'],
     [/qwen|qwq/i, 'qwen'],
     [/grok|xai/i, 'xai'],

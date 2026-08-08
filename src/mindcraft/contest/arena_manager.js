@@ -1,7 +1,7 @@
 import { runMinecraftCommand } from '../minecraft_server.js';
 import { modelInfo } from '../skins.js';
 import { buildDogRaceResetCommand } from './dog_race.js';
-import { HOT_BUTTON_PRESSED_TAG, pickHotButtonSafeIndex } from './hot_button.js';
+import { HOT_BUTTON_PRESSED_TAG, HOT_BUTTON_SAFE_TAG, HOT_BUTTON_WIN_ITEM, pickHotButtonSafeIndex } from './hot_button.js';
 import { diffAgainstKit, parseInventory } from './inventory_audit.js';
 
 const ARENA = Object.freeze({
@@ -44,12 +44,67 @@ const DEATH_RACE = Object.freeze({
 });
 
 // Hot Button seats pedestals on an inner ring; bots spawn on a wider ring so
-// they walk inward toward an unused station.
+// they walk inward toward an unused station. A wrong press dumps a huge short-
+// fuse TNT volley on the presser and force-kills everyone in the blast radius
+// so deaths are not left to flaky explosion damage.
 const HOT_BUTTON = Object.freeze({
     stationRadius: 10,
     spawnRadius: 18,
     pressedTag: HOT_BUTTON_PRESSED_TAG,
+    safeTag: HOT_BUTTON_SAFE_TAG,
+    winItem: HOT_BUTTON_WIN_ITEM,
+    // Instant detonation next tick — no time to walk away.
+    fuseTicks: 1,
+    // Overlapping vanilla TNT charges (power 4 each) stacked on the presser.
+    clusterSize: 16,
+    // Anyone this close to the presser is treated as caught in the blast.
+    killRadius: 10,
 });
+
+/**
+ * Command-block payload for a wrong button: tag the presser, bury them in
+ * primed TNT, then kill everyone in the blast radius (presser included). TNT
+ * alone was not reliably killing bots, so the kill is the lethal guarantee and
+ * the charges are the spectacle.
+ */
+export function hotButtonBoomCommands(station) {
+    const selector = `@p[x=${station.x},y=${ARENA.floorY},z=${station.z},distance=..5,limit=1,sort=nearest]`;
+    // Keep NBT minimal — custom explosion_power has been unreliable across builds.
+    const tntNbt = `{Fuse:${HOT_BUTTON.fuseTicks}}`;
+    const commands = [
+        `execute as ${selector} run tag @s add ${HOT_BUTTON.pressedTag}`,
+    ];
+    for (let index = 0; index < HOT_BUTTON.clusterSize; index += 1) {
+        const dx = ((index % 4) - 1.5) * 0.2;
+        const dz = (Math.floor(index / 4) - 1.5) * 0.2;
+        const dy = (index % 3) * 0.15;
+        commands.push(
+            `execute as ${selector} at @s run summon tnt ~${dx} ~${dy} ~${dz} ${tntNbt}`
+        );
+    }
+    commands.push(
+        `setblock ${station.tntX} ${ARENA.floorY - 1} ${station.tntZ} air`,
+        `summon tnt ${station.tntX} ${ARENA.floorY - 1} ${station.tntZ} ${tntNbt}`,
+        // Guaranteed deaths: explosion visuals above are not enough on their own.
+        `execute as ${selector} at @s run kill @a[distance=..${HOT_BUTTON.killRadius}]`,
+        `setblock ${station.buttonX} ${station.buttonY} ${station.buttonZ} air`
+    );
+    return commands;
+}
+
+/**
+ * Safe station: tag the presser, hand them the win item (instant contest win via
+ * the existing win-item watcher), clear the button.
+ */
+export function hotButtonSafeCommands(station) {
+    const selector = `@p[x=${station.x},y=${ARENA.floorY},z=${station.z},distance=..5,limit=1,sort=nearest]`;
+    return [
+        `execute as ${selector} run tag @s add ${HOT_BUTTON.pressedTag}`,
+        `execute as ${selector} run tag @s add ${HOT_BUTTON.safeTag}`,
+        `execute as ${selector} run give @s ${HOT_BUTTON.winItem} 1`,
+        `setblock ${station.buttonX} ${station.buttonY} ${station.buttonZ} air`,
+    ];
+}
 
 const CAKE_FARM_STATIONS = Object.freeze([
     Object.freeze({ dx: 0, dz: -23 }),
@@ -669,7 +724,10 @@ export function hotButtonStationLayout(participantCount, seed = 1) {
 
 export function addHotButtonStations(commands, participantCount, seed = 1) {
     const { safeIndex, stations } = hotButtonStationLayout(participantCount, seed);
-    commands.push(`tag @a remove ${HOT_BUTTON.pressedTag}`);
+    commands.push(
+        `tag @a remove ${HOT_BUTTON.pressedTag}`,
+        `tag @a remove ${HOT_BUTTON.safeTag}`
+    );
     for (const station of stations) {
         const { x, z, facing, buttonX, buttonY, buttonZ, plateX, plateZ, tntX, tntZ, safe } = station;
         const pedestalY = ARENA.floorY + 1;
@@ -684,20 +742,19 @@ export function addHotButtonStations(commands, participantCount, seed = 1) {
         if (!safe) {
             commands.push(`setblock ${tntX} ${ARENA.floorY - 1} ${tntZ} tnt`);
         }
-        const clearButton = `setblock ${buttonX} ${buttonY} ${buttonZ} air`;
-        const tagCommand = `execute as @p[x=${x},y=${ARENA.floorY},z=${z},distance=..5,limit=1,sort=nearest] run tag @s add ${HOT_BUTTON.pressedTag}`;
-        const boomCommand = `execute as @p[x=${x},y=${ARENA.floorY},z=${z},distance=..5,limit=1,sort=nearest] at @s run summon tnt ~ ~ ~ {Fuse:12}`;
         // Impulse under the pedestal; button on the face powers the stone above,
-        // which powers this block. Chain blocks finish the one-shot + boom.
-        commands.push(
-            `setblock ${x} ${cbY} ${z} command_block{Command:${JSON.stringify(tagCommand)},auto:0b}`,
-            `setblock ${x} ${cbY - 1} ${z} chain_command_block[facing=down]{Command:${JSON.stringify(safe ? clearButton : boomCommand)},auto:1b}`
-        );
-        if (!safe) {
+        // which powers this block. Every block faces down so the chain below
+        // actually runs — default facing (north) left the boom/win steps dead.
+        const chain = safe ? hotButtonSafeCommands(station) : hotButtonBoomCommands(station);
+        chain.forEach((command, index) => {
+            const block = index === 0
+                ? 'command_block[facing=down]'
+                : 'chain_command_block[facing=down]';
+            const auto = index === 0 ? '0b' : '1b';
             commands.push(
-                `setblock ${x} ${cbY - 2} ${z} chain_command_block[facing=down]{Command:${JSON.stringify(clearButton)},auto:1b}`
+                `setblock ${x} ${cbY - index} ${z} ${block}{Command:${JSON.stringify(command)},auto:${auto}}`
             );
-        }
+        });
     }
     return { safeIndex, stations };
 }
@@ -885,7 +942,9 @@ function buildWorldResetCommands(gameId, options = {}) {
         const seed = options.seed ?? randomSeed();
         commands.push(
             'gamerule doMobSpawning false',
-            'difficulty peaceful',
+            // Hard so any residual explosion damage bites; the kill command is
+            // still the real guarantee that wrong presses delete nearby bots.
+            'difficulty hard',
             ...flatFloorCommands(bounds)
         );
         addHotButtonStations(commands, participantCount, seed);
@@ -1473,6 +1532,8 @@ export class ContestArenaManager {
         // hundred RCON calls with nothing to show for them — so the caller gets
         // a running count instead of one unchanging line.
         const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+        // Hot Button must reshuffle the safe station every match. Tests may still
+        // pin a seed via options.seed for determinism.
         const seed = options.seed ?? randomSeed();
         const worldCommands = buildWorldResetCommands(preset.id, {
             seed,

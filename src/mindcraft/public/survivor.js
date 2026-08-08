@@ -14,6 +14,9 @@
     let join = null;
     let profiles = [];
     let agents = [];
+    let botModelLineups = [];
+    let botPersonas = [];
+    let defaultBotModelLineupId = 'variety';
     let secretEvents = [];
     let activeContest = null;
     let deckDraft = null;      // staged reorder, null while in sync with server
@@ -125,6 +128,11 @@
             if (Array.isArray(result.scenarios) && result.scenarios.length) {
                 scenarios = result.scenarios;
                 renderScenarios();
+            }
+            if (Array.isArray(result.botModelLineups)) botModelLineups = result.botModelLineups;
+            if (Array.isArray(result.botPersonas)) botPersonas = result.botPersonas;
+            if (result.defaultBotModelLineupId) {
+                defaultBotModelLineupId = result.defaultBotModelLineupId;
             }
             if (Array.isArray(result.secretEvents)) secretEvents = result.secretEvents;
             renderJoin();
@@ -1384,6 +1392,9 @@
             submitLabel: 'Start season',
             footer: options.footer
                 || `The roster persists through immunity challenges, Tribal Councils, and a final ${scenario?.finalistCount || 3} judged by the jury.`,
+            lineupId: options.profileId ? null : defaultBotModelLineupId,
+            preferredParticipantCount: Number(scenario?.castSize) || characters.length || 4,
+            hideModelLineup: Boolean(options.profileId),
             participants,
             duration: null,
             minParticipants: Number(scenario?.minimumPlayers) || 4,
@@ -1483,6 +1494,9 @@
     gameSetup = window.createGameSetup({
         socket,
         getProfiles: () => profiles,
+        getBotModelLineups: () => botModelLineups,
+        getBotPersonas: () => botPersonas,
+        getDefaultBotModelLineupId: () => defaultBotModelLineupId,
         getReservedNames: reservedNames,
         onStatus: setStatus,
         onBusyChange: () => updateStartButton(),

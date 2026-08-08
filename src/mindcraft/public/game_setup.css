@@ -44,6 +44,40 @@
     display: none;
 }
 
+.game-setup-lineup {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-inset);
+}
+
+.game-setup-lineup[hidden] {
+    display: none;
+}
+
+.game-setup-lineup label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+}
+
+.game-setup-lineup select {
+    width: min(420px, 100%);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 9px;
+    font: inherit;
+}
+
+.game-setup-lineup .games-sub {
+    margin: 8px 0 0;
+}
+
 .game-setup-teams label {
     display: flex;
     align-items: center;
@@ -233,6 +267,7 @@
 
 .game-setup-error.error {
     color: var(--red);
+    font-weight: 600;
 }
 
 .btn-preview {

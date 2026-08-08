@@ -245,7 +245,7 @@ export function buildParticipantGameDirective(
     } else if (isHotButton) {
         lines.push(
             `ACTIVE RIVALS: ${rivals.join(', ') || 'none'}.`,
-            'Walk to an unused stone button and press it. All but one station explode. Refusing to press loses at the buzzer.',
+            'Walk to an unused stone button and press it. All but one station explode — and the blast kills anyone nearby. The safe button wins the match the instant you press it. Refusing to press loses at the buzzer.',
             'The server starts !playHotButton for you automatically. Keep that action running until you explode, win, or time runs out.'
         );
     } else if (team.teamId && isCakeRace) {

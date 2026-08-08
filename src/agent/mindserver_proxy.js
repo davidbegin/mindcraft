@@ -197,6 +197,9 @@ class MindServerProxy {
                         async () => {
                             const pressed = await skills.playHotButton(this.agent.bot);
                             if (pressed) {
+                                // Give the station's command-block chain a tick to
+                                // tag / award the win item before the server checks.
+                                await new Promise(resolve => setTimeout(resolve, 250));
                                 await reportContestButtonPressed({ event: 'button_pressed' });
                             }
                             return pressed;

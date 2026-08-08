@@ -24,8 +24,8 @@ export {
 
 // Default cast = fixed personas + the variety model pack. Swap packs at game
 // setup via listBotModelLineups(); edit packs in bot_model_lineups.js.
-// Every variety seat is a different family at a quick effort (glm has no fast
-// preset, so Carl runs thorough). test/contest_game_presets.test.js checks ids.
+// Every variety seat is a different family at a quick effort (Carl runs Muse
+// Spark via OpenRouter). test/contest_game_presets.test.js checks ids.
 export const CONTEST_BOT_CHARACTERS = freezeCharacters(
     charactersForLineup(DEFAULT_BOT_MODEL_LINEUP_ID, {
         personas: CONTEST_BOT_PERSONAS,
@@ -46,9 +46,8 @@ export const SURVIVOR_EXTRA_CHARACTERS = freezeCharacters(
     })
 );
 
-// The canonical eleven-bot season cast: contest personas minus Carl/glm, plus
-// overflow four. glm stays contest-only — its cheapest preset is too slow for a
-// season seat.
+// The canonical eleven-bot season cast: contest personas minus Carl/Muse, plus
+// overflow four. Muse stays contest-only so Survivor seasons stay on Cursor billing.
 export const SURVIVOR_SEASON_CAST = freezeCharacters(
     charactersForLineup(DEFAULT_BOT_MODEL_LINEUP_ID, {
         personas: SURVIVOR_SEASON_PERSONAS,
@@ -151,11 +150,11 @@ export const SURVIVOR_SIX_PLAYER_PRESET = Object.freeze({
         juryVoting: 45_000,
     }),
     challengeGameIds: Object.freeze([
-        'team_tower_battle',
-        'deepest_2_5',
-        'tower_battle',
         'cake_race',
+        'team_base_siege',
         'spleef',
+        'diamond_race',
+        'death_race',
     ]),
 });
 
@@ -390,16 +389,17 @@ export const CONTEST_GAME_PRESETS = Object.freeze({
     hot_button: Object.freeze({
         id: 'hot_button',
         title: 'Hot Button',
-        blurb: 'One button per player. All but one explode. Press or chicken out — last survivor who pressed wins.',
+        blurb: 'One button per player. All but one explode. Find the safe one and you win instantly.',
         durationLabel: '3 min cap',
         durationMs: 3 * 60_000,
         prompt:
-            'CONTEST: Hot Button. There is exactly one stone button station per competitor arranged in a ring. Every station looks the same: a button wired to a pressure plate and TNT. Exactly ONE station is safe. Every other button blows you up and eliminates you for good. Each button is one-shot — once someone presses it, it is gone, so never share a station.'
-            + '\n\nTHE WHOLE POINT: walk up, pick an unused button, and press it. Courage is mandatory. If you refuse to press before the timer ends, you lose as a chicken even if everyone else exploded. The winner is the last competitor who pressed a button and is still alive — almost always whoever found the safe station.'
+            'CONTEST: Hot Button. There is exactly one stone button station per competitor arranged in a ring. Every station looks the same: a button wired to a pressure plate and TNT. Exactly ONE station is safe, and which one is safe is freshly randomized every match. Every other button blows you up — and anyone standing nearby — and eliminates you for good. Each button is one-shot — once someone presses it, it is gone, so never share a station.'
+            + '\n\nTHE WHOLE POINT: walk up, pick an unused button, and press it. The competitor who finds and presses the SAFE button wins the match instantly. If you refuse to press before the timer ends, you lose as a chicken.'
             + '\n\nDo not dig, build, fight, place blocks, or mess with redstone. PVP is off. Weakness is active. Say your chosen station strategy once in one short sentence, then press. The server starts !playHotButton automatically at the opening bell; keep that action running until you explode, win, or the buzzer sounds.',
         rules: Object.freeze({
             type: 'hot_button',
             scoring: 'last-standing',
+            winItem: 'nether_star',
         }),
         metadata: Object.freeze({
             arena: 'hot-button-v1',

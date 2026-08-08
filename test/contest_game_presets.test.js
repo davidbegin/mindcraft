@@ -48,12 +48,12 @@ test('lists the starter contest games for the UI', () => {
         [
             { name: 'Billy', profileId: 'grok-4-5-fast' },
             { name: 'Kimmy', profileId: 'kimi-k3-fast' },
-            { name: 'Marcus', profileId: 'gemini-3-1-pro' },
+            { name: 'Marcus', profileId: 'gemini-3-6-flash' },
             { name: 'Dario', profileId: 'claude-fable-5-fast' },
             { name: 'ChipChipperson', profileId: 'gpt-5-6-luna-instant' },
             { name: 'bridget', profileId: 'composer-2-5' },
             { name: 'Leviticus', profileId: 'gpt-5-6-terra-fast' },
-            { name: 'Carl', profileId: 'glm-5-2-thorough' },
+            { name: 'Carl', profileId: 'meta-muse-spark-1-2' },
         ]
     );
     assert.equal(tower.defaultCharacters[3].voice, 'Timmy');
@@ -86,11 +86,8 @@ test('every default character runs on a different model family at a quick effort
         families.add(profile.family);
 
         const effort = Object.values(profile.profile.model.params || {})[0] || null;
-        // glm ships no fast/low preset, so its cheapest option (thorough / high) is
-        // the quickest it offers and still counts as a quick default.
-        const quickEfforts = profile.family === 'glm'
-            ? [null, 'none', 'low', 'high']
-            : [null, 'none', 'low'];
+        // Muse has no effort dial; null is the quick single-shot profile.
+        const quickEfforts = [null, 'none', 'low'];
         assert.ok(
             quickEfforts.includes(effort),
             `${character.name} runs ${profile.model}, which is too slow for a default chat bot`
@@ -122,10 +119,9 @@ test('Survivor seats a named character in every one of its eleven slots', () => 
         ]
     );
     // The contest characters lead, so a smaller season still opens with the cast
-    // the games dashboard uses -- minus glm, which has no quick-effort preset and
-    // never takes a Survivor seat.
+    // the games dashboard uses -- minus Muse/Carl, which stays contest-only.
     const survivorContestCast = CONTEST_BOT_CHARACTERS.filter(
-        character => character.profileId !== 'glm-5-2-thorough'
+        character => character.profileId !== 'meta-muse-spark-1-2'
     );
     assert.deepEqual(
         survivor.defaultCharacters.slice(0, survivorContestCast.length),
@@ -137,11 +133,11 @@ test('Survivor seats a named character in every one of its eleven slots', () => 
 
 test('the overflow season characters are distinct, voiced, and quick', () => {
     const profiles = new Map(getCursorProfiles().map(profile => [profile.id, profile]));
-    // glm never joins a Survivor season, so it can share a voice (Nawlins) with an
+    // Muse/Carl never joins a Survivor season, so Nawlins can be reused by an
     // overflow character; only the contest characters that actually take seats need
     // to stay distinct from the overflow cast.
     const survivorContestCast = CONTEST_BOT_CHARACTERS.filter(
-        character => character.profileId !== 'glm-5-2-thorough'
+        character => character.profileId !== 'meta-muse-spark-1-2'
     );
     const names = new Set(survivorContestCast.map(character => character.name));
     const voices = new Set(survivorContestCast.map(character => character.voice));
@@ -201,6 +197,13 @@ test('the six-player scenario runs two tribes into a four-person jury', () => {
         six.defaultCharacters.map(character => character.name),
         ['Billy', 'Kimmy', 'Marcus', 'Dario', 'ChipChipperson', 'bridget']
     );
+    assert.deepEqual(six.challengeGameIds, [
+        'cake_race',
+        'team_base_siege',
+        'spleef',
+        'diamond_race',
+        'death_race',
+    ]);
 });
 
 test('scenarios are listed for the operator UI and unknown ids throw', () => {
@@ -372,9 +375,10 @@ test('contest presets include game-specific rules and judge metrics', () => {
     assert.equal(hotButton.rules.scoring, 'last-standing');
     assert.equal(hotButton.durationMs, 180_000);
     assert.equal(hotButton.metadata.pvp, false);
-    assert.match(hotButton.prompt, /exactly ONE station is safe/i);
-    assert.match(hotButton.prompt, /chicken/i);
+    assert.match(hotButton.prompt, /freshly randomized every match/i);
+    assert.match(hotButton.prompt, /wins the match instantly/i);
     assert.match(hotButton.prompt, /!playHotButton/i);
+    assert.equal(hotButton.rules.winItem, 'nether_star');
 });
 
 test('unknown contest game ids throw', () => {

@@ -47,7 +47,7 @@ export class Gemini {
         }
 
         const result = await this.genAI.models.generateContent({
-            model: this.model_name || "gemini-2.5-flash",
+            model: this.model_name || "gemini-3.6-flash",
             contents: contents,
             safetySettings: this.safetySettings,
             config: {

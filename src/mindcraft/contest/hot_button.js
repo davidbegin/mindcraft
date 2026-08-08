@@ -3,6 +3,9 @@
  * who beat anyone eliminated by an exploding station.
  */
 export const HOT_BUTTON_PRESSED_TAG = 'hot_button_pressed';
+export const HOT_BUTTON_SAFE_TAG = 'hot_button_safe';
+/** Given only by the safe station; triggers an instant contest win. */
+export const HOT_BUTTON_WIN_ITEM = 'nether_star';
 
 export function remainingHotButtonSurvivors(contest) {
     if (!contest || !Array.isArray(contest.participantIds)) return [];
@@ -99,11 +102,15 @@ export function scoreHotButton(contest, options = {}, now = Date.now()) {
 }
 
 /**
- * Pick which station index is the safe (non-TNT) one for a given seed and count.
+ * Pick which station index is the safe (non-TNT) one. With a seed the pick is
+ * deterministic for tests; without one it is freshly random every call.
  */
 export function pickHotButtonSafeIndex(participantCount, seed) {
     const count = Math.max(1, Math.floor(participantCount) || 1);
-    let state = (seed >>> 0) || 1;
+    if (seed == null || !Number.isFinite(Number(seed))) {
+        return Math.floor(Math.random() * count);
+    }
+    let state = (Number(seed) >>> 0) || 1;
     state = (state + 0x6d2b79f5) >>> 0;
     let value = state;
     value = Math.imul(value ^ (value >>> 15), value | 1);

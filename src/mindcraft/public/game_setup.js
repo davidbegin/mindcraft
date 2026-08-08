@@ -195,8 +195,24 @@
             return names;
         }
 
-        function setError(message) {
-            el('error').textContent = message || '';
+        function setError(message, { scroll = false } = {}) {
+            const node = el('error');
+            node.textContent = message || '';
+            node.classList.toggle('error', Boolean(message));
+            // Validation messages live at the bottom of a tall roster; bring them
+            // into view and mirror into the always-visible footer so Start does
+            // not look like a silent no-op.
+            if (message && scroll) {
+                node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                el('footer').textContent = message;
+            }
+        }
+
+        function logSetup(level, message, detail) {
+            const line = `[game-setup] ${message}`;
+            if (level === 'error') console.error(line, detail ?? '');
+            else if (level === 'warn') console.warn(line, detail ?? '');
+            else console.info(line, detail ?? '');
         }
 
         function setVoiceStatus(message, isError = false) {
@@ -225,8 +241,7 @@
             const lineup = findLineup(lineupId);
             const personas = getBotPersonas();
             if (!lineup?.profileIds?.length || !personas.length) return null;
-            const profileIds = lineup.profileIds;
-            let total = Number.isFinite(count) && count > 0 ? Math.floor(count) : profileIds.length;
+            let total = Number.isFinite(count) && count > 0 ? Math.floor(count) : lineup.profileIds.length;
             if (config?.minParticipants && total < config.minParticipants) {
                 total = config.minParticipants;
             }
@@ -234,6 +249,10 @@
                 total = config.maxParticipants;
             }
             if (total > personas.length) total = personas.length;
+            // Survivor's variety pack drops glm and adds four overflow models.
+            const profileIds = total >= 11 && lineup.survivorProfileIds?.length
+                ? lineup.survivorProfileIds
+                : lineup.profileIds;
             return Array.from({ length: total }, (_, index) => {
                 const persona = personas[index];
                 return {
@@ -246,10 +265,17 @@
         }
 
         function applySelectedLineup({ preserveCount = false } = {}) {
-            // Pack length is the showcase size; only pad when the game requires more
-            // seats (team minimum / Survivor cast). preserveCount keeps the current
-            // roster size when re-applying after a manual add/remove.
-            const count = preserveCount ? participants.length : null;
+            // Pack length is the showcase size; cake/tower prefer a shorter variety
+            // cast via preferredParticipantCount. Team/Survivor mins still pad up.
+            let count = null;
+            if (preserveCount) {
+                count = participants.length;
+            } else if (
+                selectedLineupId === getDefaultBotModelLineupId()
+                && Number.isFinite(config?.preferredParticipantCount)
+            ) {
+                count = config.preferredParticipantCount;
+            }
             const characters = charactersFromLineup(selectedLineupId, count);
             if (!characters?.length) return false;
             participants = defaultParticipantsFor(characters, characters.length);
@@ -266,7 +292,7 @@
             const row = el('lineupRow');
             const select = el('lineupSelect');
             const blurb = el('lineupBlurb');
-            if (!lineups.length) {
+            if (!lineups.length || config?.hideModelLineup) {
                 row.hidden = true;
                 return;
             }
@@ -528,8 +554,15 @@
 
         function fieldValues() {
             const values = {};
-            for (const input of el('fields').querySelectorAll('input[data-field-id]')) {
-                values[input.dataset.fieldId] = Number(input.value);
+            // Number fields are <input>; Spleef's best-of (and any future enums)
+            // are <select>. Skipping selects made Start fail validation with a
+            // message buried under the roster.
+            for (const input of el('fields').querySelectorAll('[data-field-id]')) {
+                const raw = input.value;
+                const asNumber = Number(raw);
+                values[input.dataset.fieldId] = Number.isFinite(asNumber) && raw !== ''
+                    ? asNumber
+                    : raw;
             }
             return values;
         }
@@ -628,43 +661,74 @@
         }
 
         function submit() {
-            if (busy) return;
+            if (busy) {
+                const message = 'A launch is already in progress — watch the Games page, or wait for it to finish or fail.';
+                logSetup('warn', 'Start ignored: launch already busy');
+                setError(message, { scroll: true });
+                onStatus(message, true);
+                return;
+            }
             const alreadyLaunching = getLaunchInProgress();
             if (alreadyLaunching) {
-                setError(alreadyLaunching);
+                logSetup('warn', 'Start refused: arena busy', alreadyLaunching);
+                setError(alreadyLaunching, { scroll: true });
                 onStatus(alreadyLaunching, true);
                 return;
             }
+            const fields = fieldValues();
             const problem = validate();
             if (problem) {
-                setError(problem);
+                logSetup('warn', `Start blocked by validation: ${problem}`, { fields });
+                setError(problem, { scroll: true });
                 return;
             }
-            const submittedTeamNames = config.teams
-                ? teamNames.map(name => name.trim())
-                : null;
-            const request = config.buildRequest({
-                participants: participants.map(({ profileId, name, voice, systemPrompt, team }) => ({
-                    profileId,
-                    name,
-                    voice: voice || null,
-                    systemPrompt: String(systemPrompt || '').trim(),
-                    ...(config.teams ? {
-                        team: submittedTeamNames[teamNames.indexOf(team)] || String(team || '').trim(),
-                    } : {}),
-                })),
-                systemPrompt: String(el('systemPrompt').value || '').trim(),
-                durationMs: Number(el('durationInput').value) * 60_000,
-                fields: fieldValues(),
-                teamNames: submittedTeamNames,
-                recordingEnabled: el('recordingEnabled').checked,
-                autoRecordingEnabled: el('autoRecordingEnabled').checked,
-            });
+            let request;
+            try {
+                const submittedTeamNames = config.teams
+                    ? teamNames.map(name => name.trim())
+                    : null;
+                request = config.buildRequest({
+                    participants: participants.map(({ profileId, name, voice, systemPrompt, team }) => ({
+                        profileId,
+                        name,
+                        voice: voice || null,
+                        systemPrompt: String(systemPrompt || '').trim(),
+                        ...(config.teams ? {
+                            team: submittedTeamNames[teamNames.indexOf(team)] || String(team || '').trim(),
+                        } : {}),
+                    })),
+                    systemPrompt: String(el('systemPrompt').value || '').trim(),
+                    durationMs: Number(el('durationInput').value) * 60_000,
+                    fields,
+                    teamNames: submittedTeamNames,
+                    recordingEnabled: el('recordingEnabled').checked,
+                    autoRecordingEnabled: el('autoRecordingEnabled').checked,
+                });
+            } catch (error) {
+                const message = error?.message || 'Could not build the start request';
+                logSetup('error', 'buildRequest failed', error);
+                setError(message, { scroll: true });
+                onStatus(message, true);
+                return;
+            }
+            if (!request?.event) {
+                const message = 'Game setup did not produce a start event';
+                logSetup('error', message, request);
+                setError(message, { scroll: true });
+                onStatus(message, true);
+                return;
+            }
             const started = config;
 
             setBusy(true);
             setError('');
             el('debug').hidden = true;
+            logSetup('info', `Emitting ${request.event}`, {
+                gameId: request.payload?.gameId,
+                participants: request.payload?.participants?.length,
+                fields,
+                timeoutMs: START_TIMEOUT_MS + Math.max(0, Number(request.extraTimeoutMs) || 0),
+            });
             onStatus('Provisioning temporary contest bots…');
             el('footer').textContent = 'Starting… creating temporary contest bots.';
             // A launch takes minutes, and the page behind reports its progress, so
@@ -677,7 +741,10 @@
             const timeoutMs = START_TIMEOUT_MS + Math.max(0, Number(request.extraTimeoutMs) || 0);
             const launchToken = ++launchId;
             socket.timeout(timeoutMs).emit(request.event, request.payload, (err, result) => {
-                if (launchToken !== launchId) return;
+                if (launchToken !== launchId) {
+                    logSetup('info', 'Ignoring stale launch ack', { launchToken, launchId });
+                    return;
+                }
                 if (err) {
                     // Our ack window closing does not stop the launch, and the
                     // page behind us is already streaming the real stage-by-stage
@@ -686,13 +753,15 @@
                     // socket means no answer is coming.
                     if (socket.connected) {
                         const waiting = 'Still launching — MindServer has not answered yet. Watch the launch progress; the roster returns if it fails.';
+                        logSetup('warn', 'Start ack timed out; socket still connected — waiting on server progress', err);
                         onStatus(waiting);
                         el('footer').textContent = waiting;
                         return;
                     }
                     setBusy(false);
                     const message = 'MindServer did not respond. Copy the debug report for Cursor if one is available.';
-                    setError(message);
+                    logSetup('error', 'Start failed: socket disconnected before ack', err);
+                    setError(message, { scroll: true });
                     onStatus(message, true);
                     el('footer').textContent = 'Lost contact with MindServer.';
                     reopenAfterFailure();
@@ -702,7 +771,11 @@
                 setBusy(false);
                 if (!result?.success) {
                     const message = result?.error || 'Failed to start the game';
-                    setError(message);
+                    logSetup('error', `Start rejected: ${message}`, {
+                        launchRefused: result?.launchRefused,
+                        hasReport: Boolean(result?.report),
+                    });
+                    setError(message, { scroll: true });
                     onStatus(message, true);
                     reopenAfterFailure();
                     // Being refused because something already owns the arena is
@@ -717,6 +790,10 @@
                     else fetchLastReport();
                     return;
                 }
+                logSetup('info', 'Start acknowledged', {
+                    contestId: result.data?.contest?.id,
+                    sessionId: result.data?.gameSession?.id,
+                });
                 close();
                 started.onStarted?.(result);
             });

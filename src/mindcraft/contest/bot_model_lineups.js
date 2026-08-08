@@ -94,8 +94,8 @@ export const ALL_BOT_PERSONAS = Object.freeze([
 ]);
 
 /**
- * Survivor seats eleven quick bots: contest cast minus Carl (glm has no fast
- * preset), then the four overflow personas.
+ * Survivor seats eleven quick bots: contest cast minus Carl (openrouter Muse
+ * seat — keep seasons on Cursor-billed models), then the four overflow personas.
  */
 export const SURVIVOR_SEASON_PERSONAS = Object.freeze([
     ...CONTEST_BOT_PERSONAS.filter(persona => persona.name !== 'Carl'),
@@ -114,12 +114,12 @@ export const BOT_MODEL_LINEUPS = Object.freeze({
         profileIds: Object.freeze([
             'grok-4-5-fast',
             'kimi-k3-fast',
-            'gemini-3-1-pro',
+            'gemini-3-6-flash',
             'claude-fable-5-fast',
             'gpt-5-6-luna-instant',
             'composer-2-5',
             'gpt-5-6-terra-fast',
-            'glm-5-2-thorough',
+            'meta-muse-spark-1-2',
         ]),
     }),
     opus: Object.freeze({
@@ -176,16 +176,16 @@ export const BOT_MODEL_LINEUPS = Object.freeze({
     usa: Object.freeze({
         id: 'usa',
         title: 'USA models',
-        blurb: 'US labs only: OpenAI, Anthropic, Google, xAI, and Cursor.',
+        blurb: 'US labs only: OpenAI, Anthropic, Google, Meta, xAI, and Cursor.',
         profileIds: Object.freeze([
             'gpt-5-6-luna-fast',
             'claude-fable-5-fast',
-            'gemini-3-1-pro',
+            'gemini-3-6-flash',
             'grok-4-5-fast',
             'composer-2-5',
+            'meta-muse-spark-1-2',
             'gpt-5-6-terra-fast',
             'claude-opus-5-fast',
-            'gpt-5-6-sol-fast',
         ]),
     }),
     fast: Object.freeze({
@@ -197,10 +197,10 @@ export const BOT_MODEL_LINEUPS = Object.freeze({
             'grok-4-5-fast',
             'gpt-5-6-luna-instant',
             'claude-fable-5-fast',
-            'gemini-3-1-pro',
+            'gemini-3-6-flash',
             'kimi-k3-fast',
+            'meta-muse-spark-1-2',
             'gpt-5-6-terra-instant',
-            'glm-5-2-thorough',
             'gpt-5-6-sol-instant',
             'claude-opus-5-fast',
         ]),
@@ -237,13 +237,13 @@ export const BOT_MODEL_LINEUPS = Object.freeze({
 });
 
 /**
- * Variety pack profile ids for Survivor: contest variety without glm, then the
- * four overflow quick presets (luna/terra/sol/opus) that fill seats 8–11.
+ * Variety pack profile ids for Survivor: contest variety without Muse (Carl's
+ * openrouter seat), then the four overflow quick presets that fill seats 8–11.
  */
 export function survivorVarietyProfileIds() {
     const contest = BOT_MODEL_LINEUPS.variety.profileIds;
     return Object.freeze([
-        ...contest.filter(id => id !== 'glm-5-2-thorough'),
+        ...contest.filter(id => id !== 'meta-muse-spark-1-2'),
         'gpt-5-6-luna-fast',
         'gpt-5-6-terra-instant',
         'gpt-5-6-sol-instant',
@@ -258,6 +258,10 @@ export function getBotModelLineup(lineupId = DEFAULT_BOT_MODEL_LINEUP_ID) {
         title: lineup.title,
         blurb: lineup.blurb,
         profileIds: [...lineup.profileIds],
+        // Variety's eleven-seat Survivor list drops Muse and adds the overflow four.
+        ...(lineup.id === 'variety'
+            ? { survivorProfileIds: [...survivorVarietyProfileIds()] }
+            : {}),
     };
 }
 

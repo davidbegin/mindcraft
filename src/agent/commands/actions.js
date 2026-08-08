@@ -1,6 +1,7 @@
 import * as skills from '../library/skills.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
+import { reportContestButtonPressed } from '../mindserver_proxy.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -125,7 +126,14 @@ export const actionsList = [
         description: 'Hot Button: walk to an unused stone button station and press it once. Most stations explode; one is safe. Use this for the entire Hot Button match.',
         params: {},
         perform: runAsAction(async (agent) => {
-            await skills.playHotButton(agent.bot);
+            const pressed = await skills.playHotButton(agent.bot);
+            if (pressed && settings.game_session?.contestType === 'hot_button') {
+                await new Promise(resolve => setTimeout(resolve, 250));
+                await reportContestButtonPressed({ event: 'button_pressed' }).catch(error => {
+                    if (/not accepting|deadline|already finished/i.test(error.message)) return;
+                    console.error(`[${agent.name}] Could not report Hot Button press:`, error.message);
+                });
+            }
         }, false, 3)
     },
     {

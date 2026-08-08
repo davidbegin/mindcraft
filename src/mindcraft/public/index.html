@@ -2583,6 +2583,9 @@
         let contestState = null;
         let contestGames = [];
         let contestGamesError = '';
+        let botModelLineups = [];
+        let botPersonas = [];
+        let defaultBotModelLineupId = 'variety';
         let contestBusy = false;
         let contestJoin = null;
         let survivorState = null;
@@ -3274,6 +3277,11 @@
                 if (Array.isArray(result?.games) && result.games.length) {
                     contestGames = result.games;
                     contestGamesError = '';
+                    if (Array.isArray(result.botModelLineups)) botModelLineups = result.botModelLineups;
+                    if (Array.isArray(result.botPersonas)) botPersonas = result.botPersonas;
+                    if (result.defaultBotModelLineupId) {
+                        defaultBotModelLineupId = result.defaultBotModelLineupId;
+                    }
                 } else if (!result?.success) {
                     contestGamesError = result?.error || 'Contest coordinator unavailable';
                 }
@@ -4469,6 +4477,9 @@
         const gameSetup = window.createGameSetup({
             socket,
             getProfiles: () => availableProfiles,
+            getBotModelLineups: () => botModelLineups,
+            getBotPersonas: () => botPersonas,
+            getDefaultBotModelLineupId: () => defaultBotModelLineupId,
             // A name belongs to a bot only while that bot is online. Leftovers
             // from finished matches are replaced automatically, so a roster can
             // always be replayed with the same names.
@@ -4542,6 +4553,8 @@
                 gameId,
                 title: `Set up ${game?.title || gameId}`,
                 footer: 'After the match, bots remain on their podiums for at least five minutes and wait for the next game.',
+                lineupId: defaultBotModelLineupId,
+                preferredParticipantCount: defaultCount,
                 participants: gameSetup.defaultParticipantsFor(
                     game?.defaultCharacters,
                     defaultCount

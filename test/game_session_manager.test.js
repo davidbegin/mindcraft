@@ -11,6 +11,7 @@ import {
 import { ContestCoordinator } from '../src/mindcraft/contest/contest_coordinator.js';
 import {
     GameSessionManager,
+    pickWinnerReactionParticipants,
     resolveBuildPhaseMs,
     resolvePlanningMs,
     validateGameParticipants,
@@ -265,7 +266,72 @@ test('provisions, records, and holds competitors on podiums until cleanup', asyn
         assert.ok(stopIndex < highlightIndex, 'highlight encoding starts after recordings are finalized');
         assert.ok(highlightIndex < destroyIndex, 'highlight job is queued before temporary agents are destroyed');
         assert.ok(stopIndex < destroyIndex, 'recording stops before temporary agents are destroyed');
-    });
+    // Force two reactors so this ceremony still covers winner + rival speech.
+    }, { random: () => 0.9 });
+});
+
+test('pickWinnerReactionParticipants keeps win reactions to one or two voices', () => {
+    assert.deepEqual(
+        pickWinnerReactionParticipants([], { winnerIds: ['speedy'] }),
+        []
+    );
+    assert.deepEqual(
+        pickWinnerReactionParticipants(['speedy'], { winnerIds: ['speedy'] }, () => 0),
+        ['speedy']
+    );
+    assert.deepEqual(
+        pickWinnerReactionParticipants(
+            ['speedy', 'thinker', 'builder', 'miner'],
+            { winnerIds: ['speedy'] },
+            () => 0.1
+        ),
+        ['speedy']
+    );
+    assert.deepEqual(
+        pickWinnerReactionParticipants(
+            ['speedy', 'thinker', 'builder', 'miner'],
+            { winnerIds: ['speedy'] },
+            () => 0.9
+        ),
+        ['speedy', 'thinker']
+    );
+    assert.deepEqual(
+        pickWinnerReactionParticipants(
+            ['thinker', 'builder', 'miner'],
+            { winnerIds: ['ghost'] },
+            () => 0.9
+        ),
+        ['thinker', 'builder']
+    );
+});
+
+test('only one or two competitors react when a larger cast finishes', async () => {
+    await withManager(async ({ manager, coordinator, calls }) => {
+        await manager.start({
+            gameId: 'tower',
+            participants: [
+                { profileId: 'fast', name: 'speedy' },
+                { profileId: 'smart', name: 'thinker' },
+                { profileId: 'fast', name: 'builder' },
+                { profileId: 'smart', name: 'miner' },
+            ],
+        });
+        await coordinator.submit('game-1', 'speedy', {});
+        await coordinator.submit('game-1', 'thinker', {});
+        await coordinator.submit('game-1', 'builder', {});
+        await coordinator.submit('game-1', 'miner', {});
+        await manager.syncWithContestView(coordinator.view());
+
+        const reactions = calls.filter(
+            ([type, , , options]) => type === 'directive' && options?.react === true
+        );
+        assert.equal(reactions.length, 1);
+        assert.ok(
+            ['speedy', 'thinker', 'builder', 'miner'].includes(reactions[0][1]),
+            'the reactor is one of the competitors'
+        );
+        assert.match(reactions[0][2], /one excited, natural sentence/i);
+    }, { random: () => 0.1 });
 });
 
 test('keeps recording off by default and can arm action clips without full cameras', async () => {
@@ -1254,7 +1320,7 @@ test('Hot Button directives start the automatic press action', () => {
     );
     assert.match(directive, /ACTIVE RIVALS: speedy, miner/);
     assert.match(directive, /starts !playHotButton for you automatically/);
-    assert.match(directive, /Refusing to press loses/);
+    assert.match(directive, /safe button wins the match the instant/i);
     assert.doesNotMatch(directive, /!startConversation/);
 });
 

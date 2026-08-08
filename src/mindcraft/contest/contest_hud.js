@@ -39,8 +39,8 @@ const ITEM_RACE_PRESENTATIONS = Object.freeze({
         titleColor: 'aqua',
     }),
     hot_button: Object.freeze({
-        score: 'last standing',
-        winnerLabel: 'LAST STANDING!',
+        score: 'safe button',
+        winnerLabel: 'SAFE BUTTON!',
         titleColor: 'gold',
     }),
 });

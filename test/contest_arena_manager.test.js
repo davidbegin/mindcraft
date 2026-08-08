@@ -399,7 +399,7 @@ test('contest teams from an earlier match are removed before the next one', () =
     buildContestTeamCommands(['alice', 'bob'], options);
     const commands = buildContestTeamCommands(['alice', 'bob'], {
         ...options,
-        modelByParticipant: { alice: 'grok-4.5', bob: 'gemini-3.1-pro' },
+        modelByParticipant: { alice: 'grok-4.5', bob: 'gemini-3.6-flash' },
     });
 
     assert.ok(commands.includes('team remove mcgame_1_kimik3'));

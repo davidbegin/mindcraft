@@ -33,18 +33,20 @@ test('generates every family and supported effort combination', () => {
     }
 
     for (const profile of profiles) {
-        assert.equal(profile.provider, 'cursor');
-        assert.ok(
-            CURSOR_FAMILIES.some(family =>
-                family.id === profile.family && family.model === profile.profile.model.model
-            ),
-            `${profile.id} is not tagged with its model family`
+        const family = CURSOR_FAMILIES.find(candidate =>
+            familyMatch(candidate, profile)
         );
-        assert.equal(profile.profile.model.api, 'cursor');
+        assert.ok(family, `${profile.id} is not tagged with its model family`);
+        assert.equal(profile.provider, family.provider || 'cursor');
+        assert.equal(profile.profile.model.api, family.api || 'cursor');
         assert.equal(profile.profile.name, profile.name);
         assert.ok(profile.name.length <= 16, `${profile.name} exceeds Minecraft's name limit`);
     }
 });
+
+function familyMatch(family, profile) {
+    return family.id === profile.family && family.model === profile.profile.model.model;
+}
 
 test('offers every Cursor model family the bots can be run on', () => {
     const models = new Set(getCursorProfiles().map(profile => profile.profile.model.model));
@@ -56,7 +58,8 @@ test('offers every Cursor model family the bots can be run on', () => {
         'claude-opus-5',
         'claude-fable-5',
         'grok-4.5',
-        'gemini-3.1-pro',
+        'gemini-3.6-flash',
+        'meta/muse-spark-1.2',
         'gpt-5.6-terra',
     ]) {
         assert.ok(models.has(model), `${model} is not offered as a profile`);
@@ -75,7 +78,8 @@ test('keeps the profile ids that contest presets and saved colonies reference', 
         'claude-fable-5-fast',
         'grok-4-5-fast',
         'kimi-k3-fast',
-        'gemini-3-1-pro',
+        'gemini-3-6-flash',
+        'meta-muse-spark-1-2',
         'composer-2-5',
     ]) {
         assert.ok(ids.has(id), `${id} no longer resolves to a profile`);
@@ -129,12 +133,24 @@ test('offers the cheap, quick model families before the expensive ones', () => {
             'grok-4-5-fast',
             'gpt-5-6-luna-instant',
             'claude-fable-5-fast',
-            'gemini-3-1-pro',
+            'gemini-3-6-flash',
             'kimi-k3-fast',
             'gpt-5-6-terra-instant',
+            'meta-muse-spark-1-2',
             'glm-5-2-thorough',
             'gpt-5-6-sol-instant',
             'claude-opus-5-fast',
         ]
     );
+});
+
+test('routes Muse Spark through OpenRouter until Cursor ships it', () => {
+    const muse = getCursorProfiles().find(profile => profile.id === 'meta-muse-spark-1-2');
+
+    assert.equal(muse.name, 'muse');
+    assert.equal(muse.provider, 'openrouter');
+    assert.deepEqual(muse.profile.model, {
+        api: 'openrouter',
+        model: 'meta/muse-spark-1.2',
+    });
 });

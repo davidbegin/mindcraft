@@ -47,6 +47,7 @@ import {
     listSurvivorScenarios,
     ALL_BOT_PERSONAS,
     DEFAULT_BOT_MODEL_LINEUP_ID,
+    SURVIVOR_SEASON_PERSONAS,
     safeHighlightSessionId,
     contestHasTeamSession,
     formatCakeRaceBossbarSummary,
@@ -58,6 +59,8 @@ import {
     scoreTeamFirstFinish,
     scoreHotButton,
     HOT_BUTTON_PRESSED_TAG,
+    HOT_BUTTON_SAFE_TAG,
+    HOT_BUTTON_WIN_ITEM,
     measureTeamTowerBattle,
     scoreTeamTowerBattle,
     scoreTowerBattle,
@@ -1322,6 +1325,37 @@ async function collectHotButtonPressedTags(participantIds = []) {
         }
     }
     return pressed;
+}
+
+async function detectHotButtonSafePress(playerName, winItem = HOT_BUTTON_WIN_ITEM) {
+    const delaysMs = [0, 150, 350, 700];
+    for (const delayMs of delaysMs) {
+        if (delayMs > 0) {
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+        try {
+            const tagList = await runMinecraftCommand(`tag ${playerName} list`);
+            if (String(tagList || '').includes(HOT_BUTTON_SAFE_TAG)) {
+                return true;
+            }
+        } catch {
+            // Keep trying — the player may still be mid-tag.
+        }
+        if (winItem) {
+            try {
+                const inventory = await runMinecraftCommand(
+                    `data get entity ${playerName} Inventory`
+                );
+                if (String(inventory || '').includes(`minecraft:${winItem}`)
+                    || String(inventory || '').includes(`"${winItem}"`)) {
+                    return true;
+                }
+            } catch {
+                // Inventory read can fail if the bot just died on a boom station.
+            }
+        }
+    }
+    return false;
 }
 
 async function judgeContest(contest) {
@@ -2655,7 +2689,7 @@ export function createMindServer(host_public = false, port = 8080) {
                     scenarios: listSurvivorScenarios(),
                     games: listContestGamePresets(),
                     botModelLineups: listBotModelLineups(),
-                    botPersonas: ALL_BOT_PERSONAS.map(persona => ({ ...persona })),
+                    botPersonas: SURVIVOR_SEASON_PERSONAS.map(persona => ({ ...persona })),
                     defaultBotModelLineupId: DEFAULT_BOT_MODEL_LINEUP_ID,
                     join: getMinecraftJoinInfo(),
                     // Backfill for the operator feed: survivor-secret-event only
@@ -3154,11 +3188,20 @@ export function createMindServer(host_public = false, port = 8080) {
                 if (active.rules?.type !== 'hot_button') {
                     throw new Error('The active contest does not track button presses');
                 }
+                const winItem = active.rules?.winItem || HOT_BUTTON_WIN_ITEM;
+                // Command blocks run a tick after activateBlock; retry briefly so a
+                // safe press is not recorded as a chicken before tags/items land.
+                let pressedSafe = request?.safe === true;
+                if (!pressedSafe) {
+                    pressedSafe = await detectHotButtonSafePress(connection.name, winItem);
+                }
                 const data = await contestCoordinator.markPressed(
                     active.id,
                     connection.name,
                     {
                         event: request?.event || 'button_pressed',
+                        safe: pressedSafe,
+                        item: pressedSafe ? winItem : null,
                         position: request?.position || null,
                         elapsedMs: Date.now() - active.startedAt,
                     }

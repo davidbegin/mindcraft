@@ -10,6 +10,8 @@ import {
     addHotButtonStations,
     buildParticipantCommands,
     buildWorldResetCommands,
+    hotButtonBoomCommands,
+    hotButtonSafeCommands,
     hotButtonStationLayout,
     participantSpawnPositions,
 } from '../src/mindcraft/contest/arena_manager.js';
@@ -17,6 +19,7 @@ import { ContestCoordinator } from '../src/mindcraft/contest/contest_coordinator
 import { formatContestScore } from '../src/mindcraft/contest/contest_hud.js';
 import { getContestGamePreset } from '../src/mindcraft/contest/game_presets.js';
 import {
+    HOT_BUTTON_WIN_ITEM,
     pickHotButtonSafeIndex,
     remainingHotButtonSurvivors,
     resolveHotButtonPressedIds,
@@ -47,11 +50,12 @@ test('hot button preset is a last-standing courage game', () => {
     const preset = getContestGamePreset('hot_button');
     assert.equal(preset.rules.type, 'hot_button');
     assert.equal(preset.rules.scoring, 'last-standing');
+    assert.equal(preset.rules.winItem, HOT_BUTTON_WIN_ITEM);
     assert.equal(preset.durationMs, 180_000);
     assert.equal(preset.metadata.pvp, false);
     assert.equal(preset.metadata.arena, 'hot-button-v1');
-    assert.match(preset.prompt, /exactly ONE station is safe/i);
-    assert.match(preset.prompt, /chicken/i);
+    assert.match(preset.prompt, /freshly randomized every match/i);
+    assert.match(preset.prompt, /wins the match instantly/i);
     assert.match(preset.prompt, /!playHotButton/i);
 });
 
@@ -68,7 +72,12 @@ test('builds one button station per player with exactly one safe pad', () => {
     assert.ok(commands.some(command => command.includes('summon tnt')));
     assert.ok(commands.some(command => command.includes('tag @s add hot_button_pressed')));
     assert.ok(commands.includes('tag @a remove hot_button_pressed'));
-    assert.ok(commands.includes('difficulty peaceful'));
+    assert.ok(commands.includes('tag @a remove hot_button_safe'));
+    assert.ok(commands.includes('difficulty hard'));
+    assert.ok(commands.some(command => command.includes(`give @s ${HOT_BUTTON_WIN_ITEM} 1`)));
+    assert.ok(commands.some(command =>
+        command.includes(`kill @a[distance=..${HOT_BUTTON.killRadius}]`)
+    ));
 
     const buttonCommands = commands.filter(command => command.includes('stone_button[face=wall'));
     assert.equal(buttonCommands.length, participants.length);
@@ -83,6 +92,49 @@ test('builds one button station per player with exactly one safe pad', () => {
         /setblock -?\d+ \d+ -?\d+ tnt$/.test(command)
     );
     assert.equal(tntCommands.length, participants.length - 1);
+
+    const primed = commands.filter(command =>
+        command.includes('summon tnt') && command.includes(`Fuse:${HOT_BUTTON.fuseTicks}`)
+    );
+    assert.ok(primed.length >= (participants.length - 1) * HOT_BUTTON.clusterSize);
+});
+
+test('different seeds pick different safe stations across the ring', () => {
+    const indexes = new Set(
+        [1, 2, 3, 7, 11, 42, 99, 1000, 99999].map(seed =>
+            pickHotButtonSafeIndex(8, seed)
+        )
+    );
+    assert.ok(indexes.size >= 3, 'safe station should move around the ring across seeds');
+});
+
+test('wrong-button boom dumps TNT and force-kills everyone nearby', () => {
+    const { stations } = hotButtonStationLayout(3, 7);
+    const bad = stations.find(station => !station.safe);
+    const boom = hotButtonBoomCommands(bad);
+    const summons = boom.filter(command => command.includes('summon tnt'));
+    assert.ok(summons.length >= HOT_BUTTON.clusterSize + 1);
+    assert.ok(summons.every(command => command.includes(`Fuse:${HOT_BUTTON.fuseTicks}`)));
+    assert.ok(boom.some(command =>
+        command.includes(`kill @a[distance=..${HOT_BUTTON.killRadius}]`)
+    ));
+    assert.ok(boom.some(command =>
+        command.startsWith(`summon tnt ${bad.tntX} `)
+        && command.includes(` ${bad.tntZ} `)
+    ));
+});
+
+test('safe button hands out the win item immediately', () => {
+    const { stations } = hotButtonStationLayout(3, 7);
+    const safe = stations.find(station => station.safe);
+    const chain = hotButtonSafeCommands(safe);
+    assert.ok(chain.some(command => command.includes('tag @s add hot_button_safe')));
+    assert.ok(chain.some(command => command.includes(`give @s ${HOT_BUTTON_WIN_ITEM} 1`)));
+    assert.ok(chain.some(command =>
+        command.includes(
+            `setblock ${safe.buttonX} ${safe.buttonY} ${safe.buttonZ} air`
+        )
+    ));
 });
 
 test('hot button stations clear the button so each is one-shot', () => {
@@ -96,6 +148,28 @@ test('hot button stations clear the button so each is one-shot', () => {
                 )
             ),
             `station ${station.index} never clears its button`
+        );
+    }
+});
+
+test('hot button command-block chains face down so win/boom steps run', () => {
+    const commands = [];
+    const { stations } = addHotButtonStations(commands, 2, 3);
+    for (const station of stations) {
+        const impulse = commands.find(command =>
+            command.includes(`setblock ${station.x} `)
+            && command.includes(' command_block[facing=down]{')
+        );
+        assert.ok(
+            impulse,
+            `station ${station.index} impulse command block must face down into the chain`
+        );
+        assert.ok(
+            commands.some(command =>
+                command.includes(`setblock ${station.x} `)
+                && command.includes('chain_command_block[facing=down]')
+            ),
+            `station ${station.index} is missing downward chain blocks`
         );
     }
 });
@@ -199,6 +273,34 @@ test('coordinator does not crown a lone chicken early', async () => {
     });
 });
 
+test('safe press crowns the winner immediately even with rivals still alive', async () => {
+    await withCoordinator(async ({ coordinator }) => {
+        let clock = 1_000;
+        coordinator.clock = () => clock;
+        const contest = await coordinator.createContest({
+            title: 'Hot Button',
+            prompt: 'press',
+            durationMs: 60_000,
+            participantIds: ['alice', 'bob', 'chip'],
+            rules: { type: 'hot_button', scoring: 'last-standing', winItem: HOT_BUTTON_WIN_ITEM },
+            metadata: { pressedIds: [] },
+        });
+        await coordinator.startContest(contest.id);
+        clock = 2_000;
+        await coordinator.markPressed(contest.id, 'bob', {
+            event: 'button_pressed',
+            safe: true,
+            item: HOT_BUTTON_WIN_ITEM,
+        });
+        const view = coordinator.view();
+        assert.equal(view.activeContest, null);
+        const completed = view.contests.find(entry => entry.id === contest.id);
+        assert.equal(completed.status, 'completed');
+        assert.deepEqual(completed.winnerIds, ['bob']);
+        assert.equal(completed.submissions.bob.payload.event, 'safe_button');
+    });
+});
+
 test('safe press crowns the sole survivor immediately', async () => {
     await withCoordinator(async ({ coordinator }) => {
         let clock = 1_000;
@@ -258,7 +360,7 @@ test('game directive and command guard keep bots on the button path', () => {
         { contestType: 'hot_button' }
     );
     assert.match(directive, /!playHotButton/);
-    assert.match(directive, /Refusing to press loses/);
+    assert.match(directive, /safe button wins the match the instant/i);
     assert.match(hotButtonCommandRejection('!digDown'), /banned during Hot Button/);
     assert.equal(hotButtonCommandRejection('!playHotButton'), null);
 });

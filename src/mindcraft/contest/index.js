@@ -81,6 +81,8 @@ export {
 } from './series.js';
 export {
     HOT_BUTTON_PRESSED_TAG,
+    HOT_BUTTON_SAFE_TAG,
+    HOT_BUTTON_WIN_ITEM,
     pickHotButtonSafeIndex,
     remainingHotButtonSurvivors,
     resolveHotButtonPressedIds,
