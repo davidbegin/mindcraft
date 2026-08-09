@@ -18,5 +18,5 @@
     "forceConsistentCasingInFileNames": true,
     "plugins": [{ "name": "@effect/language-service" }]
   },
-  "include": ["src/db/**/*.ts", "test/**/*.test.ts", "drizzle.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.test.ts", "drizzle.config.ts"]
 }

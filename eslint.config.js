@@ -13,7 +13,7 @@ export default [
   // JavaScript surface is not ready for strict-type-checked rules yet, so this
   // block keeps the new code honest without flooding the legacy files.
   ...tseslint.config({
-    files: ["src/db/**/*.ts", "test/**/*.test.ts", "drizzle.config.ts"],
+    files: ["src/**/*.ts", "test/**/*.test.ts", "drizzle.config.ts"],
     extends: [...tseslint.configs.strictTypeChecked],
     languageOptions: {
       parserOptions: {
