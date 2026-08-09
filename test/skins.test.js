@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync } from 'fs';
 import path from 'path';
 import {
     renderSkin, modelInfo, hashName, detectProvider, logoBitmap, LOGOS_DIR,
-    SKINS_DIR, synchronizeProfileSkin,
+    CHARACTER_SKINS_DIR, SKINS_DIR, synchronizeProfileSkin,
 } from '../src/mindcraft/skins.js';
 import { CURSOR_FAMILIES } from '../src/mindcraft/model_profiles.js';
 
@@ -124,7 +124,7 @@ test('renderSkin produces a 64x64 canvas, deterministic per name', () => {
     assert.notDeepEqual(a1.toBuffer('image/png'), b.toBuffer('image/png'));
 });
 
-test('synchronizeProfileSkin always replaces stale branding with the running model', () => {
+test('generated skins replace stale branding with the running model', () => {
     const name = 'skin_sync_test';
     const file = path.join(SKINS_DIR, `${name}.png`);
     const profile = {
@@ -146,6 +146,30 @@ test('synchronizeProfileSkin always replaces stale branding with the running mod
         assert.equal(skin.word, 'TERRA');
         assert.equal(skin.file, `/skins/${name}.png`);
         assert.ok(existsSync(file));
+    } finally {
+        rmSync(file, { force: true });
+    }
+});
+
+test('named cast members use their custom skin and retain model metadata', () => {
+    const name = 'Leviticus';
+    const file = path.join(SKINS_DIR, `${name}.png`);
+    const profile = {
+        name,
+        model: { api: 'cursor', model: 'gpt-5.6-terra' },
+    };
+
+    try {
+        const skin = synchronizeProfileSkin(profile);
+        assert.equal(skin.custom, true);
+        assert.equal(skin.generated, false);
+        assert.equal(skin.model, 'classic');
+        assert.equal(skin.label, 'gpt-5.6-terra');
+        assert.equal(skin.word, 'TERRA');
+        assert.deepEqual(
+            readFileSync(file),
+            readFileSync(path.join(CHARACTER_SKINS_DIR, 'Leviticus.png'))
+        );
     } finally {
         rmSync(file, { force: true });
     }

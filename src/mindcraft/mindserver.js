@@ -2207,9 +2207,8 @@ async function reclaimAgentNames(names) {
 }
 
 export async function registerAgent(settings, viewer_port) {
-    // The running model is the sole source of truth for skin branding. Always
-    // replace stale/custom profile skins, and abort registration if that cannot
-    // be done rather than booting an agent in a misleading shirt.
+    // Resolve the cast member's named skin (or generated model uniform) and
+    // refresh its model metadata on every registration.
     synchronizeProfileSkin(settings.profile);
     const agentId = `${settings.profile.name}#${++agent_id_seq}`;
     // Drop any earlier instance that is no longer wearing this name so ghost

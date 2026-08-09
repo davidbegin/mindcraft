@@ -1,6 +1,6 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
+import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { createCanvas, Image } from 'canvas';
 
 // Generates deterministic 64x64 Minecraft skins so every bot is visually unique
@@ -13,9 +13,18 @@ import { createCanvas, Image } from 'canvas';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const SKINS_DIR = path.resolve(__dirname, '../../skins');
 export const LOGOS_DIR = path.resolve(__dirname, '../../assets/model-logos');
+export const CHARACTER_SKINS_DIR = path.resolve(__dirname, '../../assets/character-skins');
 // The MC container bind-mounts SKINS_DIR at /skins, and the mindserver serves
 // it at /skins, so one path string works for both FabricTailor and the web UI.
 export const SKINS_MOUNT = '/skins';
+
+// Hand-authored cast skins take precedence over generated model uniforms.
+// Names are normalized because profile names preserve display casing.
+const CHARACTER_SKINS = new Map([
+    ['billy', { file: 'Billy.png', model: 'classic' }],
+    ['dario', { file: 'Dario.png', model: 'classic' }],
+    ['leviticus', { file: 'Leviticus.png', model: 'classic' }],
+]);
 
 const MODEL_FAMILIES = [
     // Boundary so "gemini" (contains the letters mini) does not paint as MINI.
@@ -479,11 +488,30 @@ export function renderSkin(name, model) {
  */
 export function ensureSkin(name, model) {
     mkdirSync(SKINS_DIR, { recursive: true });
-    const canvas = renderSkin(name, model);
     const file = path.join(SKINS_DIR, `${name}.png`);
-    writeFileSync(file, canvas.toBuffer('image/png'));
     const rel = `${SKINS_MOUNT}/${name}.png`;
     const info = modelInfo(model);
+    const characterSkin = CHARACTER_SKINS.get(name.trim().toLowerCase());
+    if (characterSkin) {
+        const source = path.join(CHARACTER_SKINS_DIR, characterSkin.file);
+        if (!existsSync(source)) {
+            throw new Error(`Custom skin for ${name} is missing: ${source}`);
+        }
+        copyFileSync(source, file);
+        return {
+            model: characterSkin.model,
+            file: rel,
+            path: rel,
+            generated: false,
+            custom: true,
+            label: info.label,
+            word: info.word,
+            color: info.color,
+        };
+    }
+
+    const canvas = renderSkin(name, model);
+    writeFileSync(file, canvas.toBuffer('image/png'));
     return {
         model: 'classic',   // skin variant (classic 4px arms), not the LLM
         file: rel,          // path inside the MC server container (FabricTailor)
@@ -496,9 +524,9 @@ export function ensureSkin(name, model) {
 }
 
 /**
- * Replaces any stale or hand-authored profile skin with one derived from the
- * model that will actually run. Call this at the agent-registration boundary
- * so every creation and restart uses model-authoritative branding.
+ * Replaces stale profile skin metadata with the selected named or generated
+ * asset. Call this at the agent-registration boundary so every creation and
+ * restart uses the current cast skin and model metadata.
  */
 export function synchronizeProfileSkin(profile) {
     if (!profile?.name) throw new Error('Cannot generate a skin without an agent name');
