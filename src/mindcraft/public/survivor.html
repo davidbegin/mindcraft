@@ -229,6 +229,20 @@
             color: var(--amber);
         }
 
+        .hud-runstate {
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            color: var(--text-mute);
+            letter-spacing: 0.02em;
+            max-width: 28rem;
+            line-height: 1.35;
+        }
+
+        .hud-runstate[data-mode="paused"],
+        .hud-runstate[data-mode="parked"] {
+            color: var(--amber);
+        }
+
         /* —— Layout —— */
         .control-grid {
             display: grid;
@@ -994,14 +1008,15 @@
             </div>
         </div>
         <span id="hudPaused" class="hud-badge" hidden>Paused</span>
-        <span id="hudSuspended" class="hud-badge" hidden>Suspended</span>
+        <span id="hudSuspended" class="hud-badge" hidden>Parked</span>
+        <div class="hud-runstate" id="hudRunState" aria-live="polite"></div>
         <div class="hud-actions">
-            <button type="button" id="pauseBtn" class="btn btn-ghost">Pause</button>
-            <button type="button" id="suspendBtn" class="btn btn-ghost">Suspend season</button>
+            <button type="button" id="pauseBtn" class="btn btn-amber">Pause</button>
+            <button type="button" id="parkBtn" class="btn btn-ghost" title="Evict bots and free the world for other games. Cast must respawn to continue.">Park season</button>
             <button type="button" id="softMuteBtn" class="btn btn-ghost" title="Keep generating TTS, silence playback">Soft mute</button>
             <button type="button" id="hardMuteBtn" class="btn btn-ghost" title="Drop queue and stop ElevenLabs spend">Hard mute</button>
             <button type="button" id="flushVoiceBtn" class="btn btn-ghost" title="Clear the host voice queue">Flush voices</button>
-            <button type="button" id="advanceBtn" class="btn btn-amber">Advance phase</button>
+            <button type="button" id="advanceBtn" class="btn btn-ghost">Advance phase</button>
             <button type="button" id="revealVotesBtn" class="btn btn-primary" hidden>Reveal votes</button>
             <a id="watchLiveLink" class="btn btn-ghost" href="/live.html" target="_blank" rel="noopener">Live wall</a>
             <button type="button" id="cancelSeasonBtn" class="btn btn-danger">Cancel season</button>
@@ -1010,11 +1025,11 @@
 
     <section id="suspendedBanner" class="suspended-banner" hidden>
         <div class="suspended-copy">
-            <strong id="suspendedTitle">Season waiting to resume</strong>
+            <strong id="suspendedTitle">Season parked — bots left the world</strong>
             <span id="suspendedDetail"></span>
         </div>
         <div class="suspended-actions">
-            <button type="button" id="resumeSeasonBtn" class="btn btn-amber">Resume season</button>
+            <button type="button" id="resumeSeasonBtn" class="btn btn-amber">Unpark / restore cast</button>
             <button type="button" id="discardSeasonBtn" class="btn btn-danger">Cancel season</button>
         </div>
     </section>

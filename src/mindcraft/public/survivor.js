@@ -91,10 +91,40 @@
 
     // A phase with no deadline is waiting on the host, not broken.
     function phaseClockLabel() {
-        if (suspended()) return 'suspended';
-        if (state?.paused) return 'paused';
+        if (suspended()) return 'parked';
+        if (state?.paused) {
+            if (state.pausedDeadlineRemainingMs != null) {
+                return `paused (${formatRemainingMs(state.pausedDeadlineRemainingMs)})`;
+            }
+            return 'paused';
+        }
         if (!state?.phaseDeadlineAt) return 'you decide';
         return formatCountdown(state.phaseDeadlineAt);
+    }
+
+    function formatRemainingMs(ms) {
+        const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        return `${minutes}:${String(totalSeconds % 60).padStart(2, '0')}`;
+    }
+
+    function runStateLabel(run) {
+        if (!run) return '';
+        const clock = {
+            frozen: 'clocks frozen',
+            'host-held': 'clocks host-held',
+            ticking: 'clocks ticking',
+        }[run.clocks] || `clocks ${run.clocks}`;
+        const bots = {
+            active: 'bots active',
+            paused: 'bots paused',
+            evicted: 'bots evicted',
+        }[run.bots] || `bots ${run.bots}`;
+        const voices = run.voices === 'live'
+            ? 'voices live'
+            : `voices ${run.voices}-muted`;
+        const cast = run.castPreserved ? 'cast preserved' : 'cast must respawn';
+        return `${clock} · ${bots} · ${voices} · ${cast}`;
     }
 
     function suspended() {
@@ -534,15 +564,14 @@
         if (banner.hidden) return;
         const restarted = state.suspendedReason === 'server-restart';
         el('suspendedTitle').textContent = restarted
-            ? 'Season waiting to resume after restart'
-            : 'Season suspended';
+            ? 'Season parked after restart — bots left the world'
+            : 'Season parked — bots left the world';
         const where = game
             ? `Round ${game.round}, ${phaseLabel(game.phase)}, ${activeIds(game).length} still in`
             : '';
         el('suspendedDetail').textContent = restarted
-            ? `${where}. Its bots are not in the world. Resume to bring the cast back, `
-                + 'or cancel it to free the slot for another game.'
-            : `${where}. Other games can run while it waits here.`;
+            ? `${where}. Unpark to restore the cast, or cancel to free the slot.`
+            : `${where}. Other games can run while it waits. Unpark restores the cast.`;
     }
 
     function renderHud(game) {
@@ -558,13 +587,20 @@
         el('hudPaused').hidden = !state.paused || suspended();
         el('hudSuspended').hidden = !suspended();
 
+        const run = state.operatorRunState;
+        const runState = el('hudRunState');
+        runState.textContent = runStateLabel(run);
+        runState.dataset.mode = run?.mode || '';
+
         const inChallenge = game.phase === 'challenge';
         const running = game.status === 'running' && !suspended();
-        el('pauseBtn').textContent = state.paused ? 'Resume' : 'Pause';
-        el('pauseBtn').disabled = inChallenge || !running;
-        el('suspendBtn').textContent = suspended() ? 'Resume season' : 'Suspend season';
-        el('suspendBtn').disabled = game.status !== 'running'
-            || Boolean(state.challengeContestId);
+        const castPaused = Boolean(state.paused) && !suspended();
+        el('pauseBtn').textContent = castPaused ? 'Resume' : 'Pause';
+        // Pause is the primary control: available whenever the cast is in-world
+        // and we are not mid-contest. Resume stays available while paused.
+        el('pauseBtn').disabled = !running || (inChallenge && !castPaused);
+        el('parkBtn').hidden = suspended();
+        el('parkBtn').disabled = !running || Boolean(state.challengeContestId);
         const advanceLabel = ADVANCE_LABELS[game.phase];
         el('advanceBtn').textContent = advanceLabel || 'Advance phase';
         if (game.phase === 'fire_making') {
@@ -1617,21 +1653,17 @@
     );
     el('scenarioSelect').addEventListener('change', renderScenarioBlurb);
     el('pauseBtn').addEventListener('click', () => control(state?.paused ? 'resume' : 'pause'));
-    el('suspendBtn').addEventListener('click', () => {
-        if (suspended()) {
-            control('resume-season');
-            return;
-        }
+    el('parkBtn').addEventListener('click', () => {
         if (window.confirm(
-            'Suspend the season? Its bots leave the world and the season waits here '
-            + 'until you resume it. You can run other games in the meantime.'
+            'Park the season? Bots leave the world so other games can run. '
+            + 'The season waits here until you unpark and restore the cast.'
         )) {
-            control('suspend', { reason: 'Suspended from the Survivor control room' });
+            control('park', { reason: 'Parked from the Survivor control room' });
         }
     });
-    el('resumeSeasonBtn').addEventListener('click', () => control('resume-season'));
+    el('resumeSeasonBtn').addEventListener('click', () => control('unpark'));
     el('discardSeasonBtn').addEventListener('click', () => {
-        if (window.confirm('Cancel the suspended season for good?')) {
+        if (window.confirm('Cancel the parked season for good?')) {
             control('cancel', { reason: 'Cancelled from the Survivor control room' });
         }
     });

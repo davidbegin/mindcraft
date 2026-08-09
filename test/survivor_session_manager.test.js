@@ -759,8 +759,92 @@ test('a season parked during a challenge is refused, not torn in half', async ()
         challengeGameIds: ['cake_race'],
     });
     assert.equal(manager.view().game.phase, 'challenge');
-    await assert.rejects(manager.control('suspend'), /immunity challenge/);
+    await assert.rejects(manager.control('park'), /immunity challenge/);
     assert.equal(manager.view().status, 'running');
+});
+
+test('pause freezes the phase clock and preserves the cast', async () => {
+    const muteCalls = [];
+    const { manager, contestCoordinator, advance, options } = await createManager();
+    options.onPauseMute = () => {
+        muteCalls.push('soft');
+        return 'soft';
+    };
+    options.onResumeMute = mode => muteCalls.push(`resume:${mode}`);
+    Object.assign(manager, {
+        onPauseMute: options.onPauseMute,
+        onResumeMute: options.onResumeMute,
+    });
+
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+        phaseDurationsMs: { strategy: 60_000 },
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+    assert.equal(manager.view().game.phase, 'strategy');
+    const beforeAgents = manager.view().createdAgents.map(agent => agent.id);
+    const deadlineAt = manager.view().phaseDeadlineAt;
+    assert.ok(deadlineAt > 0);
+
+    advance(10_000);
+    await manager.control('pause');
+    const paused = manager.view();
+    assert.equal(paused.paused, true);
+    assert.equal(paused.phaseDeadlineAt, null);
+    assert.equal(paused.pausedDeadlineRemainingMs, 50_000);
+    assert.equal(paused.operatorRunState.mode, 'paused');
+    assert.equal(paused.operatorRunState.clocks, 'frozen');
+    assert.equal(paused.operatorRunState.bots, 'paused');
+    assert.equal(paused.operatorRunState.voices, 'soft');
+    assert.equal(paused.operatorRunState.castPreserved, true);
+    assert.deepEqual(
+        paused.createdAgents.map(agent => agent.id),
+        beforeAgents,
+        'pause must not tear down the cast'
+    );
+    assert.deepEqual(muteCalls, ['soft']);
+
+    // Wall-clock advancing while paused must not auto-advance the phase.
+    advance(100_000);
+    assert.equal(await manager.tick(), null);
+    assert.equal(manager.view().game.phase, 'strategy');
+
+    await manager.control('resume');
+    const resumed = manager.view();
+    assert.equal(resumed.paused, false);
+    assert.equal(resumed.pausedDeadlineRemainingMs, null);
+    assert.equal(resumed.phaseDeadlineAt, 110_000 + 50_000);
+    assert.equal(resumed.operatorRunState.mode, 'running');
+    assert.equal(resumed.operatorRunState.voices, 'live');
+    assert.deepEqual(muteCalls, ['soft', 'resume:soft']);
+});
+
+test('park alias evicts bots; unpark restores the same season', async () => {
+    const { manager, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    await manager.control('park');
+    assert.equal(manager.view().status, 'suspended');
+    assert.equal(manager.view().operatorRunState.mode, 'parked');
+    assert.equal(manager.view().operatorRunState.bots, 'evicted');
+    assert.equal(manager.view().operatorRunState.castPreserved, false);
+    assert.equal(manager.view().createdAgents.length, 0);
+
+    await manager.control('unpark');
+    assert.equal(manager.view().status, 'running');
+    assert.equal(manager.view().createdAgents.length, 4);
+    assert.equal(manager.view().operatorRunState.mode, 'running');
 });
 
 test('resuming a season parked in the challenge phase runs its challenge again', async () => {

@@ -1569,7 +1569,7 @@ async function startContestGame(gameId, options = {}) {
         const blockingSeason = survivorSessionManager.view();
         throw launchRefusedError(blockingSeason
             ? `A Survivor season is active (${blockingSeason.status}). `
-                + 'Suspend it to run other games, or cancel it outright.'
+                + 'Park it to free the world for other games, or cancel it outright.'
             : 'A Survivor season is still recorded as running but has no session. '
                 + 'Cancel the season from the Survivor control room to clear it.');
     }

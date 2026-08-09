@@ -341,6 +341,7 @@ export class SurvivorSessionManager {
             relationships: buildSurvivorRelationships(game, this.roomHistory),
             conversationRequests: this.conversations.view(),
             problems: clone(this.problems),
+            operatorRunState: this._operatorRunState(game),
             rooms: this.rooms.view().map(room => ({
                 id: room.id,
                 ownerId: room.ownerId,
@@ -348,6 +349,36 @@ export class SurvivorSessionManager {
                 invitedIds: room.invitedIds,
                 messageCount: room.messages.length,
             })),
+        };
+    }
+
+    // One readable snapshot for the host: clocks, bots, voices, cast preserved?
+    _operatorRunState(game = this.coordinator.view()) {
+        const suspended = this.active?.status === 'suspended';
+        const paused = Boolean(this.active?.paused) && !suspended;
+        const hostHeld = this.active?.phaseDeadlineAt == null
+            && game?.status === 'running'
+            && game?.phase !== 'challenge';
+        return {
+            mode: suspended ? 'parked' : (paused ? 'paused' : 'running'),
+            clocks: suspended || paused
+                ? 'frozen'
+                : (hostHeld ? 'host-held' : 'ticking'),
+            bots: suspended
+                ? 'evicted'
+                : (paused ? 'paused' : 'active'),
+            voices: suspended || paused
+                ? (this.active?.pausedMuteMode || 'soft')
+                : 'live',
+            castPreserved: !suspended,
+            canPause: Boolean(this.active)
+                && this.active.status === 'running'
+                && !this.active.challengeContestId
+                && game?.status === 'running',
+            canPark: Boolean(this.active)
+                && this.active.status === 'running'
+                && !this.active.challengeContestId
+                && game?.status === 'running',
         };
     }
 
@@ -441,11 +472,11 @@ export class SurvivorSessionManager {
     // Park the season without ending it: the cast leaves the world and the arena
     // is free for another game, but the game state on disk is untouched so it can
     // be picked up again later.
-    async suspend(reason = 'Suspended by operator') {
+    async suspend(reason = 'Parked by operator') {
         this._requireActive();
         if (this.active.status === 'suspended') return this.view();
         if (this.active.challengeContestId) {
-            throw new Error('Let the immunity challenge finish before suspending the season');
+            throw new Error('Let the immunity challenge finish before parking the season');
         }
         const cast = this.active.createdAgents;
         this.rooms.closeAll('season-suspended');
@@ -455,10 +486,12 @@ export class SurvivorSessionManager {
         this.active.suspendedReason = 'operator';
         this.active.paused = true;
         this.active.phaseDeadlineAt = null;
+        this.active.pausedDeadlineRemainingMs = null;
+        this.active.pausedMuteMode = null;
         this.active.createdAgents = [];
         this.active.readiness = null;
         this._emit();
-        this._log('info', `season ${this.active.id} suspended: ${reason}`);
+        this._log('info', `season ${this.active.id} parked: ${reason}`);
         return this.view();
     }
 
@@ -693,6 +726,8 @@ export class SurvivorSessionManager {
             challengeContestId: null,
             phaseDeadlineAt: null,
             paused: false,
+            pausedDeadlineRemainingMs: null,
+            pausedMuteMode: null,
             suspendedReason: null,
             phaseDurationsMs,
             // Off by default: the host runs council by hand. Turn it on for
@@ -1179,21 +1214,39 @@ export class SurvivorSessionManager {
                     throw new Error('Active immunity challenges cannot be paused');
                 }
                 this.active.paused = true;
+                // Freeze remaining phase time so wall-clock while paused does not
+                // burn the deadline and auto-advance the moment we resume.
+                if (this.active.phaseDeadlineAt != null) {
+                    this.active.pausedDeadlineRemainingMs = Math.max(
+                        0,
+                        this.active.phaseDeadlineAt - this.clock()
+                    );
+                    this.active.phaseDeadlineAt = null;
+                } else {
+                    this.active.pausedDeadlineRemainingMs = null;
+                }
                 // Pausing also handles voices: soft-mute so catch-up works on resume.
                 this.active.pausedMuteMode = this.onPauseMute?.() ?? 'soft';
                 this._emit();
                 return this.view();
             case 'resume':
-                // Only lifts a pause. A parked season needs its cast back, which
-                // is 'resume-season'.
+                // Only lifts a cast-preserving pause. A parked season needs its
+                // cast back, which is 'resume-season' / 'unpark'.
                 this._requireRunningSession();
                 this.active.paused = false;
+                if (this.active.pausedDeadlineRemainingMs != null) {
+                    this.active.phaseDeadlineAt = this.clock()
+                        + this.active.pausedDeadlineRemainingMs;
+                    this.active.pausedDeadlineRemainingMs = null;
+                }
                 this.onResumeMute?.(this.active.pausedMuteMode);
                 this.active.pausedMuteMode = null;
                 this._emit();
                 return this.view();
+            case 'park':
             case 'suspend':
-                return this.suspend(payload.reason);
+                return this.suspend(payload.reason || 'Parked from the Survivor control room');
+            case 'unpark':
             case 'resume-season':
                 return this.resumeSeason();
             case 'advance':
