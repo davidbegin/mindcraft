@@ -1597,6 +1597,74 @@ test('host can force a private meet for harness drills', async () => {
     ));
 });
 
+test('harness plants a blindside whisper only conspirators remember', async () => {
+    const { manager, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    const result = await manager.control('blindside-whisper', {
+        memberIds: ['Bot1', 'Bot2'],
+        targetId: 'Bot3',
+    });
+    assert.equal(result.blindside.targetId, 'Bot3');
+    assert.match(result.blindside.message, /Bot3/);
+
+    const room = manager.rooms.view().find(item =>
+        item.memberIds.includes('Bot1') && item.memberIds.includes('Bot2')
+    );
+    assert.ok(room, 'conspirators share a room');
+    assert.ok(
+        room.messages.some(entry => /blindside|Bot3/i.test(entry.message)),
+        'the planted whisper is in the room'
+    );
+
+    assert.match(
+        manager.briefingFor('Bot1'),
+        /Bot3/,
+        'the speaker remembers the deal'
+    );
+    assert.match(
+        manager.briefingFor('Bot2'),
+        /Bot3/,
+        'the ally remembers the deal'
+    );
+    assert.doesNotMatch(
+        manager.briefingFor('Bot4'),
+        /blindside|Bot3 tonight/i,
+        'an outsider never sees the whisper'
+    );
+});
+
+test('conversation transcripts expose pending asks for the browser', async () => {
+    const { manager, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    await manager.handleAgentCommand('Bot2', 'talk-request', {
+        inviteeIds: ['Bot3'],
+        pitch: 'final two?',
+    });
+    const transcripts = manager.conversationTranscripts();
+    const pending = transcripts.conversationRequests.find(item => item.status === 'pending');
+    assert.ok(pending);
+    assert.equal(pending.requesterId, 'Bot2');
+    assert.deepEqual(pending.inviteeIds, ['Bot3']);
+    assert.equal(pending.pitch, 'final two?');
+    assert.equal(pending.expiresAt, null);
+});
+
 test('fire-making requires operator confirmation', async () => {
     const { manager, coordinator } = await createManager();
     await manager.start({

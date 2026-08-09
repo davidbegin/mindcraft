@@ -365,11 +365,11 @@ This is the implemented system as of the quiz pass, not the desired design.
 
 ### Private conspiracy
 
-- `ConversationRequestRegistry` (`conversation_requests.js`) implements invite/respond/resolve with a **30-second TTL**, max four invitees, one pending request per requester, and a decline cooldown.
+- `ConversationRequestRegistry` (`conversation_requests.js`) implements invite/respond/resolve with **no mid-window TTL** (pending invites stay open until strategy ends), max four invitees, one pending request per requester, and a decline cooldown.
 - `PrivateRoomRegistry` (`private_rooms.js`) implements join/leave/send/close; rooms stay open until fewer than two members remain and are cleared when a challenge begins.
 - `SurvivorSessionManager.handleAgentCommand()` wires talk requests, responses, room messages, and leaving. `_privateTalkPlayerIds()` preserves same-tribe-only talk before merge.
 - Operator views exist in the Survivor secret feed and `/conversations`; refusals are folded into private transcripts/briefings.
-- Missing versus plan: invite lifetime through the entire strategy phase, richer transcript UX, measurable ask/accept/refuse drills, and proven refusal salience.
+- Missing versus plan: measurable live-cast ask/accept/refuse baseline runs, and proven refusal salience redesign (still harness-gated / paced by memory instrumentation).
 
 ### Memory and relationships
 
@@ -447,7 +447,7 @@ Existing challenge catalog issues (`BEG-240`–`BEG-247`) remain in the project,
 2. **Complete:** write a code-backed **current-system map** (phases, private rooms, council, vote, memory, audio/recording, params).
 3. **Complete:** translate scorecard gaps into **Linear issues** under [BEG-248](https://linear.app/terminaldotshop/issue/BEG-248/watchable-survivor-mini-season), with acceptance criteria tied to the north star.
 4. **Shipped / Done in Linear:** harness + host-held vote ([BEG-251](https://linear.app/terminaldotshop/issue/BEG-251/build-live-tribal-scenario-harness-and-host-held-vote-path)), pause control ([BEG-249](https://linear.app/terminaldotshop/issue/BEG-249/replace-pausesuspend-with-one-legible-cast-preserving-control)), challenge skip/immunity/teams ([BEG-253](https://linear.app/terminaldotshop/issue/BEG-253/add-challenge-skip-immunity-override-and-real-tribe-setup)).
-5. **Drill core done / green:** Survivor memory instrumentation + all four drills ([BEG-250](https://linear.app/terminaldotshop/issue/BEG-250/instrument-survivor-memory-and-relationship-effects)) — probe, no-Minecraft harness, and drills pass (532/532); live-cast baseline + name-the-jurors lens + more council history remain. **In progress:** private conspiracy ([BEG-254](https://linear.app/terminaldotshop/issue/BEG-254/make-private-conspiracy-usable-and-auditable)).
+5. **Done:** private conspiracy usability ([BEG-254](https://linear.app/terminaldotshop/issue/BEG-254/make-private-conspiracy-usable-and-auditable)) — invite TTL until strategy ends, talk stats, force-private-meet + blindside-whisper harness, conversation browser asks/refusals/transcripts. Refusal-salience redesign remains paced by live-cast baseline under [BEG-250](https://linear.app/terminaldotshop/issue/BEG-250/instrument-survivor-memory-and-relationship-effects).
 6. **Done (Quiz 7 audio):** soft/hard mute, flush, pause tie-in, stale-line age/depth cap, per-bot mute/volume — [BEG-252](https://linear.app/terminaldotshop/issue/BEG-252/add-survivor-softhard-mute-and-voice-queue-controls).
 7. **Backlog next:** recording archive ([BEG-255](https://linear.app/terminaldotshop/issue/BEG-255/produce-a-reliable-survivor-season-av-journal-archive)), params matrix stamp ([BEG-256](https://linear.app/terminaldotshop/issue/BEG-256/define-and-stamp-the-bounded-survivor-params-matrix)).
 

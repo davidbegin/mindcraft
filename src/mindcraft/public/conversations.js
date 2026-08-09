@@ -14,6 +14,7 @@
     let roster = [];
     let threads = [];
     let refusals = [];
+    let requests = [];
     let selectedId = null;
     let selectedThreadId = ALL_THREADS;
     let rosterFilter = '';
@@ -92,6 +93,24 @@
         return refusals.filter(item =>
             item.requesterId === playerId || item.inviteeId === playerId
         );
+    }
+
+    // Asks this castaway started or was invited to — pending or recently settled.
+    // The server already ships conversationRequests; the browser used to ignore them.
+    function requestsFor(playerId) {
+        return requests
+            .filter(request =>
+                request.requesterId === playerId || (request.inviteeIds || []).includes(playerId)
+            )
+            .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0));
+    }
+
+    function requestAnswerLabel(request, inviteeId) {
+        const response = request.responses?.[inviteeId];
+        if (!response) return `${inviteeId} · waiting`;
+        return response.accepted
+            ? `${inviteeId} · yes`
+            : `${inviteeId} · no${response.reason ? ` · ${response.reason}` : ''}`;
     }
 
     // —— Render ————————————————————————————————————————————————————
@@ -196,6 +215,35 @@
 
         if (!stats.threads.length) {
             sections.push(`<div class="empty">${esc(selectedId)} has not been in a private conversation yet.</div>`);
+        }
+
+        const asks = requestsFor(selectedId);
+        if (asks.length) {
+            sections.push(`<div class="pane-section">
+                <h3>Asks</h3>
+                ${asks.map(request => {
+                    const mine = request.requesterId === selectedId;
+                    const ttl = request.expiresAt == null
+                        ? 'open until strategy ends'
+                        : `expires ${timeLabel(request.expiresAt)}`;
+                    const answers = (request.inviteeIds || [])
+                        .map(id => `<span class="chip ${
+                            request.responses?.[id]
+                                ? (request.responses[id].accepted ? 'open' : 'gone')
+                                : 'tribe'
+                        }">${esc(requestAnswerLabel(request, id))}</span>`)
+                        .join(' ');
+                    return `<div class="ask-card ${esc(request.status)}">
+                        <div class="ask-top">${mine
+                            ? `They asked <strong>${esc((request.inviteeIds || []).join(', '))}</strong>`
+                            : `<strong>${esc(request.requesterId)}</strong> asked them`
+                        } <span class="ask-status">${esc(request.status)}</span></div>
+                        ${request.pitch ? `<div class="pitch">“${esc(request.pitch)}”</div>` : ''}
+                        <div class="ask-meta">${esc(ttl)}</div>
+                        <div class="ask-answers">${answers}</div>
+                    </div>`;
+                }).join('')}
+            </div>`);
         }
 
         const refused = refusalsFor(selectedId);
@@ -332,22 +380,95 @@
         });
     }
 
+    function upsertRequest(partial) {
+        if (!partial?.id && !partial?.requestId) return null;
+        const id = partial.id || partial.requestId;
+        let request = requests.find(item => item.id === id);
+        if (!request) {
+            request = {
+                id,
+                requesterId: partial.requesterId ?? null,
+                inviteeIds: [...(partial.inviteeIds || [])],
+                pitch: partial.pitch || '',
+                responses: { ...(partial.responses || {}) },
+                status: partial.status || 'pending',
+                roomId: partial.roomId ?? null,
+                createdAt: partial.createdAt ?? partial.at ?? null,
+                expiresAt: partial.expiresAt ?? null,
+                resolvedAt: partial.resolvedAt ?? null,
+            };
+            requests.push(request);
+        }
+        if (partial.requesterId) request.requesterId = partial.requesterId;
+        if (partial.inviteeIds) request.inviteeIds = [...partial.inviteeIds];
+        if (partial.pitch != null) request.pitch = partial.pitch;
+        if (partial.status) request.status = partial.status;
+        if (partial.roomId !== undefined) request.roomId = partial.roomId;
+        if (partial.expiresAt !== undefined) request.expiresAt = partial.expiresAt;
+        if (partial.resolvedAt !== undefined) request.resolvedAt = partial.resolvedAt;
+        if (partial.createdAt) request.createdAt = partial.createdAt;
+        if (partial.responses) {
+            request.responses = { ...request.responses, ...partial.responses };
+        }
+        return request;
+    }
+
     function applySecretEvent(event) {
         if (!event?.type) return false;
-        if (event.type === 'talk.declined') {
-            noteRefusal(
-                event.requestId,
-                event.requesterId,
-                event.inviteeId,
-                event.reason || 'no reason given',
-                event
-            );
+        if (event.type === 'talk.requested') {
+            upsertRequest(event);
+            return true;
+        }
+        if (event.type === 'talk.accepted' || event.type === 'talk.declined') {
+            const request = upsertRequest({
+                id: event.requestId,
+                requesterId: event.requesterId,
+            });
+            if (request && event.inviteeId) {
+                request.responses[event.inviteeId] = {
+                    accepted: event.type === 'talk.accepted',
+                    reason: event.reason || '',
+                    at: event.at ?? null,
+                };
+            }
+            if (event.type === 'talk.declined') {
+                noteRefusal(
+                    event.requestId,
+                    event.requesterId,
+                    event.inviteeId,
+                    event.reason || 'no reason given',
+                    event
+                );
+            }
             return true;
         }
         if (event.type === 'talk.resolved') {
+            const request = upsertRequest({
+                id: event.requestId,
+                requesterId: event.requesterId,
+                status: event.status,
+                roomId: event.roomId ?? null,
+                resolvedAt: event.at ?? Date.now(),
+            });
             for (const inviteeId of event.declinerIds || []) {
+                if (request && !request.responses[inviteeId]) {
+                    request.responses[inviteeId] = {
+                        accepted: false,
+                        reason: 'never answered',
+                        at: event.at ?? null,
+                    };
+                }
                 noteRefusal(event.requestId, event.requesterId, inviteeId, 'never answered', event);
             }
+            return true;
+        }
+        if (event.type === 'talk.cancelled') {
+            upsertRequest({
+                id: event.requestId,
+                requesterId: event.requesterId,
+                status: 'cancelled',
+                resolvedAt: event.at ?? Date.now(),
+            });
             return true;
         }
         if (!event.roomId) return false;
@@ -401,6 +522,7 @@
                 roster = [];
                 threads = [];
                 refusals = [];
+                requests = [];
                 el('pageEmptyText').textContent = result?.error
                     || 'No Survivor season is running, so there are no private conversations yet.';
                 render();
@@ -417,6 +539,7 @@
             roster = data.players || [];
             threads = data.threads || [];
             refusals = data.refusals || [];
+            requests = data.conversationRequests || [];
             defaultSelection();
             render();
         });

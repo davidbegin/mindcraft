@@ -245,7 +245,7 @@ export const NODES = {
         summary: 'Off-channel group chats between bots. A bot requests one, invitees accept or decline, and the survivors talk in a room nobody else can read — which is where alliances actually form.',
         files: ['src/mindcraft/survivor/private_rooms.js', 'src/mindcraft/survivor/conversation_requests.js'],
         notes: [
-            'Max 4 invitees, 30 s request TTL, 45 s cooldown after a decline.',
+            'Max 4 invitees; pending invites stay open until strategy ends (no mid-window TTL); 45 s cooldown after a decline.',
             'Blocked during the challenge phase; all rooms close when a challenge starts.',
         ],
     },
@@ -746,7 +746,7 @@ export const SECTIONS = [
             {
                 type: 'prose',
                 html: `<h3>Private rooms</h3>
-<p>This is the part with no equivalent anywhere else in the system. A bot runs <code>!requestPrivateChat</code>, the registry opens a pending request and pushes <code>survivor-talk-request</code> to each invitee. Invitees accept or decline; once everyone has answered or the 30 second TTL expires, accepters are dropped into a room and messages flow through <code>survivor-room-message</code> to members only.</p>
+<p>This is the part with no equivalent anywhere else in the system. A bot runs <code>!requestPrivateChat</code>, the registry opens a pending request and pushes <code>survivor-talk-request</code> to each invitee. Invitees accept or decline; pending invites stay open until the strategy window ends (there is no mid-window TTL), then accepters are dropped into a room and messages flow through <code>survivor-room-message</code> to members only.</p>
 <p>Requests are capped at 4 invitees, a decline puts the pair on a 45 second cooldown, and private talk is blocked entirely during a challenge — all rooms close when one starts. Everything is journaled under a <code>private.</code> prefix, which is what the Conversations page replays.</p>`,
             },
             {

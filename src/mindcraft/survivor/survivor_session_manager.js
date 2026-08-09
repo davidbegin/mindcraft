@@ -1483,43 +1483,47 @@ export class SurvivorSessionManager {
                 // Harness: open a room immediately so drills do not wait on bots
                 // discovering !requestPrivateChat. Soft prompts stay soft; this is
                 // operator-forced scenery for watchability tests.
+                await this._forcePrivateMeet(payload.memberIds, payload.pitch);
+                this._emit();
+                return this.view();
+            }
+            case 'blindside-whisper': {
+                // Harness: plant a private alliance deal against a named target,
+                // then leave the operator to jump to Tribal and watch whether the
+                // whisper sticks into ballots (the vote-flip check).
                 this._requireRunning();
+                const targetId = String(payload.targetId || '').trim();
+                if (!targetId) throw new Error('Name the player being blindsided');
                 const memberIds = [...new Set(
                     (payload.memberIds || []).map(id => String(id || '').trim()).filter(Boolean)
                 )];
-                if (memberIds.length < 2) {
-                    throw new Error('Force a private meet with at least two players');
+                if (memberIds.includes(targetId)) {
+                    throw new Error(`${targetId} cannot be both a conspirator and the blindside target`);
                 }
-                if (memberIds.length > MAX_CONVERSATION_INVITEES + 1) {
-                    throw new Error(
-                        `A private room can hold at most ${MAX_CONVERSATION_INVITEES + 1} players`
-                    );
-                }
-                const ownerId = memberIds[0];
-                const inviteeIds = memberIds.slice(1);
-                const eligible = this._privateTalkPlayerIds(ownerId);
-                const blocked = inviteeIds.filter(id => !eligible.includes(id));
-                if (blocked.length) {
-                    throw new Error(`Not available for a private meet: ${blocked.join(', ')}`);
-                }
-                const pitch = String(payload.pitch || 'Host-forced private meet for the harness.');
-                const room = this.rooms.create(ownerId, inviteeIds, eligible, pitch);
-                for (const memberId of inviteeIds) {
-                    this.rooms.join(room.id, memberId, eligible);
-                }
-                await Promise.allSettled(memberIds.map(id =>
-                    this.notifyAgent(id, 'survivor-talk-resolved', {
-                        requestId: null,
-                        status: 'forced',
-                        accepterIds: memberIds,
-                        declinerIds: [],
-                        roomId: room.id,
-                        forced: true,
-                        pitch,
-                    })
-                ));
+                const pitch = String(
+                    payload.pitch || `Blindsiding ${targetId} tonight — stick to the plan.`
+                );
+                const room = await this._forcePrivateMeet(memberIds, pitch);
+                const speakerId = memberIds[0];
+                const whisper = String(payload.message || (
+                    `Tonight we blindside ${targetId}. Write their name down and act surprised at council.`
+                )).trim();
+                if (!whisper) throw new Error('Blindside whisper needs a message');
+                this.rooms.send(speakerId, whisper);
+                // Push a fresh social directive so conspirators see the planted
+                // deal in their briefing before the operator jumps to Tribal.
+                await this._broadcastPhase();
                 this._emit();
-                return this.view();
+                return {
+                    ...this.view(),
+                    blindside: {
+                        roomId: room.id,
+                        conspiratorIds: memberIds,
+                        targetId,
+                        speakerId,
+                        message: whisper,
+                    },
+                };
             }
             case 'skip-challenge': {
                 this._requireActive();
@@ -1798,6 +1802,47 @@ export class SurvivorSessionManager {
                     && !question.answers.some(answer => answer.playerId === agentId))
                 .map(question => ({ id: question.id, prompt: question.prompt })),
         };
+    }
+
+    // Operator-forced private room for harness drills. Soft prompts stay soft;
+    // this is scenery the cast is dropped into, not a bot discovering the toolbox.
+    async _forcePrivateMeet(rawMemberIds, pitchText) {
+        this._requireRunning();
+        const memberIds = [...new Set(
+            (rawMemberIds || []).map(id => String(id || '').trim()).filter(Boolean)
+        )];
+        if (memberIds.length < 2) {
+            throw new Error('Force a private meet with at least two players');
+        }
+        if (memberIds.length > MAX_CONVERSATION_INVITEES + 1) {
+            throw new Error(
+                `A private room can hold at most ${MAX_CONVERSATION_INVITEES + 1} players`
+            );
+        }
+        const ownerId = memberIds[0];
+        const inviteeIds = memberIds.slice(1);
+        const eligible = this._privateTalkPlayerIds(ownerId);
+        const blocked = inviteeIds.filter(id => !eligible.includes(id));
+        if (blocked.length) {
+            throw new Error(`Not available for a private meet: ${blocked.join(', ')}`);
+        }
+        const pitch = String(pitchText || 'Host-forced private meet for the harness.');
+        const room = this.rooms.create(ownerId, inviteeIds, eligible, pitch);
+        for (const memberId of inviteeIds) {
+            this.rooms.join(room.id, memberId, eligible);
+        }
+        await Promise.allSettled(memberIds.map(id =>
+            this.notifyAgent(id, 'survivor-talk-resolved', {
+                requestId: null,
+                status: 'forced',
+                accepterIds: memberIds,
+                declinerIds: [],
+                roomId: room.id,
+                forced: true,
+                pitch,
+            })
+        ));
+        return room;
     }
 
     // The refusal a bot reads when it tries to socialise mid-challenge. It is

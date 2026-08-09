@@ -357,6 +357,48 @@
 
         .refusal strong { color: var(--red); font-weight: 600; }
 
+        .ask-card {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+
+        .ask-card:last-child { border-bottom: none; }
+        .ask-card.pending .ask-status { color: var(--amber); }
+        .ask-card.accepted .ask-status { color: var(--lime); }
+        .ask-card.declined .ask-status,
+        .ask-card.cancelled .ask-status { color: var(--red); }
+
+        .ask-top strong { color: var(--text); font-weight: 600; }
+        .ask-status {
+            font-family: var(--mono);
+            font-size: 0.66rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-left: 6px;
+        }
+
+        .ask-meta {
+            font-family: var(--mono);
+            font-size: 0.66rem;
+            color: var(--text-mute);
+            margin-top: 2px;
+        }
+
+        .ask-card .pitch {
+            font-style: italic;
+            color: var(--text);
+            margin-top: 3px;
+        }
+
+        .ask-answers {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
         /* —— Transcript —— */
         .transcript-body { padding: 14px 18px 28px; }
 

@@ -278,6 +278,19 @@
             ).join('');
             if (meetPrevious && partner.includes(meetPrevious)) meetSelect.value = meetPrevious;
         }
+        const blindsideSelect = el('harnessBlindsideSelect');
+        if (blindsideSelect) {
+            const previousTarget = blindsideSelect.value;
+            const a = select.value;
+            const b = meetSelect?.value;
+            const targets = remaining.filter(id => id !== a && id !== b);
+            blindsideSelect.innerHTML = targets.map(id =>
+                `<option value="${esc(id)}">${esc(id)}</option>`
+            ).join('');
+            if (previousTarget && targets.includes(previousTarget)) {
+                blindsideSelect.value = previousTarget;
+            }
+        }
         el('harnessSetImmunityBtn').disabled = !usable || game.phase !== 'strategy';
         el('harnessDeclareWinnerBtn').disabled = !usable || game.phase !== 'challenge';
         el('harnessSkipChallengeBtn').disabled = !usable || game.phase !== 'challenge';
@@ -287,6 +300,12 @@
             forceMeetBtn.disabled = !running
                 || !['strategy', 'tribal_council', 'reevaluation', 'voting', 'revote', 'jury_questioning', 'jury_voting'].includes(game.phase)
                 || remaining.length < 2;
+        }
+        const blindsideBtn = el('harnessBlindsideBtn');
+        if (blindsideBtn) {
+            blindsideBtn.disabled = !running
+                || !['strategy', 'tribal_council', 'reevaluation', 'voting', 'revote'].includes(game.phase)
+                || remaining.length < 3;
         }
         el('harnessHint').textContent = game.phase === 'challenge'
             ? (game.merged
@@ -1842,6 +1861,27 @@
             memberIds: [a, b],
             pitch: 'Host-forced private meet for the harness.',
         });
+    });
+    el('harnessBlindsideBtn')?.addEventListener('click', () => {
+        const a = el('harnessImmuneSelect').value;
+        const b = el('harnessMeetSelect').value;
+        const targetId = el('harnessBlindsideSelect').value;
+        if (!a || !b || !targetId || a === b || a === targetId || b === targetId) {
+            setStatus('Pick two conspirators and a different blindside target', true);
+            return;
+        }
+        control('blindside-whisper', {
+            memberIds: [a, b],
+            targetId,
+        });
+    });
+    el('harnessImmuneSelect')?.addEventListener('change', () => {
+        const game = currentGame();
+        if (game) renderHarness(game);
+    });
+    el('harnessMeetSelect')?.addEventListener('change', () => {
+        const game = currentGame();
+        if (game) renderHarness(game);
     });
     el('cancelSeasonBtn').addEventListener('click', () => {
         if (window.confirm('Cancel the active Survivor season and disconnect its bots?')) {
