@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { instrumentLLMModel } from './llm_audit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -87,5 +88,5 @@ export function createModel(profile) {
         throw new Error('Unknown api:', profile.api);
     }
     const model = new apiMap[profile.api](profile.model, profile.url, profile.params);
-    return model;
+    return instrumentLLMModel(model);
 }

@@ -10,6 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
 import { isModelHealthy, resetOutage } from './quota_guard.js';
+import { setLLMAuditModelDefaults, withLLMAuditContext } from './llm_audit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,6 +118,16 @@ export class Prompter {
             this.embedding_model = createModel({api: chat_model_profile.api});
         }
 
+        for (const model of new Set([
+            this.chat_model,
+            this.code_model,
+            this.memory_model,
+            this.vision_model,
+            this.embedding_model,
+        ])) {
+            setLLMAuditModelDefaults(model, { agent: this.agent.name });
+        }
+
         this.skill_libary = new SkillLibrary(agent, this.embedding_model);
         mkdirSync(`./bots/${name}`, { recursive: true });
         writeFileSync(`./bots/${name}/last_profile.json`, JSON.stringify(this.profile, null, 4), (err) => {
@@ -211,9 +222,9 @@ export class Prompter {
             let goal_text = '';
             for (let goal in last_goals) {
                 if (last_goals[goal])
-                    goal_text += `You recently successfully completed the goal ${goal}.\n`
+                    goal_text += `You recently successfully completed the goal ${goal}.\n`;
                 else
-                    goal_text += `You recently failed to complete the goal ${goal}.\n`
+                    goal_text += `You recently failed to complete the goal ${goal}.\n`;
             }
             prompt = prompt.replaceAll('$LAST_GOALS', goal_text.trim());
         }
@@ -243,6 +254,19 @@ export class Prompter {
         this.last_prompt_time = Date.now();
     }
 
+    async _sendAudited(kind, model, messages, systemPrompt, options = {}) {
+        return await withLLMAuditContext({
+            agent: this.agent.name,
+            kind,
+            memory: this.agent.history?.memory,
+            taskId: this.agent.task?.task_id,
+        }, async () => (
+            options.imageBuffer
+                ? await model.sendVisionRequest(messages, systemPrompt, options.imageBuffer)
+                : await model.sendRequest(messages, systemPrompt)
+        ));
+    }
+
     async promptConvo(messages) {
         this.most_recent_msg_time = Date.now();
         let current_msg_time = this.most_recent_msg_time;
@@ -263,7 +287,12 @@ export class Prompter {
             let generation;
 
             try {
-                generation = await this.chat_model.sendRequest(messages, prompt);
+                generation = await this._sendAudited(
+                    'conversation',
+                    this.chat_model,
+                    messages,
+                    prompt
+                );
                 if (typeof generation !== 'string') {
                     console.error('Error: Generated response is not a string', generation);
                     throw new Error('Generated response is not a string');
@@ -296,8 +325,8 @@ export class Prompter {
             }
 
             if (generation?.includes('</think>')) {
-                const [_, afterThink] = generation.split('</think>')
-                generation = afterThink
+                const [_, afterThink] = generation.split('</think>');
+                generation = afterThink;
             }
 
             return generation;
@@ -316,20 +345,23 @@ export class Prompter {
         let prompt = this.profile.coding;
         prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
 
-        let resp = await this.code_model.sendRequest(messages, prompt);
-        this.awaiting_coding = false;
-        await this._saveLog(prompt, messages, resp, 'coding');
-        return resp;
+        try {
+            const resp = await this._sendAudited('coding', this.code_model, messages, prompt);
+            await this._saveLog(prompt, messages, resp, 'coding');
+            return resp;
+        } finally {
+            this.awaiting_coding = false;
+        }
     }
 
     async promptMemSaving(to_summarize) {
         await this.checkCooldown();
         let prompt = this.profile.saving_memory;
         prompt = await this.replaceStrings(prompt, null, null, to_summarize);
-        let resp = await this.memory_model.sendRequest([], prompt);
+        let resp = await this._sendAudited('memory', this.memory_model, [], prompt);
         await this._saveLog(prompt, to_summarize, resp, 'memSaving');
         if (resp?.includes('</think>')) {
-            const [_, afterThink] = resp.split('</think>')
+            const [_, afterThink] = resp.split('</think>');
             resp = afterThink;
         }
         return resp;
@@ -341,7 +373,7 @@ export class Prompter {
         let messages = this.agent.history.getHistory();
         messages.push({role: 'user', content: new_message});
         prompt = await this.replaceStrings(prompt, null, null, messages);
-        let res = await this.chat_model.sendRequest([], prompt);
+        let res = await this._sendAudited('response-decision', this.chat_model, [], prompt);
         return res.trim().toLowerCase() === 'respond';
     }
 
@@ -351,7 +383,12 @@ export class Prompter {
      */
     async checkModelHealth() {
         resetOutage();
-        await this.chat_model.sendRequest([{ role: 'user', content: 'ping' }], 'Reply with OK.');
+        await this._sendAudited(
+            'health-check',
+            this.chat_model,
+            [{ role: 'user', content: 'ping' }],
+            'Reply with OK.'
+        );
         return isModelHealthy();
     }
 
@@ -359,7 +396,13 @@ export class Prompter {
         await this.checkCooldown();
         let prompt = this.profile.image_analysis;
         prompt = await this.replaceStrings(prompt, messages, null, null, null);
-        return await this.vision_model.sendVisionRequest(messages, prompt, imageBuffer);
+        return await this._sendAudited(
+            'vision',
+            this.vision_model,
+            messages,
+            prompt,
+            { imageBuffer }
+        );
     }
 
     async promptGoalSetting(messages, last_goals) {
@@ -368,11 +411,16 @@ export class Prompter {
         system_message = await this.replaceStrings(system_message, messages);
 
         let user_message = 'Use the below info to determine what goal to target next\n\n';
-        user_message += '$LAST_GOALS\n$STATS\n$INVENTORY\n$CONVO'
+        user_message += '$LAST_GOALS\n$STATS\n$INVENTORY\n$CONVO';
         user_message = await this.replaceStrings(user_message, messages, null, null, last_goals);
         let user_messages = [{role: 'user', content: user_message}];
 
-        let res = await this.chat_model.sendRequest(user_messages, system_message);
+        let res = await this._sendAudited(
+            'goal-setting',
+            this.chat_model,
+            user_messages,
+            system_message
+        );
 
         let goal = null;
         try {

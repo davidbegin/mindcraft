@@ -76,6 +76,7 @@ import { runMinecraftCommand } from './minecraft_server.js';
 import { getCursorProfiles } from './model_profiles.js';
 import { synchronizeProfileSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
+import { listLLMAuditEntries, readLLMAuditEntry } from '../models/llm_audit.js';
 import {
     allowBot,
     clearSpeechQueue,
@@ -2436,6 +2437,7 @@ export function createMindServer(host_public = false, port = 8080) {
     const indexHtml = path.join(publicDir, 'index.html');
     const survivorHtml = path.join(publicDir, 'survivor.html');
     const conversationsHtml = path.join(publicDir, 'conversations.html');
+    const llmAuditHtml = path.join(publicDir, 'llm_audit.html');
     const seasonsHtml = path.join(publicDir, 'seasons.html');
     const gamesArchiveHtml = path.join(publicDir, 'games_archive.html');
     const architectureHtml = path.join(publicDir, 'architecture.html');
@@ -2454,6 +2456,9 @@ export function createMindServer(host_public = false, port = 8080) {
     app.get('/conversations', (_req, res) => {
         res.sendFile(conversationsHtml);
     });
+    app.get('/llm-audit', (_req, res) => {
+        res.sendFile(llmAuditHtml);
+    });
     // Looking back at finished seasons has nothing to do with running one, so
     // the archive is its own page rather than a panel in the control room.
     app.get('/seasons', (_req, res) => {
@@ -2471,6 +2476,25 @@ export function createMindServer(host_public = false, port = 8080) {
     });
     app.get('/', (_req, res) => {
         res.redirect(302, '/colony');
+    });
+    app.get('/api/llm-audit', (req, res) => {
+        try {
+            const entries = listLLMAuditEntries({
+                agent: typeof req.query.agent === 'string' ? req.query.agent : null,
+                limit: req.query.limit,
+            });
+            res.json({ success: true, entries });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+    app.get('/api/llm-audit/:agent/:id', (req, res) => {
+        const entry = readLLMAuditEntry(req.params.agent, req.params.id);
+        if (!entry) {
+            res.status(404).json({ success: false, error: 'Audit entry not found' });
+            return;
+        }
+        res.json({ success: true, entry });
     });
     // Serve bot data (POV recordings, screenshots) so the UI can play/download them
     app.use('/bots', express.static(path.join(projectRoot, 'bots')));
