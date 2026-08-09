@@ -377,11 +377,12 @@ This is the implemented system as of the quiz pass, not the desired design.
 
 ### Audio, recording, and archive
 
-- `src/agent/speak.js` has a FIFO queue, hard mute, full/per-bot queue clearing, per-line volume, and generation-token stale checks. `/api/voice/mute` exposes hard mute.
+- `src/agent/speak.js` has a FIFO queue, soft/hard mute, full/per-bot queue clearing, per-bot host volume (0–100), per-line volume, generation-token + age/depth stale drops (`setSpeechLagLimits`). `/api/voice/mute`, `/api/voice/flush`, and `/api/voice/bots/.../volume` expose them; Survivor HUD + main Voices modal both have Big Mute / Flush / per-bot Mute.
+- Pause soft-mutes for catch-up on resume (`onPauseMute` / `pausedMuteMode`).
 - Survivor council narration and answers use the same TTS path; TTS failures appear in the operator problems feed.
 - `SurvivorCoordinator` writes public/private events to `journal.jsonl`; `SurvivorSeasonArchive` rebuilds rounds, councils, votes, private threads, and refusals for `seasons.html`.
 - Recording flags can enable POV and contest-camera MP4s from generic game setup.
-- Missing versus plan: soft mute, dashboard mute/flush/per-bot volume, pause↔mute, queue-depth staleness cap, TTS-synced/full-season video, clearer recording controls, and params stamps.
+- Missing versus plan: TTS-synced/full-season video, clearer recording controls, and params stamps. (Mute/flush/per-bot volume/stale-cap from Quiz 7 are in.)
 
 ### Models, personas, and season params
 
@@ -431,10 +432,13 @@ Existing challenge catalog issues (`BEG-240`–`BEG-247`) remain in the project,
 
 ## Concrete near-term steps (this engagement)
 
-1. **Complete:** run deep quizzes (above) with operator; annotate likes/dislikes live.
+1. **Complete:** run deep quizzes (above) with operator; annotate likes/dislikes live. Quizzes 1–8 recorded.
 2. **Complete:** write a code-backed **current-system map** (phases, private rooms, council, vote, memory, audio/recording, params).
 3. **Complete:** translate scorecard gaps into **Linear issues** under [BEG-248](https://linear.app/terminaldotshop/issue/BEG-248/watchable-survivor-mini-season), with acceptance criteria tied to the north star.
-4. First build slice selected: **[BEG-251 — Tribal scenario harness + host-held vote path](https://linear.app/terminaldotshop/issue/BEG-251/build-live-tribal-scenario-harness-and-host-held-vote-path)**. Audio mute ([BEG-252](https://linear.app/terminaldotshop/issue/BEG-252/add-survivor-softhard-mute-and-voice-queue-controls)) can proceed in parallel.
+4. **Shipped / Done in Linear:** harness + host-held vote ([BEG-251](https://linear.app/terminaldotshop/issue/BEG-251/build-live-tribal-scenario-harness-and-host-held-vote-path)), pause control ([BEG-249](https://linear.app/terminaldotshop/issue/BEG-249/replace-pausesuspend-with-one-legible-cast-preserving-control)), challenge skip/immunity/teams ([BEG-253](https://linear.app/terminaldotshop/issue/BEG-253/add-challenge-skip-immunity-override-and-real-tribe-setup)).
+5. **In progress:** memory instrumentation drills ([BEG-250](https://linear.app/terminaldotshop/issue/BEG-250/instrument-survivor-memory-and-relationship-effects)), private conspiracy ([BEG-254](https://linear.app/terminaldotshop/issue/BEG-254/make-private-conspiracy-usable-and-auditable)).
+6. **Done (Quiz 7 audio):** soft/hard mute, flush, pause tie-in, stale-line age/depth cap, per-bot mute/volume — [BEG-252](https://linear.app/terminaldotshop/issue/BEG-252/add-survivor-softhard-mute-and-voice-queue-controls).
+7. **Backlog next:** recording archive ([BEG-255](https://linear.app/terminaldotshop/issue/BEG-255/produce-a-reliable-survivor-season-av-journal-archive)), params matrix stamp ([BEG-256](https://linear.app/terminaldotshop/issue/BEG-256/define-and-stamp-the-bounded-survivor-params-matrix)).
 
 ---
 
