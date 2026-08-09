@@ -117,6 +117,10 @@
             (total, thread) => total + thread.messageCount,
             0
         );
+        const stats = season.conversationStats || {};
+        el('sbAsked').textContent = stats.asked ?? 0;
+        el('sbAccepted').textContent = stats.accepted ?? 0;
+        el('sbRefused').textContent = stats.declined ?? refusals.length;
     }
 
     function renderRoster() {
@@ -408,6 +412,7 @@
                 status: data.status,
                 round: data.round,
                 phase: data.phase,
+                conversationStats: data.conversationStats || null,
             };
             roster = data.players || [];
             threads = data.threads || [];

@@ -6,7 +6,7 @@ import {
     buildSurvivorPhaseAnnouncement,
 } from '../contest/contest_announcer.js';
 import { validateGameParticipants } from '../contest/game_session_manager.js';
-import { ConversationRequestRegistry } from './conversation_requests.js';
+import { ConversationRequestRegistry, MAX_CONVERSATION_INVITEES } from './conversation_requests.js';
 import { buildChallengeDeck, resolveTeamChallenge } from './survivor_challenges.js';
 import { COUNCIL_PHASES, HOST_HELD_VOTE_PHASES, MIN_SURVIVOR_PLAYERS } from './survivor_game.js';
 import { buildPlayerBriefing } from './survivor_memory.js';
@@ -113,17 +113,6 @@ export class SurvivorSessionManager {
     // so the conversation browser can show a full transcript per thread.
     // Returns the event stamped with when and where it happened, which is what
     // the operator sockets should carry.
-    recordRoomEvent(event) {
-        if (!event?.type) return null;
-        const stamped = this._stamp(event);
-        this._pushSecretEvent(stamped);
-        if (stamped.roomId) this._recordThreadEvent(stamped);
-        // Rooms and relationships live in view(), and nothing else in this path
-        // changes session state, so push the refresh without re-persisting.
-        this.onUpdate(this.view());
-        return stamped;
-    }
-
     // Conversation requests are secret in the same way rooms are: operators see
     // everything, bots only see their own.
     recordConversationEvent(event) {
@@ -131,8 +120,50 @@ export class SurvivorSessionManager {
         const stamped = this._stamp(event);
         this._pushSecretEvent(stamped);
         this._recordRefusals(stamped);
+        this._bumpTalkStats(stamped);
         this.onUpdate(this.view());
         return stamped;
+    }
+
+    recordRoomEvent(event) {
+        if (!event?.type) return null;
+        const stamped = this._stamp(event);
+        this._pushSecretEvent(stamped);
+        if (stamped.roomId) this._recordThreadEvent(stamped);
+        this._bumpTalkStats(stamped);
+        // Rooms and relationships live in view(), and nothing else in this path
+        // changes session state, so push the refresh without re-persisting.
+        this.onUpdate(this.view());
+        return stamped;
+    }
+
+    _bumpTalkStats(event) {
+        if (!this.active) return;
+        if (!this.active.talkStats) {
+            this.active.talkStats = {
+                asked: 0,
+                accepted: 0,
+                declined: 0,
+                roomsOpened: 0,
+            };
+        }
+        const stats = this.active.talkStats;
+        switch (event?.type) {
+            case 'talk.requested':
+                stats.asked += 1;
+                break;
+            case 'talk.accepted':
+                stats.accepted += 1;
+                break;
+            case 'talk.declined':
+                stats.declined += 1;
+                break;
+            case 'room.created':
+                stats.roomsOpened += 1;
+                break;
+            default:
+                break;
+        }
     }
 
     secretEvents() {
@@ -158,6 +189,8 @@ export class SurvivorSessionManager {
                 .map(id => this._transcriptPlayer(id, game, threads)),
             threads,
             refusals: clone(this.refusals),
+            conversationStats: this._conversationStats(),
+            conversationRequests: this.conversations.view(),
         };
     }
 
@@ -340,6 +373,7 @@ export class SurvivorSessionManager {
             standings: buildSurvivorStandings(game),
             relationships: buildSurvivorRelationships(game, this.roomHistory),
             conversationRequests: this.conversations.view(),
+            conversationStats: this._conversationStats(),
             problems: clone(this.problems),
             operatorRunState: this._operatorRunState(game),
             rooms: this.rooms.view().map(room => ({
@@ -349,6 +383,24 @@ export class SurvivorSessionManager {
                 invitedIds: room.invitedIds,
                 messageCount: room.messages.length,
             })),
+        };
+    }
+
+    // Season-long ask/accept/refuse counts for diagnosing underuse before
+    // cranking prompt pressure. Lives on the session so a capped secret feed
+    // cannot silently zero the drill meters.
+    _conversationStats() {
+        const stats = this.active?.talkStats || {
+            asked: 0,
+            accepted: 0,
+            declined: 0,
+            roomsOpened: 0,
+        };
+        return {
+            ...stats,
+            pending: this.conversations.pending().length,
+            openRooms: this.rooms.view().length,
+            refusalsLogged: this.refusals.length,
         };
     }
 
@@ -736,6 +788,12 @@ export class SurvivorSessionManager {
             readiness: null,
             // Harness / memory-flip proof: before targets (reeval) vs ballots.
             voteProof: { beforeTargets: {}, afterTargets: {}, councilCiting: {} },
+            talkStats: {
+                asked: 0,
+                accepted: 0,
+                declined: 0,
+                roomsOpened: 0,
+            },
         };
         this._emit();
         try {
@@ -1368,6 +1426,48 @@ export class SurvivorSessionManager {
                 if (after.phase === 'strategy' || before.phase === 'strategy') {
                     await this._broadcastPhase();
                 }
+                this._emit();
+                return this.view();
+            }
+            case 'force-private-meet': {
+                // Harness: open a room immediately so drills do not wait on bots
+                // discovering !requestPrivateChat. Soft prompts stay soft; this is
+                // operator-forced scenery for watchability tests.
+                this._requireRunning();
+                const memberIds = [...new Set(
+                    (payload.memberIds || []).map(id => String(id || '').trim()).filter(Boolean)
+                )];
+                if (memberIds.length < 2) {
+                    throw new Error('Force a private meet with at least two players');
+                }
+                if (memberIds.length > MAX_CONVERSATION_INVITEES + 1) {
+                    throw new Error(
+                        `A private room can hold at most ${MAX_CONVERSATION_INVITEES + 1} players`
+                    );
+                }
+                const ownerId = memberIds[0];
+                const inviteeIds = memberIds.slice(1);
+                const eligible = this._privateTalkPlayerIds(ownerId);
+                const blocked = inviteeIds.filter(id => !eligible.includes(id));
+                if (blocked.length) {
+                    throw new Error(`Not available for a private meet: ${blocked.join(', ')}`);
+                }
+                const pitch = String(payload.pitch || 'Host-forced private meet for the harness.');
+                const room = this.rooms.create(ownerId, inviteeIds, eligible, pitch);
+                for (const memberId of inviteeIds) {
+                    this.rooms.join(room.id, memberId, eligible);
+                }
+                await Promise.allSettled(memberIds.map(id =>
+                    this.notifyAgent(id, 'survivor-talk-resolved', {
+                        requestId: null,
+                        status: 'forced',
+                        accepterIds: memberIds,
+                        declinerIds: [],
+                        roomId: room.id,
+                        forced: true,
+                        pitch,
+                    })
+                ));
                 this._emit();
                 return this.view();
             }

@@ -25,6 +25,9 @@ const PRIVATE_TALK_TOOLBOX = [
     '  !acceptPrivateChat("request id") or !declinePrivateChat("request id", "reason") — you may refuse anyone.',
     '  !sendPrivateMessage("...") — talks to everyone currently in your private room.',
     '  !leavePrivateGroup() — walks out, which frees you to be pulled aside by someone else.',
+    'Prefer small alliance rooms (2–4 people), not only 1:1 chats — a three-person',
+    'deal is often stronger than a secret pair once votes are counted.',
+    'You do not have to invite anyone. Use the toolbox when it helps; silence is also a move.',
     'Refusing to talk is a real move, and so is being refused. Note who will not meet with you.',
     'Lying in private is legal. Being caught lying is what costs you the jury, so weigh it.',
 ].join('\n');

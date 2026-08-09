@@ -1720,6 +1720,73 @@ test('baseline Survivor scenario decks stay on proven challenge games', async ()
     }
 });
 
+test('talk invites stay open until strategy ends and stats count ask/accept/refuse', async () => {
+    const { manager, contestCoordinator, advance } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    const opened = await manager.handleAgentCommand('Bot1', 'talk-request', {
+        inviteeIds: ['Bot2', 'Bot3'],
+        pitch: 'three-person deal',
+    });
+    const requestId = opened.data.requestId;
+    const pending = manager.view().conversationRequests.find(item => item.id === requestId);
+    assert.equal(pending.expiresAt, null, 'no mid-strategy TTL');
+    assert.equal(manager.view().conversationStats.asked, 1);
+
+    // Wall-clock far past the old 30s TTL must not expire the invite.
+    advance(120_000);
+    assert.equal(manager.conversations.dueRequests().length, 0);
+    assert.equal(manager.view().conversationRequests.find(item => item.id === requestId).status, 'pending');
+
+    await manager.handleAgentCommand('Bot2', 'talk-respond', {
+        requestId,
+        accepted: true,
+    });
+    await manager.handleAgentCommand('Bot3', 'talk-respond', {
+        requestId,
+        accepted: false,
+        reason: 'not today',
+    });
+    const stats = manager.view().conversationStats;
+    assert.equal(stats.accepted, 1);
+    assert.equal(stats.declined, 1);
+    assert.equal(stats.roomsOpened, 1);
+    assert.ok(manager.view().rooms.some(room =>
+        room.memberIds.includes('Bot1') && room.memberIds.includes('Bot2')
+    ));
+});
+
+test('host can force a private meet for harness drills', async () => {
+    const { manager, contestCoordinator, notifications } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+
+    await manager.control('force-private-meet', {
+        memberIds: ['Bot1', 'Bot2', 'Bot3'],
+        pitch: 'forced alliance',
+    });
+    const room = manager.view().rooms.find(item => item.memberIds.includes('Bot1'));
+    assert.ok(room);
+    assert.deepEqual([...room.memberIds].sort(), ['Bot1', 'Bot2', 'Bot3']);
+    assert.equal(manager.view().conversationStats.roomsOpened, 1);
+    assert.ok(notifications.some(item =>
+        item.event === 'survivor-talk-resolved' && item.payload.forced === true
+    ));
+});
+
 test('fire-making requires operator confirmation', async () => {
     const { manager, coordinator } = await createManager();
     await manager.start({

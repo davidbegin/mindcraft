@@ -1074,6 +1074,11 @@
                 <button type="button" id="harnessSkipChallengeBtn" class="btn btn-ghost">Skip challenge</button>
                 <button type="button" id="harnessJumpCouncilBtn" class="btn btn-amber">Jump to Tribal</button>
             </div>
+            <div class="start-row" style="flex-wrap:wrap;gap:8px;margin-top:8px">
+                <label class="field-label" for="harnessMeetSelect" style="margin:0">Force private meet</label>
+                <select id="harnessMeetSelect" aria-label="Second player for forced private meet"></select>
+                <button type="button" id="harnessForceMeetBtn" class="btn btn-ghost" title="Open a private room now between the immunity pick and this player">Open room now</button>
+            </div>
             <div class="rel-signals" id="harnessHint" style="margin-top:8px"></div>
             <div class="rel-signals" id="recordingHint" style="margin-top:8px"></div>
         </div>
@@ -1232,6 +1237,7 @@
                     <span class="count" id="roomCount"></span>
                 </div>
                 <div class="card-body">
+                    <div class="rel-signals" id="talkStats" style="margin:0 0 10px"></div>
                     <div id="talkRequests"></div>
                     <div id="rooms"></div>
                     <div class="secret-feed" id="secretFeed"></div>

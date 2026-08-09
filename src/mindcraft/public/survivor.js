@@ -268,10 +268,25 @@
         ).join('');
         if (previous && remaining.includes(previous)) select.value = previous;
         else if ((game.immunityIds || [])[0]) select.value = game.immunityIds[0];
+        const meetSelect = el('harnessMeetSelect');
+        if (meetSelect) {
+            const meetPrevious = meetSelect.value;
+            const partner = remaining.filter(id => id !== select.value);
+            meetSelect.innerHTML = partner.map(id =>
+                `<option value="${esc(id)}">${esc(id)}</option>`
+            ).join('');
+            if (meetPrevious && partner.includes(meetPrevious)) meetSelect.value = meetPrevious;
+        }
         el('harnessSetImmunityBtn').disabled = !usable || game.phase !== 'strategy';
         el('harnessDeclareWinnerBtn').disabled = !usable || game.phase !== 'challenge';
         el('harnessSkipChallengeBtn').disabled = !usable || game.phase !== 'challenge';
         el('harnessJumpCouncilBtn').disabled = !usable;
+        const forceMeetBtn = el('harnessForceMeetBtn');
+        if (forceMeetBtn) {
+            forceMeetBtn.disabled = !running
+                || !['strategy', 'tribal_council', 'reevaluation', 'voting', 'revote', 'jury_questioning', 'jury_voting'].includes(game.phase)
+                || remaining.length < 2;
+        }
         el('harnessHint').textContent = game.phase === 'challenge'
             ? (game.merged
                 ? 'Declare a winner, skip (assigns immunity), or jump straight to Tribal.'
@@ -423,6 +438,13 @@
     // —— Conversation requests ————————————————————————————————————
 
     function renderTalkRequests() {
+        const stats = state?.conversationStats;
+        const statsBox = el('talkStats');
+        if (statsBox) {
+            statsBox.textContent = stats
+                ? `Talk drill: ${stats.asked} asked · ${stats.accepted} accepted · ${stats.declined} refused · ${stats.roomsOpened} rooms opened · ${stats.pending} pending · ${stats.openRooms} open now`
+                : '';
+        }
         const requests = (state?.conversationRequests || [])
             .filter(request => request.status === 'pending' || request.status === 'declined');
         const box = el('talkRequests');
@@ -438,9 +460,13 @@
                     ? `<span class="answer-chip yes">${esc(id)} · yes</span>`
                     : `<span class="answer-chip no">${esc(id)} · no${response.reason ? ` · ${esc(response.reason)}` : ''}</span>`;
             }).join('');
+            const ttl = request.expiresAt == null
+                ? 'open until strategy ends'
+                : `expires ${new Date(request.expiresAt).toLocaleTimeString()}`;
             return `<div class="talk-card ${esc(request.status)}">
                 <div class="ask"><strong>${esc(request.requesterId)}</strong>
-                    asked ${esc(names(request.inviteeIds))} to talk</div>
+                    asked ${esc(names(request.inviteeIds))} to talk
+                    <span class="rel-signals"> · ${esc(ttl)}</span></div>
                 ${request.pitch ? `<div class="pitch">“${esc(request.pitch)}”</div>` : ''}
                 <div class="answers">${answers}</div>
             </div>`;
@@ -1718,6 +1744,18 @@
     el('harnessJumpCouncilBtn').addEventListener('click', () =>
         control('jump-to-council', harnessPayload())
     );
+    el('harnessForceMeetBtn')?.addEventListener('click', () => {
+        const a = el('harnessImmuneSelect').value;
+        const b = el('harnessMeetSelect').value;
+        if (!a || !b || a === b) {
+            setStatus('Pick two different players for a forced private meet', true);
+            return;
+        }
+        control('force-private-meet', {
+            memberIds: [a, b],
+            pitch: 'Host-forced private meet for the harness.',
+        });
+    });
     el('cancelSeasonBtn').addEventListener('click', () => {
         if (window.confirm('Cancel the active Survivor season and disconnect its bots?')) {
             control('cancel', { reason: 'Cancelled from the Survivor control room' });
