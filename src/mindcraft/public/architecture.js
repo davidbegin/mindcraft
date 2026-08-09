@@ -44,6 +44,8 @@ const MERMAID_CONFIG = {
 
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
+/** Below roughly this scale, Mermaid label text stops being legible. */
+const READABLE_SCALE = 0.8;
 
 const el = {
     sections: document.getElementById('sections'),
@@ -214,15 +216,19 @@ function fitDiagram(view) {
     const stageHeight = stage.clientHeight;
     if (!stageWidth || !stageHeight || !view.width || !view.height) return;
 
-    const padding = 24;
-    const scale = Math.min(
-        (stageWidth - padding * 2) / view.width,
-        (stageHeight - padding * 2) / view.height,
-        1.35,
-    );
+    const padding = 20;
+    const widthScale = (stageWidth - padding * 2) / view.width;
+    const heightScale = (stageHeight - padding * 2) / view.height;
+
+    // Tall diagrams would shrink past the point of readability if we always fit
+    // the whole thing, so fall back to fitting the width and let the user pan down.
+    let scale = Math.min(widthScale, heightScale, 1.35);
+    scale = Math.max(scale, Math.min(widthScale, READABLE_SCALE));
+
     view.scale = Math.max(MIN_SCALE, scale);
+    const scaledHeight = view.height * view.scale;
     view.x = (stageWidth - view.width * view.scale) / 2;
-    view.y = (stageHeight - view.height * view.scale) / 2;
+    view.y = scaledHeight > stageHeight ? padding : (stageHeight - scaledHeight) / 2;
     applyTransform(view);
 }
 
@@ -246,46 +252,48 @@ function wirePanAndZoom(view, figure) {
         zoomBy(view, event.deltaY < 0 ? 1.12 : 1 / 1.12, event.clientX - rect.left, event.clientY - rect.top);
     }, { passive: false });
 
-    let pointerId = null;
     let startX = 0;
     let startY = 0;
     let originX = 0;
     let originY = 0;
+    let dragging = false;
     let moved = false;
+
+    // Deliberately no setPointerCapture here: capturing retargets the click that
+    // follows pointerup to the stage, which would stop nodes from ever being clicked.
+    const onMove = (event) => {
+        if (!dragging) return;
+        const dx = event.clientX - startX;
+        const dy = event.clientY - startY;
+        if (!moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+        moved = true;
+        view.x = originX + dx;
+        view.y = originY + dy;
+        applyTransform(view);
+    };
+
+    const onUp = () => {
+        dragging = false;
+        stage.classList.remove('grabbing');
+        window.removeEventListener('pointermove', onMove);
+        // Swallow only the click that ends this drag, never a later one.
+        view.suppressClick = moved;
+        if (moved) setTimeout(() => { view.suppressClick = false; }, 0);
+    };
 
     stage.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
-        pointerId = event.pointerId;
         startX = event.clientX;
         startY = event.clientY;
         originX = view.x;
         originY = view.y;
+        dragging = true;
         moved = false;
         stage.classList.add('grabbing');
-        stage.setPointerCapture(pointerId);
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp, { once: true });
     });
 
-    stage.addEventListener('pointermove', (event) => {
-        if (pointerId !== event.pointerId) return;
-        const dx = event.clientX - startX;
-        const dy = event.clientY - startY;
-        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-        view.x = originX + dx;
-        view.y = originY + dy;
-        applyTransform(view);
-    });
-
-    const endPan = (event) => {
-        if (pointerId !== event.pointerId) return;
-        stage.classList.remove('grabbing');
-        stage.releasePointerCapture(pointerId);
-        pointerId = null;
-        // Suppress the click that follows a drag so panning never opens the drawer.
-        view.suppressClick = moved;
-    };
-
-    stage.addEventListener('pointerup', endPan);
-    stage.addEventListener('pointercancel', endPan);
     stage.addEventListener('dblclick', () => fitDiagram(view));
 
     figure.querySelector('.diagram-tools').addEventListener('click', (event) => {
@@ -314,19 +322,31 @@ function wirePanAndZoom(view, figure) {
     });
 }
 
-/** Mermaid ids look like `flowchart-mindServer-3`; recover the id from the source. */
+const NODE_KEYS_BY_LOWERCASE = new Map(Object.keys(NODES).map((key) => [key.toLowerCase(), key]));
+
+/**
+ * Recover the source node id from a rendered element. Mermaid ids look like
+ * `mmd-topology-flowchart-mindServer-3`: the render id, a diagram-type marker,
+ * the id from the source, then an index. Both the prefix shape and the casing
+ * have moved between Mermaid releases, so match leniently rather than exactly.
+ */
 function nodeKeyFor(element) {
     const dataId = element.dataset?.id;
     if (dataId && NODES[dataId]) return dataId;
 
     const raw = element.id || '';
-    const prefixed = raw.match(/^(?:flowchart|state|stateDiagram)[-_](.+?)-\d+$/);
-    if (prefixed && NODES[prefixed[1]]) return prefixed[1];
+    if (!raw) return null;
 
-    const trailing = raw.match(/^(.+?)-\d+$/);
-    if (trailing && NODES[trailing[1]]) return trailing[1];
+    const withoutIndex = raw.replace(/-\d+$/, '');
+    const afterMarker = withoutIndex.replace(/^.*?(?:flowchart|stateDiagram|state|classId)[-_]/, '');
 
-    return NODES[raw] ? raw : null;
+    for (const candidate of [afterMarker, withoutIndex, raw]) {
+        if (NODES[candidate]) return candidate;
+        const matched = NODE_KEYS_BY_LOWERCASE.get(candidate.toLowerCase());
+        if (matched) return matched;
+    }
+
+    return null;
 }
 
 function wireNodes(view) {
