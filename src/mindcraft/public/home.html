@@ -603,10 +603,13 @@
         // —— Colony ——
         function loadColony() {
             socket.emit('colony-status', result => {
+                // The coordinator is created lazily when the first colony bot
+                // registers, so "no coordinator" usually means "nobody home yet".
                 if (!result?.success) {
                     setActive('colonyCard', false);
-                    setText('colonyValue', 'Disabled');
-                    setText('colonyDetail', result?.error || 'Colony coordinator unavailable.');
+                    setText('colonyValue', 'Not running');
+                    setText('colonyDetail', 'Starts when the first colony bot registers.');
+                    setText('colonyLinkState', '');
                     return;
                 }
                 renderColony(result.data);
