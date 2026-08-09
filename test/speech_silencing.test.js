@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { allowBot, clearSpeechQueue, isBotSilenced, playSpeech, silenceBot } from '../src/agent/speak.js';
+import {
+    allowBot,
+    clearBotVolumes,
+    clearSpeechQueue,
+    getBotVolume,
+    getMuteMode,
+    getSpeechQueueDepth,
+    isBotSilenced,
+    playSpeech,
+    setBotVolume,
+    setMuteMode,
+    setSpeechLagLimits,
+    silenceBot,
+} from '../src/agent/speak.js';
 import { getVoiceHealth, resetVoiceHealth } from '../src/agent/tts_health.js';
 
 // Audio is supplied directly so these tests never reach a TTS provider. A line
@@ -11,12 +24,15 @@ function queueLine(botName, audioPromise) {
     playSpeech({ text: `${botName} says something.`, model: 'elevenlabs', botName, audioPromise });
 }
 
-function settle() {
-    return new Promise(resolve => setTimeout(resolve, 50));
+function settle(ms = 50) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 test.afterEach(() => {
     clearSpeechQueue();
+    setMuteMode('off');
+    clearBotVolumes();
+    setSpeechLagLimits({ maxAgeMs: 20_000, maxQueue: 8 });
     for (const name of ['chip', 'kimmy', 'billy']) allowBot(name);
     resetVoiceHealth();
 });
@@ -74,4 +90,75 @@ test('a line that was already generating is dropped once its bot is silenced', a
 
     assert.equal(getVoiceHealth().failureCount, 0);
     assert.equal(isBotSilenced('chip'), true);
+});
+
+test('hard mute drops enqueue and soft mute keeps generating without playing', async () => {
+    resetVoiceHealth();
+    setMuteMode('hard');
+    assert.equal(getMuteMode(), 'hard');
+    queueLine('chip', Promise.reject(new Error('should never play')));
+    await settle();
+    assert.equal(getSpeechQueueDepth(), 0);
+    assert.equal(getVoiceHealth().failureCount, 0);
+
+    setMuteMode('soft');
+    assert.equal(getMuteMode(), 'soft');
+    let release;
+    queueLine('kimmy', new Promise(resolve => { release = resolve; }));
+    assert.equal(getSpeechQueueDepth(), 1);
+    release('AUDIO');
+    await settle(80);
+    // Soft mute must not start playback, so the failed-playback probe stays quiet
+    // and the line remains queued for catch-up.
+    assert.equal(getVoiceHealth().failureCount, 0);
+    assert.equal(getSpeechQueueDepth(), 1);
+
+    setMuteMode('off');
+});
+
+test('queue depth cap drops the oldest backlog', () => {
+    setMuteMode('soft'); // hold lines without playing
+    setSpeechLagLimits({ maxQueue: 2 });
+    queueLine('chip', Promise.resolve('A'));
+    queueLine('kimmy', Promise.resolve('B'));
+    queueLine('billy', Promise.resolve('C'));
+    assert.equal(getSpeechQueueDepth(), 2);
+});
+
+test('aged-out lines are dropped instead of playing late', async () => {
+    resetVoiceHealth();
+    setMuteMode('soft');
+    setSpeechLagLimits({ maxAgeMs: 5 });
+    let release;
+    queueLine('chip', new Promise(resolve => { release = resolve; }));
+    assert.equal(getSpeechQueueDepth(), 1);
+    await settle(20);
+    release('AUDIO');
+    setMuteMode('off');
+    await settle(80);
+    assert.equal(getSpeechQueueDepth(), 0);
+    assert.equal(
+        getVoiceHealth().failureCount,
+        0,
+        'aged-out audio must be discarded, not played'
+    );
+});
+
+test('per-bot volume 0 quietens one cast member and clears their backlog', async () => {
+    resetVoiceHealth();
+    setMuteMode('soft');
+    queueLine('chip', Promise.resolve('AUDIO'));
+    queueLine('kimmy', Promise.resolve('AUDIO'));
+    assert.equal(getSpeechQueueDepth(), 2);
+
+    assert.equal(setBotVolume('chip', 0), 0);
+    assert.equal(getBotVolume('chip'), 0);
+    assert.equal(getBotVolume('kimmy'), 100);
+    // Chip's backlog is flushed; Kimmy stays queued.
+    assert.equal(getSpeechQueueDepth(), 1);
+
+    setMuteMode('off');
+    await settle(80);
+    // Kimmy still reaches the failure probe (ffplay missing / bad audio), chip does not.
+    assert.notEqual(getVoiceHealth().lastFailure?.botName, 'chip');
 });
