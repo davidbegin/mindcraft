@@ -80,8 +80,10 @@ import { listLLMAuditEntries, readLLMAuditEntry } from '../models/llm_audit.js';
 import {
     allowBot,
     clearSpeechQueue,
+    getMuteMode,
     isBotSilenced,
     playSpeech,
+    setMuteMode,
     setMuted,
     silenceBot,
     toggleMuted,
@@ -626,8 +628,17 @@ async function ensureContest(options) {
                     recordError: (error, context) => launchTelemetry.recordError(error, context),
                 },
                 getContestPreset: getContestGamePreset,
-                prepareArena: (preset, participants) =>
-                    contestArenaManager.prepare(preset, participants),
+                prepareArena: (preset, participants, options) =>
+                    contestArenaManager.prepare(preset, participants, options),
+                onPauseMute: () => {
+                    setMuteMode('soft');
+                    io.emit('voice-mute', { muted: true, mode: 'soft' });
+                    return 'soft';
+                },
+                onResumeMute: () => {
+                    setMuteMode('off');
+                    io.emit('voice-mute', { muted: false, mode: 'off' });
+                },
                 sendDirective: sendGameDirective,
                 sendChallengeConfig: (agentRef, config) => {
                     const connection = getConnection(agentRef);
@@ -2505,20 +2516,33 @@ export function createMindServer(host_public = false, port = 8080) {
     // Generated bot skins (same /skins path the MC container sees them under)
     app.use('/skins', express.static(SKINS_DIR));
 
-    // Global TTS mute toggle for a host-side hotkey (e.g. Hammerspoon/Raycast).
-    // POST with no args toggles; ?muted=true|false sets an explicit state.
-    // GET reports the current state.
+    // Global TTS mute for a host-side hotkey (e.g. Hammerspoon/Raycast) and the
+    // Big Mute controls. Modes: off | soft (queue+generate, no play) | hard
+    // (drop queue, stop ElevenLabs spend). Legacy ?muted=true maps to hard.
     const applyMute = (req, res) => {
-        const q = req.query.muted;
-        const next = q === undefined
-            ? toggleMuted()
-            : setMuted(q === 'true' || q === '1');
-        io.emit('voice-mute', { muted: next });
-        res.json({ success: true, muted: next });
+        const mode = req.query.mode ?? req.body?.mode;
+        let nextMode;
+        if (mode !== undefined) {
+            nextMode = setMuteMode(String(mode));
+        } else {
+            const q = req.query.muted ?? req.body?.muted;
+            nextMode = q === undefined
+                ? (toggleMuted() ? 'hard' : 'off')
+                : setMuteMode(q === 'true' || q === '1' || q === true ? 'hard' : 'off');
+        }
+        const payload = { muted: nextMode !== 'off', mode: nextMode };
+        io.emit('voice-mute', payload);
+        res.json({ success: true, ...payload });
     };
     app.post('/api/voice/mute', applyMute);
     app.get('/api/voice/mute', (_req, res) => {
-        res.json({ success: true, muted: isMuted() });
+        const mode = getMuteMode();
+        res.json({ success: true, muted: mode !== 'off', mode });
+    });
+    app.post('/api/voice/flush', (_req, res) => {
+        clearSpeechQueue();
+        io.emit('voice-flush', { ok: true });
+        res.json({ success: true });
     });
 
     // Why the bots went quiet, without digging through the server console.

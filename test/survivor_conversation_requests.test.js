@@ -66,6 +66,15 @@ test('silence at the deadline counts as a refusal', () => {
     assert.deepEqual(accepterIds, ['Billy']);
 });
 
+test('with no invite TTL, pending asks never become due on the clock', () => {
+    const { registry, advance } = registryWithClock();
+    const request = registry.open('Alice', ['Billy'], eligible);
+    assert.equal(request.expiresAt, null);
+    advance(120_000);
+    assert.deepEqual(registry.dueRequests(), []);
+    assert.equal(registry.pending()[0].status, 'pending');
+});
+
 test('a bot waits on one answer at a time and cannot re-ask someone who just refused', () => {
     const { registry, advance } = registryWithClock({ declineCooldownMs: 45_000 });
     const first = registry.open('Alice', ['Billy'], eligible);

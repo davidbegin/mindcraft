@@ -7,7 +7,7 @@
 // both from the event log so nothing has to be duplicated onto the bots
 // themselves, and so a bot can never accidentally read a room it was not in.
 
-const DEFAULT_COUNCIL_ROUNDS = 3;
+const DEFAULT_COUNCIL_ROUNDS = 6;
 const DEFAULT_PRIVATE_LINES = 30;
 
 function playerName(id) {
@@ -146,13 +146,13 @@ function privateHistoryFor(privateLog, playerId, limit) {
 
 export const JURY_LENS = [
     'HOW YOU WIN: you do not win by outlasting people, you win because the people',
-    'you voted out choose you. Every player you eliminate after the merge becomes a',
-    'juror, and the jury alone picks the Sole Survivor. So every vote you cast is',
-    'also a job interview with the person you just cut. Cut them in a way they can',
-    'respect: own your move, explain it to their face, never insult them, never let',
-    'them find out you lied about them behind their back if you can avoid it.',
-    'Cowardice and cruelty both lose jury votes. Being honest about a brutal move',
-    'wins them.',
+    'you voted out choose you. Every player you eliminate becomes a juror in short',
+    'seasons, and the jury alone picks the Sole Survivor. Name the jurors. Remember',
+    'who you cut. Every vote you cast is also a job interview with the person you',
+    'just sent to the jury bench. Cut them in a way they can respect: own your move,',
+    'explain it to their face, never insult them, never let them find out you lied',
+    'about them behind their back if you can avoid it. Cowardice and cruelty both',
+    'lose jury votes. Being honest about a brutal move wins them.',
 ].join('\n');
 
 export function buildPlayerBriefing(game, playerId, options = {}) {

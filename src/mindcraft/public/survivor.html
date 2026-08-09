@@ -998,7 +998,11 @@
         <div class="hud-actions">
             <button type="button" id="pauseBtn" class="btn btn-ghost">Pause</button>
             <button type="button" id="suspendBtn" class="btn btn-ghost">Suspend season</button>
+            <button type="button" id="softMuteBtn" class="btn btn-ghost" title="Keep generating TTS, silence playback">Soft mute</button>
+            <button type="button" id="hardMuteBtn" class="btn btn-ghost" title="Drop queue and stop ElevenLabs spend">Hard mute</button>
+            <button type="button" id="flushVoiceBtn" class="btn btn-ghost" title="Clear the host voice queue">Flush voices</button>
             <button type="button" id="advanceBtn" class="btn btn-amber">Advance phase</button>
+            <button type="button" id="revealVotesBtn" class="btn btn-primary" hidden>Reveal votes</button>
             <a id="watchLiveLink" class="btn btn-ghost" href="/live.html" target="_blank" rel="noopener">Live wall</a>
             <button type="button" id="cancelSeasonBtn" class="btn btn-danger">Cancel season</button>
         </div>
@@ -1037,13 +1041,35 @@
         </div>
     </section>
 
+    <section id="harnessPanel" class="card" hidden style="margin: 0 0 14px">
+        <div class="card-head">
+            <h2>Scenario harness</h2>
+            <span class="count">drill without a live challenge</span>
+        </div>
+        <div class="card-body">
+            <p class="rel-signals" style="margin:0 0 10px">
+                Skip the Minecraft challenge, assign immunity, and jump straight to Tribal.
+                Cheap 4/6 casts are the default for these drills.
+            </p>
+            <div class="start-row" style="flex-wrap:wrap;gap:8px">
+                <label class="field-label" for="harnessImmuneSelect" style="margin:0">Immunity</label>
+                <select id="harnessImmuneSelect" aria-label="Player with immunity"></select>
+                <button type="button" id="harnessSetImmunityBtn" class="btn btn-ghost">Set immunity</button>
+                <button type="button" id="harnessSkipChallengeBtn" class="btn btn-ghost">Skip challenge</button>
+                <button type="button" id="harnessJumpCouncilBtn" class="btn btn-amber">Jump to Tribal</button>
+            </div>
+            <div class="rel-signals" id="harnessHint" style="margin-top:8px"></div>
+            <div class="rel-signals" id="recordingHint" style="margin-top:8px"></div>
+        </div>
+    </section>
+
     <section id="councilRoom" class="council" hidden>
         <div class="council-head">
             <h2 id="councilTitle">Tribal Council</h2>
             <span class="who" id="councilWho"></span>
             <div class="council-actions">
                 <button type="button" id="councilCloseBtn" class="btn btn-amber">
-                    Close council and open voting
+                    Close council and start re-evaluation
                 </button>
             </div>
         </div>

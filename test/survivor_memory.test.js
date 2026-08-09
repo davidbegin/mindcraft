@@ -106,6 +106,7 @@ test('refusals to talk are remembered by both sides and nobody else', () => {
 
 test('revealed votes become public memory, and grudges are named', () => {
     const game = playToCouncil();
+    game.beginReevaluation();
     game.beginVoting();
     game.castVote('Billy', 'Dev');
     game.castVote('Cara', 'Dev');
@@ -128,6 +129,7 @@ test('revealed votes become public memory, and grudges are named', () => {
 
 test('a juror is told to judge rather than play', () => {
     const game = playToCouncil();
+    game.beginReevaluation();
     game.beginVoting();
     for (const voter of ['Alice', 'Billy', 'Cara']) game.castVote(voter, 'Dev');
     game.castVote('Dev', 'Billy');

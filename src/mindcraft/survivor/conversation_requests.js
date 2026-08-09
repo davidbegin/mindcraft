@@ -26,7 +26,9 @@ export class ConversationRequestRegistry {
         this.idFactory = options.idFactory || randomUUID;
         this.onEvent = options.onEvent || (() => {});
         this.clock = options.clock || (() => Date.now());
-        this.requestTtlMs = options.requestTtlMs ?? 30_000;
+        this.requestTtlMs = Object.hasOwn(options, 'requestTtlMs')
+            ? options.requestTtlMs
+            : null; // null = stay open until strategy ends (no mid-window expiry)
         this.maxInvitees = options.maxInvitees ?? MAX_CONVERSATION_INVITEES;
         // A bot who was just turned down should read the room instead of asking
         // the same player again on the next tick.
@@ -101,7 +103,7 @@ export class ConversationRequestRegistry {
             status: 'pending',
             roomId: null,
             createdAt: now,
-            expiresAt: now + this.requestTtlMs,
+            expiresAt: this.requestTtlMs == null ? null : now + this.requestTtlMs,
             resolvedAt: null,
         };
         this.requests.set(request.id, request);
@@ -174,10 +176,13 @@ export class ConversationRequestRegistry {
         return { request: clone(request), accepterIds };
     }
 
-    // Requests that ran out of time. A silent invitee counts as a refusal: the
-    // show cannot wait on a bot that never answered.
+    // Requests that ran out of time. A silent invitee counts as a refusal when
+    // a TTL is configured. With requestTtlMs null, invites stay pending until
+    // strategy ends and the session settles them explicitly.
     dueRequests(now = this.clock()) {
-        return this.pending().filter(request => now >= request.expiresAt);
+        return this.pending().filter(request =>
+            request.expiresAt != null && now >= request.expiresAt
+        );
     }
 
     pruneResolved(now = this.clock()) {

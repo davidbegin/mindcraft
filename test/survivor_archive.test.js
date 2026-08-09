@@ -30,6 +30,7 @@ async function playSeason(coordinator, { players = PLAYERS } = {}) {
         targetIds: [players[1]],
     });
     await coordinator.apply('answerCouncilQuestion', players[1], 'Nobody, yet.');
+    await coordinator.apply('beginReevaluation');
     await coordinator.apply('beginVoting');
     await coordinator.apply('castVote', players[0], players[3], 'He is the bigger threat.');
     await coordinator.apply('castVote', players[1], players[3]);
@@ -40,6 +41,7 @@ async function playSeason(coordinator, { players = PLAYERS } = {}) {
     await coordinator.apply('startChallenge', { id: 'spleef' });
     await coordinator.apply('completeChallenge', { winnerId: players[0] });
     await coordinator.apply('openCouncil');
+    await coordinator.apply('beginReevaluation');
     await coordinator.apply('beginVoting');
     await coordinator.apply('castVote', players[0], players[2]);
     await coordinator.apply('castVote', players[1], players[2]);

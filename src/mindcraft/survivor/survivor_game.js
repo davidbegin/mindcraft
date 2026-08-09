@@ -2,6 +2,7 @@ const PHASES = Object.freeze([
     'challenge',
     'strategy',
     'tribal_council',
+    'reevaluation',
     'voting',
     'revote',
     'deadlock',
@@ -29,6 +30,7 @@ const MAX_COUNCIL_QUESTIONS = 40;
 export const MAX_VOTE_REASON_LENGTH = 500;
 
 const VOTE_PHASES = Object.freeze(['voting', 'revote', 'jury_voting', 'finalist_tiebreak']);
+export const HOST_HELD_VOTE_PHASES = VOTE_PHASES;
 
 // A jury needs at least two voices, so short casts end at a final two instead of
 // letting the single first boot crown the winner alone.
@@ -189,6 +191,44 @@ export class SurvivorGame {
         return this.snapshot();
     }
 
+    // Harness/operator: set who has immunity before council without resolving a
+    // live contest. Allowed in challenge (pre-complete) or strategy.
+    setImmunity(immunityIds = []) {
+        if (!['challenge', 'strategy'].includes(this.state.phase)) {
+            throw new Error(`Immunity cannot be set during ${this.state.phase}`);
+        }
+        const ids = uniqueNames(immunityIds, 'immunityIds');
+        const activeIds = this.activePlayerIds();
+        const unknown = ids.filter(id => !activeIds.includes(id));
+        if (unknown.length > 0) throw new Error(`Not active: ${unknown.join(', ')}`);
+        this.state.immunityIds = ids;
+        if (this.state.phase === 'strategy') this._publishCouncilEligibility();
+        this._event('immunity.set', { immunityIds: ids });
+        return this.snapshot();
+    }
+
+    // Harness: jump past the challenge into strategy with a declared outcome.
+    // If no challenge has been started yet, invent a stub so completeChallenge
+    // can run. Pre-merge needs winningTribe; post-merge needs winnerId.
+    skipChallenge(result = {}) {
+        this._requirePhase('challenge');
+        if (!this.state.challenge) {
+            this.startChallenge({
+                id: result.challengeId || 'harness-skip',
+                startedAt: result.startedAt ?? null,
+            });
+        }
+        if (this.state.merged) {
+            if (!result.winnerId && Array.isArray(result.immunityIds) && result.immunityIds[0]) {
+                result = { ...result, winnerId: result.immunityIds[0] };
+            }
+        } else if (!result.winningTribe && result.winnerId) {
+            const tribe = this.state.players[result.winnerId]?.tribe;
+            if (tribe) result = { ...result, winningTribe: tribe };
+        }
+        return this.completeChallenge(result);
+    }
+
     completeChallenge(result = {}) {
         this._requirePhase('challenge');
         if (!this.state.challenge) throw new Error('No challenge is active');
@@ -212,10 +252,14 @@ export class SurvivorGame {
         }
         this.state.challenge.result = clone(result);
         this.state.phase = 'strategy';
+        // Strategy prompts need the vulnerable list before council opens, so
+        // publish tonight's voters/targets as soon as the challenge settles.
+        this._publishCouncilEligibility();
         this._event('challenge.completed', {
             ...result,
             councilTribe: this.state.councilTribe,
             immunityIds: this.state.immunityIds,
+            eligibleTargetIds: [...this.state.eligibleTargetIds],
         });
         if (!this.state.merged) {
             const councilMembers = activeIds.filter(
@@ -231,22 +275,34 @@ export class SurvivorGame {
         return this.snapshot();
     }
 
+    // Who would sit at Tribal and who can still be voted out, given current
+    // immunity and the losing tribe (pre-merge). Safe to call during strategy.
+    councilEligibility(state = this.state) {
+        const activeIds = state.participantIds.filter(id => state.players[id].active);
+        const voters = state.merged
+            ? activeIds
+            : activeIds.filter(id => state.players[id].tribe === state.councilTribe);
+        const targets = voters.filter(id => !state.immunityIds.includes(id));
+        return { voterIds: voters, targetIds: targets };
+    }
+
+    _publishCouncilEligibility() {
+        const { voterIds, targetIds } = this.councilEligibility();
+        this.state.eligibleVoterIds = voterIds;
+        this.state.councilVoterIds = [...voterIds];
+        this.state.eligibleTargetIds = targetIds;
+        return { voterIds, targetIds };
+    }
+
     // Strategy talk ends at the council mat, not at the voting booth: the host
     // questions everyone in public first, and only then do ballots open.
     openCouncil(options = {}) {
         this._requirePhase('strategy');
-        const activeIds = this.activePlayerIds();
-        const voters = this.state.merged
-            ? activeIds
-            : activeIds.filter(id => this.state.players[id].tribe === this.state.councilTribe);
-        const targets = voters.filter(id => !this.state.immunityIds.includes(id));
+        const { voterIds: voters, targetIds: targets } = this._publishCouncilEligibility();
         if (voters.length < 2 || targets.length === 0) {
             throw new Error('Tribal Council has no legal vote');
         }
         this.state.phase = 'tribal_council';
-        this.state.eligibleVoterIds = voters;
-        this.state.councilVoterIds = [...voters];
-        this.state.eligibleTargetIds = targets;
         this.state.ballots = {};
         this.state.tiedIds = [];
         this.state.deadlockDecisions = {};
@@ -339,10 +395,23 @@ export class SurvivorGame {
         };
     }
 
-    // The host closes council once the talking is done. Only now do bots vote,
-    // so everything said on the mat is available to change their minds.
-    beginVoting() {
+    // The host closes council once the talking is done. Bots then get a mandatory
+    // re-evaluation beat before ballots open, so council answers can change minds.
+    beginReevaluation() {
         this._requirePhase('tribal_council');
+        this.state.phase = 'reevaluation';
+        this._clearBallots();
+        this._event('reevaluation.started', {
+            voters: [...this.state.eligibleVoterIds],
+            targets: [...this.state.eligibleTargetIds],
+            councilId: this.state.council?.id ?? null,
+        });
+        return this.snapshot();
+    }
+
+    // Opens the ballot booth only after the re-evaluation beat.
+    beginVoting() {
+        this._requirePhase('reevaluation');
         this.state.phase = 'voting';
         this._clearBallots();
         this._event('vote.started', {
@@ -729,8 +798,13 @@ export class SurvivorGame {
         if (voterId === targetId) throw new Error('A player cannot vote for themselves');
     }
 
+    missingVoterIds() {
+        if (!VOTE_PHASES.includes(this.state.phase)) return [];
+        return this.state.eligibleVoterIds.filter(id => !this.state.ballots[id]);
+    }
+
     _requireAllBallots() {
-        const missing = this.state.eligibleVoterIds.filter(id => !this.state.ballots[id]);
+        const missing = this.missingVoterIds();
         if (missing.length > 0) throw new Error(`Missing ballots from: ${missing.join(', ')}`);
     }
 

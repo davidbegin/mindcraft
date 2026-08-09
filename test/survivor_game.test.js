@@ -15,6 +15,7 @@ function beginPreMergeVote(game, winningTribe = 'Ember') {
     game.startChallenge({ id: 'cake_race' });
     game.completeChallenge({ winningTribe });
     game.openCouncil();
+    game.beginReevaluation();
     game.beginVoting();
     return game.snapshot();
 }
@@ -44,6 +45,7 @@ function playIndividualRound(game, immuneId, targetId) {
     game.startChallenge({ id: 'cake_race' });
     game.completeChallenge({ winnerId: immuneId });
     game.openCouncil();
+    game.beginReevaluation();
     game.beginVoting();
     return castPlurality(game, targetId);
 }
@@ -204,6 +206,7 @@ test('post-merge challenge winner is immune and boot joins jury', () => {
     game.startChallenge({ id: 'tower_battle' });
     game.completeChallenge({ winnerId: 'Player3' });
     game.openCouncil();
+    game.beginReevaluation();
     game.beginVoting();
     assert.ok(!game.snapshot().eligibleTargetIds.includes('Player3'));
     castPlurality(game, 'Player4');
@@ -323,6 +326,7 @@ test('coordinator persists state and journals public events without ballot targe
     await coordinator.apply('startChallenge', { id: 'cake_race' });
     await coordinator.apply('completeChallenge', { winningTribe: 'Ember' });
     await coordinator.apply('openCouncil');
+    await coordinator.apply('beginReevaluation');
     await coordinator.apply('beginVoting');
     await coordinator.apply('castVote', 'Player2', 'Player4');
 
@@ -340,16 +344,18 @@ test('every vote is preceded by a Tribal Council that only the host closes', () 
     game.completeChallenge({ winningTribe: 'Ember' });
 
     // Strategy talk cannot skip the mat.
-    assert.throws(() => game.beginVoting(), /Expected phase tribal_council/);
+    assert.throws(() => game.beginVoting(), /Expected phase reevaluation/);
     const council = game.openCouncil({ openedAt: 5 }).council;
     assert.equal(game.snapshot().phase, 'tribal_council');
     assert.equal(council.kind, 'tribal');
     assert.equal(council.openedAt, 5);
     assert.deepEqual(council.attendeeIds, game.snapshot().eligibleVoterIds);
 
-    // And no ballot is legal until council closes.
+    // And no ballot is legal until council closes and re-evaluation finishes.
     const [voter, target] = game.snapshot().eligibleVoterIds;
     assert.throws(() => game.castVote(voter, target), /not accepted during tribal_council/);
+    game.beginReevaluation();
+    assert.throws(() => game.castVote(voter, target), /not accepted during reevaluation/);
     game.beginVoting();
     assert.equal(game.castVote(voter, target).accepted, true);
 });
@@ -416,6 +422,7 @@ test('the finale opens a council of finalists and jurors', () => {
         game.startChallenge({ id: 'cake_race' });
         game.completeChallenge({ winnerId: 'Alice' });
         game.openCouncil();
+        game.beginReevaluation();
         game.beginVoting();
         for (const voterId of game.snapshot().eligibleVoterIds) {
             game.castVote(voterId, voterId === target
@@ -501,6 +508,7 @@ test('reasoning is capped and never leaks from one vote into the next', () => {
     game.startChallenge({ id: 'cake_race' });
     game.completeChallenge({ winnerId: 'Alice' });
     game.openCouncil();
+    game.beginReevaluation();
     game.beginVoting();
 
     game.castVote('Alice', 'Dev', 'x'.repeat(600));
@@ -528,6 +536,39 @@ test('an autofilled ballot records the vote it stood in for', () => {
     assert.equal(autofilled.ballots.length, game.snapshot().eligibleVoterIds.length);
 });
 
+test('strategy publishes vulnerable targets before council opens', () => {
+    const game = new SurvivorGame({ participantIds: PLAYERS, mergeAt: 10, random: () => 0 });
+    game.startChallenge({ id: 'cake_race' });
+    game.completeChallenge({ winningTribe: 'Ember' });
+    const state = game.snapshot();
+    assert.equal(state.phase, 'strategy');
+    assert.equal(state.councilTribe, 'Tide');
+    assert.ok(state.eligibleTargetIds.length > 0);
+    assert.ok(state.eligibleTargetIds.every(id => state.players[id].tribe === 'Tide'));
+    assert.ok(state.eligibleTargetIds.every(id => !state.immunityIds.includes(id)));
+    assert.deepEqual(
+        game.councilEligibility().targetIds,
+        state.eligibleTargetIds
+    );
+});
+
+test('missingVoterIds lists who has not cast yet', () => {
+    const game = new SurvivorGame({
+        participantIds: ['Alice', 'Billy', 'Cara', 'Dev'],
+        mergeAt: 4,
+        finalistCount: 2,
+        random: () => 0,
+    });
+    game.startChallenge({ id: 'cake_race' });
+    game.completeChallenge({ winnerId: 'Alice' });
+    game.openCouncil();
+    game.beginReevaluation();
+    game.beginVoting();
+    game.castVote('Alice', 'Billy', 'first');
+    assert.deepEqual(game.missingVoterIds().sort(), ['Billy', 'Cara', 'Dev']);
+    assert.throws(() => game.revealVotes(), /Missing ballots from: Billy, Cara, Dev/);
+});
+
 test('the jury says why it crowned a winner', () => {
     const game = new SurvivorGame({
         participantIds: ['Alice', 'Billy', 'Cara', 'Dev'],
@@ -539,6 +580,7 @@ test('the jury says why it crowned a winner', () => {
         game.startChallenge({ id: 'cake_race' });
         game.completeChallenge({ winnerId: 'Alice' });
         game.openCouncil();
+        game.beginReevaluation();
         game.beginVoting();
         castPlurality(game, target);
     }

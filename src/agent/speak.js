@@ -13,33 +13,53 @@ let isSpeaking = false;
 let speechGeneration = 0;
 let activePlayer = null;
 let activeItem = null;
-// Global mute for host TTS. When muted, new lines are dropped entirely (no
-// TTS request, no playback) so muting also saves ElevenLabs credits.
-let muted = false;
+// Host TTS mute modes:
+// - off: normal playback
+// - soft: still generate and queue for catch-up, but do not play yet
+// - hard: drop enqueue + clear queue (saves ElevenLabs credits)
+let muteMode = 'off';
 // Bots that are out of the game. Their lines are dropped at enqueue, so a bot
 // that dies mid-sentence stops spending ElevenLabs credits as well as stopping
 // talking.
 const silencedBots = new Set();
 
-/** Whether host TTS is currently muted. */
+const MUTE_MODES = Object.freeze(['off', 'soft', 'hard']);
+
+/** Current mute mode: off | soft | hard. */
+export function getMuteMode() {
+    return muteMode;
+}
+
+/** Whether host TTS is muted (soft or hard). */
 export function isMuted() {
-    return muted;
+    return muteMode !== 'off';
 }
 
 /**
- * Mute or unmute host TTS. Muting also stops whatever is playing now and
- * drops the queue, so the next line does not sneak through after the toggle.
- * Returns the resulting mute state.
+ * Set mute mode. Hard mute clears the queue. Leaving soft/hard for off resumes
+ * queued catch-up playback.
  */
-export function setMuted(next) {
-    muted = !!next;
-    if (muted) clearSpeechQueue();
-    return muted;
+export function setMuteMode(next) {
+    const mode = MUTE_MODES.includes(next) ? next : 'off';
+    muteMode = mode;
+    if (mode === 'hard') clearSpeechQueue();
+    if (mode === 'off' && !isSpeaking) processQueue();
+    return muteMode;
 }
 
-/** Flip the mute state and return the new value. */
+/**
+ * Mute or unmute host TTS. Muting uses hard mute (drop + save credits) for
+ * backward compatibility with the simple toggle API.
+ * Returns whether any mute is active.
+ */
+export function setMuted(next) {
+    setMuteMode(next ? 'hard' : 'off');
+    return isMuted();
+}
+
+/** Flip between off and hard mute; return whether muted afterward. */
 export function toggleMuted() {
-    return setMuted(!muted);
+    return setMuteMode(muteMode === 'off' ? 'hard' : 'off') !== 'off';
 }
 
 /** Whether this bot's lines are currently being dropped. */
@@ -175,7 +195,7 @@ export async function generateSpeech(text, speak_model, botName) {
  * (e.g. for recordings) instead of paying for a second TTS request.
  */
 export function playSpeech({ text, model, botName, volume = 100, audioPromise = null }) {
-    if (muted || silencedBots.has(String(botName))) {
+    if (muteMode === 'hard' || silencedBots.has(String(botName))) {
         // The caller may already have a TTS request in flight; dropping the line
         // must not surface as an unhandled rejection.
         audioPromise?.catch(() => {});
@@ -199,7 +219,8 @@ export function playSpeech({ text, model, botName, volume = 100, audioPromise = 
             .catch(err => { item.error = err; });
     }
     speakingQueue.push(item);
-    if (!isSpeaking) processQueue();
+    // Soft mute keeps generating into the queue but does not start playback.
+    if (!isSpeaking && muteMode === 'off') processQueue();
 }
 
 // Backwards-compatible fire-and-forget entry point.

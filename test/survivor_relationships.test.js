@@ -17,6 +17,7 @@ function playCouncil(game, ballots) {
     game.startChallenge({ id: 'cake_race' });
     game.completeChallenge({ winnerId: PLAYERS[0] });
     game.openCouncil();
+    game.beginReevaluation();
     game.beginVoting();
     for (const [voterId, targetId] of Object.entries(ballots)) {
         game.castVote(voterId, targetId);
@@ -89,6 +90,7 @@ test('treats a jury vote as a positive bond toward the finalist', () => {
         game.startChallenge({ id: 'cake_race' });
         game.completeChallenge({ winnerId: players[0] });
         game.openCouncil();
+        game.beginReevaluation();
         game.beginVoting();
         const state = game.snapshot();
         for (const voterId of state.eligibleVoterIds) {

@@ -2257,6 +2257,9 @@
         </nav>
         <span id="msStatus" class="status-pill offline">mindserver offline</span>
         <div class="topbar-meta">
+            <button type="button" id="softMuteBtn" class="btn btn-ghost" title="Keep generating TTS, silence playback">Soft mute</button>
+            <button type="button" id="hardMuteBtn" class="btn btn-ghost" title="Drop queue and stop ElevenLabs spend">Hard mute</button>
+            <button type="button" id="flushVoiceBtn" class="btn btn-ghost" title="Clear the host voice queue">Flush voices</button>
             <span class="meta-chip" id="agentCountMeta">0 agents</span>
             <span class="meta-chip" id="worldMeta">—</span>
         </div>
@@ -3163,6 +3166,40 @@
                 // The banner is already hidden; a failed reset is not worth surfacing.
             }
         });
+
+        let voiceMuteMode = 'off';
+        function renderMuteButtons() {
+            const soft = document.getElementById('softMuteBtn');
+            const hard = document.getElementById('hardMuteBtn');
+            if (!soft || !hard) return;
+            soft.textContent = voiceMuteMode === 'soft' ? 'Soft mute on' : 'Soft mute';
+            hard.textContent = voiceMuteMode === 'hard' ? 'Hard mute on' : 'Hard mute';
+        }
+        async function setVoiceMuteMode(mode) {
+            const next = voiceMuteMode === mode ? 'off' : mode;
+            const response = await fetch(`/api/voice/mute?mode=${encodeURIComponent(next)}`, {
+                method: 'POST',
+            });
+            const body = await response.json().catch(() => ({}));
+            if (response.ok && body.success !== false) {
+                voiceMuteMode = body.mode || next;
+                renderMuteButtons();
+            }
+        }
+        document.getElementById('softMuteBtn')?.addEventListener('click', () => setVoiceMuteMode('soft'));
+        document.getElementById('hardMuteBtn')?.addEventListener('click', () => setVoiceMuteMode('hard'));
+        document.getElementById('flushVoiceBtn')?.addEventListener('click', () => {
+            fetch('/api/voice/flush', { method: 'POST' });
+        });
+        socket.on('voice-mute', payload => {
+            voiceMuteMode = payload?.mode || (payload?.muted ? 'hard' : 'off');
+            renderMuteButtons();
+        });
+        fetch('/api/voice/mute').then(r => r.json()).then(body => {
+            if (body?.mode) voiceMuteMode = body.mode;
+            else if (body?.muted) voiceMuteMode = 'hard';
+            renderMuteButtons();
+        }).catch(() => {});
 
         updateStatus(false);
         socket.on('connect', () => {

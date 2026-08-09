@@ -67,10 +67,11 @@ export const SURVIVOR_SEASON_PRESET = Object.freeze({
     finalistCount: 3,
     tribeNames: Object.freeze(['Ember', 'Tide']),
     phaseDurationsMs: Object.freeze({
-        strategy: 2 * 60_000,
+        strategy: 10 * 60_000,
         // Only used when the host hands council over to the clock; by default
         // Tribal Council runs until the host closes it.
         tribalCouncil: 5 * 60_000,
+        // Voting is host-held: clocks here are ignored by the session manager.
         voting: 60_000,
         revote: 45_000,
         deadlock: 60_000,
@@ -106,7 +107,7 @@ export const SURVIVOR_FOUR_PLAYER_PRESET = Object.freeze({
     finalistCount: 2,
     tribeNames: Object.freeze(['Ember', 'Tide']),
     phaseDurationsMs: Object.freeze({
-        strategy: 90_000,
+        strategy: 10 * 60_000,
         tribalCouncil: 3 * 60_000,
         voting: 45_000,
         revote: 30_000,
@@ -141,7 +142,7 @@ export const SURVIVOR_SIX_PLAYER_PRESET = Object.freeze({
     juryEligibility: 'all_eliminated',
     tribeNames: Object.freeze(['Ember', 'Tide']),
     phaseDurationsMs: Object.freeze({
-        strategy: 90_000,
+        strategy: 10 * 60_000,
         tribalCouncil: 3 * 60_000,
         voting: 45_000,
         revote: 30_000,

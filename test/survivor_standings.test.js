@@ -26,6 +26,7 @@ function playIndividualRound(game, immuneId, targetId) {
     game.startChallenge({ id: 'cake_race' });
     game.completeChallenge({ winnerId: immuneId });
     game.openCouncil();
+    game.beginReevaluation();
     game.beginVoting();
     return castPlurality(game, targetId);
 }
@@ -86,6 +87,7 @@ test('a revote adds votes without double-counting the council', () => {
     game.startChallenge({ id: 'cake_race' });
     game.completeChallenge({ winnerId: players[0] });
     game.openCouncil();
+    game.beginReevaluation();
     game.beginVoting();
     game.castVote(players[0], players[1]);
     game.castVote(players[1], players[2]);

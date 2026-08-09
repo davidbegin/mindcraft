@@ -148,18 +148,25 @@ function phaseInstructions(state, playerId) {
                 'what comes out on the mat changes the picture. That is what council is for.',
                 `Vulnerable tonight: ${legalTargets.join(', ') || 'nobody'}.`,
             ];
+        case 'reevaluation':
+            return [
+                'Council is closed. Before anyone votes, reconsider the public record.',
+                'What changed on the mat? Who exposed a lie, panicked, or became a better target?',
+                'If your target shifted, say so privately or in a short confessional — then be ready to vote.',
+                `Legal targets still: ${legalTargets.join(', ')}.`,
+                'DO NOT cast a ballot yet. Voting opens after this re-evaluation beat.',
+            ];
         case 'voting':
         case 'revote':
             return [
-                'Council is closed. Vote now.',
-                'Before you do: reconsider everything that just came out on the mat. If someone',
-                'exposed a lie, panicked, or handed you a better target, change your vote accordingly.',
+                'Re-evaluation is over. Vote now.',
+                'Your ballot reason should cite what happened at council when it mattered.',
                 `Legal targets: ${legalTargets.join(', ')}.`,
                 'Cast exactly one secret ballot with !castSurvivorVote("Name", "why"). Do not announce it.',
                 'The reason is sealed with your ballot: no other player ever sees it, so write the',
                 'real reason you are writing this name down, not the version you told them.',
                 'You may keep working people privately while you decide, but the ballot comes first:',
-                'a bot still whispering when the clock runs out has cast nothing.',
+                'a bot still whispering when the host reveals has cast nothing.',
             ];
         case 'jury_voting':
             return [

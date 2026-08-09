@@ -37,6 +37,18 @@
         'Who is playing the best game, and why is it not you?',
         'If you go home tonight, who do you blame?',
         'You are all voting for someone who may end up choosing the winner. Does that change your vote?',
+        // Blindside pack
+        'Did anyone here get blindsided last vote — and who set it up?',
+        'If the person next to you is going home, will you own that vote to their face?',
+        'Name the blindside you are cooking right now, or admit you do not have one.',
+        // Idol pack
+        'Is there a Hidden Immunity Idol in play? Who has it?',
+        'If you had the idol tonight, who would you flush it on?',
+        'Why should anyone believe you when you say you do not have an idol?',
+        // Jury pack
+        'Look at the jury seats. Which of them still respects your game?',
+        'Who on the jury will never vote for you, and what will you do about it?',
+        'Are you playing for the jury already, or only for tonight?',
     ];
 
     const FINAL_QUESTIONS = [
@@ -168,10 +180,12 @@
         updateStartButton();
         if (!game) {
             el('voteResults').hidden = true;
+            el('harnessPanel').hidden = true;
             renderSecretFeed();
             return;
         }
         renderHud(game);
+        renderHarness(game);
         renderCouncil(game);
         renderTribes(game);
         renderStandings();
@@ -190,6 +204,54 @@
         // Portraits are canvases inside markup that was just replaced, so they
         // are repainted after every render. Decoded skins are cached.
         window.mcAvatar?.paint();
+    }
+
+    // —— Scenario harness ————————————————————————————————————————
+
+    function harnessPayload() {
+        const game = currentGame();
+        const immuneId = el('harnessImmuneSelect').value;
+        if (!game || !immuneId) return {};
+        if (game.merged) {
+            return { winnerId: immuneId, immunityIds: [immuneId] };
+        }
+        const tribe = game.players?.[immuneId]?.tribe;
+        return {
+            winnerId: immuneId,
+            winningTribe: tribe,
+            immunityIds: [immuneId],
+        };
+    }
+
+    function renderHarness(game) {
+        const panel = el('harnessPanel');
+        const running = game.status === 'running' && !suspended();
+        const usable = running && ['challenge', 'strategy'].includes(game.phase);
+        panel.hidden = !running;
+        const select = el('harnessImmuneSelect');
+        const remaining = activeIds(game);
+        const previous = select.value;
+        select.innerHTML = remaining.map(id =>
+            `<option value="${esc(id)}">${esc(id)}${
+                (game.immunityIds || []).includes(id) ? ' (immune)' : ''
+            }</option>`
+        ).join('');
+        if (previous && remaining.includes(previous)) select.value = previous;
+        else if ((game.immunityIds || [])[0]) select.value = game.immunityIds[0];
+        el('harnessSetImmunityBtn').disabled = !usable || game.phase !== 'strategy';
+        el('harnessSkipChallengeBtn').disabled = !usable || game.phase !== 'challenge';
+        el('harnessJumpCouncilBtn').disabled = !usable;
+        el('harnessHint').textContent = game.phase === 'challenge'
+            ? 'Skip challenge (assigns immunity) or jump straight to Tribal.'
+            : game.phase === 'strategy'
+                ? `Strategy open. Vulnerable: ${names(game.eligibleTargetIds) || '—'}. Jump opens council.`
+                : `Harness idle during ${phaseLabel(game.phase)}.`;
+        const recording = el('recordingHint');
+        if (recording) {
+            const pov = state?.recordingEnabled ? 'POV on' : 'POV off';
+            const cams = state?.autoRecordingEnabled ? 'contest cams on' : 'contest cams off';
+            recording.textContent = `Recording: ${pov} · ${cams}. Full-season A/V+journal packaging is still follow-on work.`;
+        }
     }
 
     // —— Tribal Council console ————————————————————————————————————
@@ -215,7 +277,7 @@
             : `${live.askableIds.length} at council · vulnerable: ${names(game.eligibleTargetIds) || 'nobody'}`;
         el('councilCloseBtn').textContent = isFinal
             ? 'Close council and open the jury vote'
-            : 'Close council and open voting';
+            : 'Close council and start re-evaluation';
         renderTargetPicker(live, game);
         renderPresetQuestions(isFinal);
         renderTranscript(live);
@@ -445,17 +507,22 @@
     }
 
     // Mirrors advancePhase() on the server so the button says what pressing it
-    // will actually do rather than a vague "advance".
+    // will actually do rather than a vague "advance". Vote phases use a separate
+    // Reveal control — Advance stays off so it never autofills ballots.
     const ADVANCE_LABELS = {
         strategy: 'Open Tribal Council',
-        tribal_council: 'Close council, open voting',
-        voting: 'Read the votes',
-        revote: 'Read the revote',
-        jury_voting: 'Read the jury vote',
-        finalist_tiebreak: 'Read the tiebreak vote',
+        tribal_council: 'Close council, open re-eval',
+        reevaluation: 'Open voting',
         deadlock: 'Settle the deadlock',
         jury_questioning: 'Send the jury to vote',
         fire_making: 'Resolve fire-making',
+    };
+    const REVEAL_PHASES = ['voting', 'revote', 'jury_voting', 'finalist_tiebreak'];
+    const REVEAL_LABELS = {
+        voting: 'Reveal votes',
+        revote: 'Reveal revote',
+        jury_voting: 'Reveal jury vote',
+        finalist_tiebreak: 'Reveal tiebreak',
     };
 
     // A parked season is easy to forget about, and forgetting is what makes it
@@ -500,7 +567,27 @@
             || Boolean(state.challengeContestId);
         const advanceLabel = ADVANCE_LABELS[game.phase];
         el('advanceBtn').textContent = advanceLabel || 'Advance phase';
-        el('advanceBtn').disabled = inChallenge || !running || !advanceLabel;
+        if (game.phase === 'fire_making') {
+            el('advanceBtn').textContent = 'Confirm fire-making';
+            el('advanceBtn').disabled = inChallenge || !running;
+        } else {
+            el('advanceBtn').disabled = inChallenge || !running || !advanceLabel;
+        }
+        const revealLabel = REVEAL_LABELS[game.phase];
+        const revealBtn = el('revealVotesBtn');
+        revealBtn.hidden = !revealLabel;
+        revealBtn.textContent = revealLabel || 'Reveal votes';
+        const missing = game.missingVoterIds || [];
+        const expected = game.eligibleVoterIds?.length || 0;
+        const received = Number(game.ballotCount || 0);
+        revealBtn.disabled = !running
+            || !revealLabel
+            || expected === 0
+            || received < expected
+            || missing.length > 0;
+        revealBtn.title = missing.length
+            ? `Waiting on: ${missing.join(', ')}`
+            : (received < expected ? `Waiting for ${expected - received} more ballot(s)` : '');
         el('cancelSeasonBtn').disabled = !running;
         el('watchLiveLink').href = `/live.html?session=survivor-${encodeURIComponent(game.id)}`;
     }
@@ -617,6 +704,7 @@
 
         if (VOTING_PHASES.includes(game.phase) && expected) {
             const percent = Math.round((received / expected) * 100);
+            const missing = game.missingVoterIds || [];
             live.innerHTML = `
                 <div><strong>${received}/${expected}</strong> secret ballots received</div>
                 <div class="vote-progress"><span style="width:${percent}%"></span></div>
@@ -625,6 +713,32 @@
                         `<span class="chip danger">${esc(id)}</span>`).join('')}
                 </div>
                 <div class="rel-signals" style="margin-top:6px">Voting: ${esc(names(game.eligibleVoterIds))}</div>
+                ${missing.length
+                    ? `<div class="rel-signals" style="margin-top:6px;color:var(--danger, #c44)">
+                        Still waiting on: <strong>${esc(names(missing))}</strong>
+                       </div>`
+                    : '<div class="rel-signals" style="margin-top:6px">All ballots in — ready to reveal.</div>'}
+            `;
+        } else if (game.phase === 'strategy') {
+            const vulnerable = game.eligibleTargetIds || [];
+            live.innerHTML = `
+                <div><strong>Strategy window.</strong> Tribal is next.</div>
+                <div class="rel-signals">Immunity: ${esc(names(game.immunityIds) || 'nobody')}</div>
+                <div class="chips" style="margin-top:6px">
+                    ${vulnerable.length
+                        ? vulnerable.map(id => `<span class="chip danger">${esc(id)}</span>`).join('')
+                        : '<span class="chip">Vulnerable list not set</span>'}
+                </div>
+                <div class="rel-signals" style="margin-top:6px">Vulnerable tonight: ${esc(names(vulnerable) || '—')}</div>
+            `;
+        } else if (game.phase === 'reevaluation') {
+            live.innerHTML = `
+                <div><strong>Post-council re-evaluation.</strong> Ballots are still closed.</div>
+                <div class="rel-signals">Bots must reconsider the public record before you open voting.</div>
+                <div class="chips" style="margin-top:6px">
+                    ${(game.eligibleTargetIds || []).map(id =>
+                        `<span class="chip danger">${esc(id)}</span>`).join('')}
+                </div>
             `;
         } else if (game.phase === 'tribal_council') {
             const answered = (state.council?.questions || [])
@@ -1413,7 +1527,7 @@
                     min: 0.5,
                     max: 10,
                     step: 0.5,
-                    value: (scenario?.phaseDurationsMs?.strategy || 120_000) / 60_000,
+                    value: (scenario?.phaseDurationsMs?.strategy || 600_000) / 60_000,
                 },
                 {
                     id: 'councilMinutes',
@@ -1422,14 +1536,6 @@
                     max: 10,
                     step: 0.5,
                     value: (scenario?.phaseDurationsMs?.tribalCouncil || 300_000) / 60_000,
-                },
-                {
-                    id: 'voteMinutes',
-                    label: 'Vote min',
-                    min: 0.5,
-                    max: 5,
-                    step: 0.5,
-                    value: (scenario?.phaseDurationsMs?.voting || 60_000) / 60_000,
                 },
             ],
             validate: ({ fields }) => {
@@ -1457,7 +1563,7 @@
                     phaseDurationsMs: {
                         strategy: fields.strategyMinutes * 60_000,
                         tribal_council: fields.councilMinutes * 60_000,
-                        voting: fields.voteMinutes * 60_000,
+                        // Voting stays host-held; never start a vote clock.
                     },
                 },
             }),
@@ -1529,7 +1635,28 @@
             control('cancel', { reason: 'Cancelled from the Survivor control room' });
         }
     });
-    el('advanceBtn').addEventListener('click', () => control('advance'));
+    el('advanceBtn').addEventListener('click', () => {
+        if (currentGame()?.phase === 'fire_making') {
+            if (!window.confirm(
+                'Resolve fire-making with a random winner? Cancel if you want to pick a winner another way.'
+            )) {
+                return;
+            }
+            control('fire-result', { confirm: true });
+            return;
+        }
+        control('advance');
+    });
+    el('revealVotesBtn').addEventListener('click', () => control('reveal-votes'));
+    el('harnessSetImmunityBtn').addEventListener('click', () =>
+        control('set-immunity', harnessPayload())
+    );
+    el('harnessSkipChallengeBtn').addEventListener('click', () =>
+        control('skip-challenge', harnessPayload())
+    );
+    el('harnessJumpCouncilBtn').addEventListener('click', () =>
+        control('jump-to-council', harnessPayload())
+    );
     el('cancelSeasonBtn').addEventListener('click', () => {
         if (window.confirm('Cancel the active Survivor season and disconnect its bots?')) {
             control('cancel', { reason: 'Cancelled from the Survivor control room' });
@@ -1632,6 +1759,50 @@
         if (!state?.game) return;
         el('hudCountdown').textContent = phaseClockLabel();
     }, 1000);
+
+    // —— Voice mute / flush ——————————————————————————————————————
+
+    let voiceMuteMode = 'off';
+
+    function renderMuteButtons() {
+        const soft = el('softMuteBtn');
+        const hard = el('hardMuteBtn');
+        if (!soft || !hard) return;
+        soft.textContent = voiceMuteMode === 'soft' ? 'Soft mute on' : 'Soft mute';
+        hard.textContent = voiceMuteMode === 'hard' ? 'Hard mute on' : 'Hard mute';
+        soft.classList.toggle('btn-amber', voiceMuteMode === 'soft');
+        hard.classList.toggle('btn-danger', voiceMuteMode === 'hard');
+    }
+
+    async function setVoiceMuteMode(mode) {
+        const next = voiceMuteMode === mode ? 'off' : mode;
+        const response = await fetch(`/api/voice/mute?mode=${encodeURIComponent(next)}`, {
+            method: 'POST',
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.success === false) {
+            setStatus(body.error || 'Could not change mute');
+            return;
+        }
+        voiceMuteMode = body.mode || next;
+        renderMuteButtons();
+    }
+
+    el('softMuteBtn').addEventListener('click', () => setVoiceMuteMode('soft'));
+    el('hardMuteBtn').addEventListener('click', () => setVoiceMuteMode('hard'));
+    el('flushVoiceBtn').addEventListener('click', async () => {
+        await fetch('/api/voice/flush', { method: 'POST' });
+        setStatus('Voice queue flushed.');
+    });
+    socket.on('voice-mute', payload => {
+        voiceMuteMode = payload?.mode || (payload?.muted ? 'hard' : 'off');
+        renderMuteButtons();
+    });
+    fetch('/api/voice/mute').then(r => r.json()).then(body => {
+        if (body?.mode) voiceMuteMode = body.mode;
+        else if (body?.muted) voiceMuteMode = 'hard';
+        renderMuteButtons();
+    }).catch(() => {});
 
     if (typeof window.initBotVoice === 'function') window.initBotVoice(socket);
 })();

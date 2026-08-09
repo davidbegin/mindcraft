@@ -8,7 +8,7 @@ import {
 import { validateGameParticipants } from '../contest/game_session_manager.js';
 import { ConversationRequestRegistry } from './conversation_requests.js';
 import { buildChallengeDeck, resolveTeamChallenge } from './survivor_challenges.js';
-import { COUNCIL_PHASES, MIN_SURVIVOR_PLAYERS } from './survivor_game.js';
+import { COUNCIL_PHASES, HOST_HELD_VOTE_PHASES, MIN_SURVIVOR_PLAYERS } from './survivor_game.js';
 import { buildPlayerBriefing } from './survivor_memory.js';
 import { buildSurvivorDirective } from './survivor_prompts.js';
 import { buildSurvivorRelationships } from './survivor_relationships.js';
@@ -324,6 +324,9 @@ export class SurvivorSessionManager {
         const game = this.coordinator.view();
         if (game) {
             game.ballotCount = Object.keys(game.ballots || {}).length;
+            game.missingVoterIds = HOST_HELD_VOTE_PHASES.includes(game.phase)
+                ? game.eligibleVoterIds.filter(id => !game.ballots?.[id])
+                : [];
             game.ballots = {};
             game.ballotReasons = {};
             game.deadlockDecisionCount = Object.keys(game.deadlockDecisions || {}).length;
@@ -696,6 +699,8 @@ export class SurvivorSessionManager {
             // unattended runs so a season can play itself through.
             councilAutoAdvance: Boolean(request.councilAutoAdvance),
             readiness: null,
+            // Harness / memory-flip proof: before targets (reeval) vs ballots.
+            voteProof: { beforeTargets: {}, afterTargets: {}, councilCiting: {} },
         };
         this._emit();
         try {
@@ -776,9 +781,23 @@ export class SurvivorSessionManager {
                 survivorRound: state.round,
                 survivorMode: state.merged ? 'individual' : 'tribe',
                 tribes: clone(state.tribes),
+                // Wire Minecraft team coloring for pre-merge challenges.
+                teamNames: state.merged ? null : [...state.tribeNames],
+                teamByParticipant: state.merged
+                    ? null
+                    : Object.fromEntries(
+                        participantIds.map(id => [id, state.players[id].tribe])
+                    ),
             },
         });
-        await this.prepareArena(preset, participantIds);
+        await this.prepareArena(preset, participantIds, {
+            teamNames: state.merged ? undefined : state.tribeNames,
+            teamByParticipant: state.merged
+                ? undefined
+                : Object.fromEntries(
+                    participantIds.map(id => [id, state.players[id].tribe])
+                ),
+        });
         await this.coordinator.apply('startChallenge', {
             id: preset.id,
             startedAt: this.clock(),
@@ -884,25 +903,46 @@ export class SurvivorSessionManager {
         const state = this._requireRunning();
         switch (state.phase) {
             case 'strategy':
+                // Pending invites expire with the strategy window, not a 30s TTL.
+                await this._settleOpenTalkRequests('strategy-ended');
                 return this._applyAndTransition('openCouncil', { openedAt: this.clock() });
             case 'tribal_council':
+                return this._applyAndTransition('beginReevaluation');
+            case 'reevaluation':
                 return this._applyAndTransition('beginVoting');
             case 'voting':
             case 'revote':
             case 'jury_voting':
             case 'finalist_tiebreak':
-                await this.coordinator.apply('fillMissingBallots');
-                return this._applyAndTransition('revealVotes');
+                // Host-held voting: Advance never autofills or reveals. The host
+                // must press Reveal once every ballot is in.
+                throw new Error(
+                    'Voting is host-held. Wait for every ballot, then use Reveal votes.'
+                );
             case 'deadlock':
                 await this.coordinator.apply('fillMissingDeadlockDecisions');
                 return this._applyAndTransition('resolveDeadlock');
             case 'jury_questioning':
                 return this._applyAndTransition('beginJuryVote');
             case 'fire_making':
-                return this._applyAndTransition('resolveFireMaking');
+                throw new Error(
+                    'Fire-making needs operator confirmation. Use Resolve fire with confirm=true'
+                    + ' (or pass winnerId).'
+                );
             default:
                 return null;
         }
+    }
+
+    async _settleOpenTalkRequests(reason) {
+        for (const request of this.conversations.pending()) {
+            try {
+                await this._resolveConversationRequest(request.id);
+            } catch (error) {
+                this._problem('talk-settle', error, { requestId: request.id, reason });
+            }
+        }
+        this.conversations.pruneResolved(this.clock());
     }
 
     // Jeff puts a question to one or more players. They answer publicly, and
@@ -1048,6 +1088,12 @@ export class SurvivorSessionManager {
                     payload.targetId,
                     payload.reason
                 );
+                if (this.active?.voteProof) {
+                    this.active.voteProof.afterTargets[agentId] = payload.targetId;
+                    const reason = String(payload.reason || '');
+                    this.active.voteProof.councilCiting[agentId] = /council|mat|jeff|tribal|said|answer/i
+                        .test(reason);
+                }
                 this._emit();
                 return { success: true, data, message: 'Secret ballot accepted' };
             }
@@ -1133,6 +1179,8 @@ export class SurvivorSessionManager {
                     throw new Error('Active immunity challenges cannot be paused');
                 }
                 this.active.paused = true;
+                // Pausing also handles voices: soft-mute so catch-up works on resume.
+                this.active.pausedMuteMode = this.onPauseMute?.() ?? 'soft';
                 this._emit();
                 return this.view();
             case 'resume':
@@ -1140,6 +1188,8 @@ export class SurvivorSessionManager {
                 // is 'resume-season'.
                 this._requireRunningSession();
                 this.active.paused = false;
+                this.onResumeMute?.(this.active.pausedMuteMode);
+                this.active.pausedMuteMode = null;
                 this._emit();
                 return this.view();
             case 'suspend':
@@ -1150,7 +1200,17 @@ export class SurvivorSessionManager {
                 this._requireActive();
                 await this.advancePhase();
                 return this.view();
+            case 'reveal-votes': {
+                this._requireActive();
+                const { phase } = this._requireRunning();
+                if (!HOST_HELD_VOTE_PHASES.includes(phase)) {
+                    throw new Error(`Votes cannot be revealed during ${phase}`);
+                }
+                // No autofill: missing ballots block reveal and surface by name.
+                return this._applyAndTransition('revealVotes');
+            }
             case 'open-council':
+                await this._settleOpenTalkRequests('strategy-ended');
                 return this._applyAndTransition('openCouncil', { openedAt: this.clock() });
             case 'council-question': {
                 const result = await this.askCouncilQuestion(
@@ -1172,9 +1232,17 @@ export class SurvivorSessionManager {
             case 'end-council': {
                 // The finale is a council too, so the same button has to open the
                 // jury vote rather than a Tribal Council vote that cannot start.
+                // Ordinary councils enter re-evaluation before ballots open.
                 const { phase } = this._requireRunning();
+                if (phase !== 'jury_questioning' && this.active) {
+                    this.active.voteProof = {
+                        beforeTargets: {},
+                        afterTargets: {},
+                        councilCiting: {},
+                    };
+                }
                 return this._applyAndTransition(
-                    phase === 'jury_questioning' ? 'beginJuryVote' : 'beginVoting'
+                    phase === 'jury_questioning' ? 'beginJuryVote' : 'beginReevaluation'
                 );
             }
             case 'set-phase-deadline': {
@@ -1216,16 +1284,72 @@ export class SurvivorSessionManager {
             }
             case 'challenge-result': {
                 const before = this.coordinator.view();
+                if (before.phase !== 'challenge') {
+                    throw new Error(`Cannot resolve challenge during ${before.phase}`);
+                }
+                await this._abortActiveChallengeContest('challenge-result');
                 const result = before.merged
                     ? { winnerId: payload.winnerId }
                     : { winningTribe: payload.winningTribe };
                 await this.coordinator.apply('completeChallenge', result);
-                this.active.challengeContestId = null;
                 await this._afterStateChange(before, this.coordinator.view());
                 return this.view();
             }
-            case 'fire-result':
+            case 'set-immunity': {
+                this._requireActive();
+                const before = this.coordinator.view();
+                await this.coordinator.apply('setImmunity', payload.immunityIds || []);
+                const after = this.coordinator.view();
+                // Strategy prompts include the vulnerable list, so refresh them.
+                if (after.phase === 'strategy' || before.phase === 'strategy') {
+                    await this._broadcastPhase();
+                }
+                this._emit();
+                return this.view();
+            }
+            case 'skip-challenge': {
+                this._requireActive();
+                const before = this.coordinator.view();
+                if (before.phase !== 'challenge') {
+                    throw new Error(`Cannot skip challenge during ${before.phase}`);
+                }
+                await this._abortActiveChallengeContest('skipped by operator');
+                await this.coordinator.apply('skipChallenge', {
+                    winnerId: payload.winnerId,
+                    winningTribe: payload.winningTribe,
+                    immunityIds: payload.immunityIds,
+                    challengeId: payload.challengeId || 'harness-skip',
+                });
+                await this._afterStateChange(before, this.coordinator.view());
+                return this.view();
+            }
+            case 'jump-to-council': {
+                this._requireActive();
+                let before = this.coordinator.view();
+                if (before.phase === 'challenge') {
+                    await this.control('skip-challenge', payload);
+                    before = this.coordinator.view();
+                }
+                if (before.phase === 'strategy' && Array.isArray(payload.immunityIds)) {
+                    await this.coordinator.apply('setImmunity', payload.immunityIds);
+                }
+                if (this.coordinator.view().phase !== 'strategy') {
+                    throw new Error(
+                        `Cannot jump to council from ${this.coordinator.view().phase}`
+                    );
+                }
+                await this._settleOpenTalkRequests('strategy-ended');
+                return this._applyAndTransition('openCouncil', { openedAt: this.clock() });
+            }
+            case 'fire-result': {
+                const confirm = payload.confirm === true || Boolean(payload.winnerId);
+                if (!confirm) {
+                    throw new Error(
+                        'Confirm fire-making resolution (confirm=true) or pass winnerId'
+                    );
+                }
                 return this._applyAndTransition('resolveFireMaking', payload.winnerId);
+            }
             case 'cancel':
                 return this.cancel(payload.reason);
             default:
@@ -1268,6 +1392,29 @@ export class SurvivorSessionManager {
         const after = this.coordinator.view();
         await this._afterStateChange(before, after);
         return this.view();
+    }
+
+    // Cancel any live contest overlay and clear challenge configs on bots so a
+    // harness skip / host override cannot leave the season waiting on a race.
+    async _abortActiveChallengeContest(reason = 'challenge aborted') {
+        const contestId = this.active?.challengeContestId
+            || this.contestCoordinator.snapshot()?.activeContestId
+            || null;
+        if (contestId && typeof this.contestCoordinator.cancelContest === 'function') {
+            try {
+                await this.contestCoordinator.cancelContest(contestId, reason);
+            } catch (error) {
+                this._problem('challenge-abort', error, { contestId, reason });
+            }
+        }
+        if (this.active) this.active.challengeContestId = null;
+        const participants = this.coordinator.view()?.participantIds || [];
+        await Promise.allSettled(participants.map(id => this.sendChallengeConfig(id, {
+            challengeId: null,
+            contestType: 'survivor',
+            winItem: null,
+            floorY: null,
+        })));
     }
 
     async _afterStateChange(before, after) {
@@ -1413,19 +1560,24 @@ export class SurvivorSessionManager {
 
     // null means "no clock": the host decides when this phase ends. Councils
     // default to that, because Jeff asking questions is the show and a timer
-    // would cut him off mid-question.
+    // would cut him off mid-question. Vote phases are also host-held so the
+    // operator waits for real ballots instead of autofilling on a clock.
+    // Re-evaluation is host-held too: bots must reconsider before ballots open.
     _durationForPhase(phase) {
         if (COUNCIL_PHASES.includes(phase) && !this.active?.councilAutoAdvance) return null;
+        if (phase === 'reevaluation') return null;
+        if (HOST_HELD_VOTE_PHASES.includes(phase)) return null;
         const defaults = {
-            strategy: 120_000,
+            strategy: 600_000,
             tribal_council: 300_000,
-            voting: 60_000,
-            revote: 45_000,
+            reevaluation: null,
+            voting: null,
+            revote: null,
             deadlock: 60_000,
             fire_making: 60_000,
             jury_questioning: 180_000,
-            jury_voting: 60_000,
-            finalist_tiebreak: 45_000,
+            jury_voting: null,
+            finalist_tiebreak: null,
         };
         return this._duration(phase, defaults[phase] ?? 60_000);
     }

@@ -162,8 +162,10 @@ export function buildSurvivorPhaseAnnouncement(state) {
         case 'tribal_council':
             return 'Tribal Council is now in session. '
                 + 'Nobody votes until I close council.';
+        case 'reevaluation':
+            return 'Council is closed. Reconsider what you heard before anyone votes.';
         case 'voting':
-            return 'Council is closed. It is time to vote.';
+            return 'Re-evaluation is over. It is time to vote.';
         case 'revote':
             return `We have a tie between ${tied}. `
                 + `Everyone else votes again, and you may only vote for ${tied}.`;

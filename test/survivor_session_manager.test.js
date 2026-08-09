@@ -298,13 +298,30 @@ test('a four-player season runs end to end to a two-juror finale', async () => {
         councilAutoAdvance: true,
     });
 
+    const VOTE_PHASES = new Set(['voting', 'revote', 'jury_voting', 'finalist_tiebreak']);
+    const REEVAL_PHASE = 'reevaluation';
     const phases = [];
-    for (let step = 0; step < 20; step++) {
+    for (let step = 0; step < 30; step++) {
         const game = coordinator.view();
         if (game.status !== 'running') break;
         if (game.phase === 'challenge') {
             contestCoordinator.completeCurrent(manager, 'Bot1');
             await manager.syncContestView(contestCoordinator.view());
+        } else if (game.phase === REEVAL_PHASE) {
+            await manager.control('advance');
+        } else if (VOTE_PHASES.has(game.phase)) {
+            for (const voterId of game.eligibleVoterIds) {
+                const targetId = game.eligibleTargetIds.find(id => id !== voterId);
+                try {
+                    await manager.handleAgentCommand(voterId, 'cast-vote', {
+                        targetId,
+                        reason: 'test ballot',
+                    });
+                } catch (error) {
+                    if (!/already voted/i.test(error.message)) throw error;
+                }
+            }
+            await manager.control('reveal-votes');
         } else {
             advance(2);
             await manager.tick();
@@ -324,7 +341,7 @@ test('a four-player season runs end to end to a two-juror finale', async () => {
     );
     assert.deepEqual(
         [...new Set(phases)].filter(phase => phase !== 'challenge'),
-        ['strategy', 'tribal_council', 'voting', 'jury_questioning', 'jury_voting', 'completed']
+        ['strategy', 'tribal_council', 'reevaluation', 'voting', 'jury_questioning', 'jury_voting', 'completed']
     );
     assert.equal(manager.view().status, 'completed');
 });
@@ -381,7 +398,55 @@ test('strategy leads to Tribal Council, and only the host opens voting', async (
     assert.equal(coordinator.view().phase, 'tribal_council', 'council does not time out');
 
     await manager.control('end-council');
+    assert.equal(coordinator.view().phase, 'reevaluation');
+    await manager.control('advance');
     assert.equal(coordinator.view().phase, 'voting');
+});
+
+test('voting is host-held: no clock, no advance autofill, reveal blocks on missing ballots', async () => {
+    const { manager, coordinator, contestCoordinator, advance } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    contestCoordinator.completeCurrent(manager, 'Bot1');
+    await manager.syncContestView(contestCoordinator.view());
+    assert.equal(coordinator.view().phase, 'strategy');
+    assert.ok(coordinator.view().eligibleTargetIds.includes('Bot2')
+        || coordinator.view().eligibleTargetIds.length >= 3);
+    await manager.control('open-council');
+    await manager.control('end-council');
+    assert.equal(coordinator.view().phase, 'reevaluation');
+    await manager.control('advance');
+    assert.equal(coordinator.view().phase, 'voting');
+    assert.equal(manager.view().phaseDeadlineAt, null, 'voting has no auto clock');
+    assert.deepEqual(
+        [...(manager.view().game.missingVoterIds || [])].sort(),
+        ['Bot1', 'Bot2', 'Bot3', 'Bot4']
+    );
+
+    await assert.rejects(
+        manager.control('advance'),
+        /host-held|Reveal votes/i
+    );
+    assert.equal(coordinator.view().phase, 'voting');
+    await assert.rejects(
+        manager.control('reveal-votes'),
+        /Missing ballots from/
+    );
+
+    for (const voterId of coordinator.view().eligibleVoterIds) {
+        const targetId = coordinator.view().eligibleTargetIds.find(id => id !== voterId);
+        await manager.handleAgentCommand(voterId, 'cast-vote', {
+            targetId,
+            reason: 'test ballot',
+        });
+    }
+    assert.deepEqual(manager.view().game.missingVoterIds, []);
+    await manager.control('reveal-votes');
+    assert.notEqual(coordinator.view().phase, 'voting');
 });
 
 test('nobody can vote while Tribal Council is still in session', async () => {
@@ -404,6 +469,12 @@ test('nobody can vote while Tribal Council is still in session', async () => {
     );
 
     await manager.control('end-council');
+    assert.equal(coordinator.view().phase, 'reevaluation');
+    await assert.rejects(
+        manager.handleAgentCommand('Bot2', 'cast-vote', { targetId: 'Bot3' }),
+        /not accepted during reevaluation/
+    );
+    await manager.control('advance');
     const accepted = await manager.handleAgentCommand('Bot2', 'cast-vote', { targetId: 'Bot3' });
     assert.equal(accepted.success, true);
 });
@@ -489,7 +560,12 @@ test('council is spoken aloud: the host asks, the player answers in their own vo
     spoken.length = 0;
     await manager.control('end-council');
     assert.deepEqual(spoken, [
-        { speaker: 'narrator', text: 'Council is closed. It is time to vote.' },
+        { speaker: 'narrator', text: 'Council is closed. Reconsider what you heard before anyone votes.' },
+    ]);
+    spoken.length = 0;
+    await manager.control('advance');
+    assert.deepEqual(spoken, [
+        { speaker: 'narrator', text: 'Re-evaluation is over. It is time to vote.' },
     ]);
 });
 
@@ -527,6 +603,7 @@ test('agent commands keep ballot contents private from status responses', async 
     advance(2);
     await manager.tick();
     await manager.control('end-council');
+    await manager.control('advance');
     const state = coordinator.view();
     const voterId = state.eligibleVoterIds[0];
     const targetId = state.eligibleTargetIds.find(id => id !== voterId);
@@ -990,6 +1067,9 @@ test('a private room outlives every phase change so the talk never stops', async
     await manager.handleAgentCommand('Bot3', 'room-send', { message: 'do not blink out there' });
 
     await manager.control('end-council');
+    assert.equal(coordinator.view().phase, 'reevaluation');
+    await manager.handleAgentCommand('Bot2', 'room-send', { message: 'still thinking' });
+    await manager.control('advance');
     assert.equal(coordinator.view().phase, 'voting');
     const sent = await manager.handleAgentCommand('Bot2', 'room-send', {
         message: 'writing Bot4, you too',
@@ -1000,7 +1080,7 @@ test('a private room outlives every phase change so the talk never stops', async
     assert.equal(thread.open, true);
     assert.deepEqual(
         thread.messages.map(message => message.phase),
-        ['strategy', 'tribal_council', 'voting']
+        ['strategy', 'tribal_council', 'reevaluation', 'voting']
     );
 });
 
@@ -1295,13 +1375,17 @@ test('closing council leaves the record available to the bots who then vote', as
     });
     await manager.control('end-council');
 
-    // The voting directive carries both the accusation and the jury framing, so a
-    // bot can change its target because of what it just heard.
-    const voteDirective = directives.at(-1).prompt;
-    assert.match(voteDirective, /Bot3 has an alliance nobody is talking about/);
-    assert.match(voteDirective, /reconsider everything that just came out on the mat/);
-    assert.match(voteDirective, /you win because the people/);
+    // Closing council enters re-evaluation first; the briefing still carries the
+    // public accusation so bots can change targets before ballots open.
+    assert.equal(coordinator.view().phase, 'reevaluation');
+    const reevalDirective = directives.at(-1).prompt;
+    assert.match(reevalDirective, /Bot3 has an alliance nobody is talking about/);
+    assert.match(reevalDirective, /reconsider the public record/i);
+    assert.match(reevalDirective, /you win because the people/);
+    await manager.control('advance');
     assert.equal(coordinator.view().phase, 'voting');
+    const voteDirective = directives.at(-1).prompt;
+    assert.match(voteDirective, /cite what happened at council/i);
 });
 
 test('a challenge directive is about winning the challenge and nothing else', async () => {
@@ -1384,7 +1468,29 @@ test('an immunity challenge closes private talk without erasing the alliance', a
     });
     assert.equal(manager.view().rooms.length, 1);
 
-    for (let step = 0; step < 12 && coordinator.view().round === 1; step++) {
+    const VOTE_PHASES = new Set(['voting', 'revote', 'jury_voting', 'finalist_tiebreak']);
+    const REEVAL_PHASE = 'reevaluation';
+    for (let step = 0; step < 20 && coordinator.view().round === 1; step++) {
+        const game = coordinator.view();
+        if (game.phase === REEVAL_PHASE) {
+            await manager.control('advance');
+            continue;
+        }
+        if (VOTE_PHASES.has(game.phase)) {
+            for (const voterId of game.eligibleVoterIds) {
+                const targetId = game.eligibleTargetIds.find(id => id !== voterId);
+                try {
+                    await manager.handleAgentCommand(voterId, 'cast-vote', {
+                        targetId,
+                        reason: 'test ballot',
+                    });
+                } catch (error) {
+                    if (!/already voted/i.test(error.message)) throw error;
+                }
+            }
+            await manager.control('reveal-votes');
+            continue;
+        }
         advance(2);
         await manager.tick();
     }
@@ -1452,4 +1558,42 @@ test('a bot that cannot be reached is reported instead of silently skipped', asy
     const problem = manager.view().problems.at(-1);
     assert.equal(problem.stage, 'council-question');
     assert.match(problem.message, /Could not reach Bot3/);
+});
+
+test('harness can skip a challenge, set immunity, and jump to Tribal', async () => {
+    const { manager, coordinator, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    assert.equal(coordinator.view().phase, 'challenge');
+    const contestId = manager.view().challengeContestId;
+    assert.ok(contestId);
+    assert.equal(contestCoordinator.contests[contestId].status, 'running');
+    await manager.control('jump-to-council', {
+        winnerId: 'Bot1',
+        immunityIds: ['Bot1'],
+    });
+    assert.equal(coordinator.view().phase, 'tribal_council');
+    assert.deepEqual(coordinator.view().immunityIds, ['Bot1']);
+    assert.ok(coordinator.view().eligibleTargetIds.every(id => id !== 'Bot1'));
+    assert.equal(manager.view().challengeContestId, null);
+    assert.equal(contestCoordinator.contests[contestId].status, 'cancelled');
+    assert.equal(contestCoordinator.activeContestId, null);
+});
+
+test('fire-making requires operator confirmation', async () => {
+    const { manager, coordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    coordinator.game.state.phase = 'fire_making';
+    coordinator.game.state.tiedIds = ['Bot2', 'Bot3'];
+    await assert.rejects(manager.control('advance'), /operator confirmation|Confirm fire/i);
+    await assert.rejects(manager.control('fire-result', {}), /Confirm fire-making/);
 });
