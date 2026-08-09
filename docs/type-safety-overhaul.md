@@ -148,6 +148,28 @@ Postgres service container and runs `db:migrate` before the tests.
 
 BEG-267 and BEG-268 need no runtime work and can be picked up immediately.
 
+## Audit and type-design track
+
+These issues answer "what should the best type be?" before implementation. They produce
+inventories, risk scores, state models, and questionnaires for the programmer and product
+owner. They are not blocked on the Bun cutover.
+
+| Issue | Audit / decision output |
+|---|---|
+| [BEG-271](https://linear.app/terminaldotshop/issue/BEG-271) | Whole-system type-safety scorecard and unsoundness budget |
+| [BEG-272](https://linear.app/terminaldotshop/issue/BEG-272) | Interactive subsystem type-design questionnaires and decision records |
+| [BEG-273](https://linear.app/terminaldotshop/issue/BEG-273) | External boundary matrix, schema coverage, property/fuzz tests |
+| [BEG-274](https://linear.app/terminaldotshop/issue/BEG-274) | Domain model review: impossible states, branded IDs, exhaustive transitions |
+| [BEG-275](https://linear.app/terminaldotshop/issue/BEG-275) | Effect review: typed errors, Layers, Scope, interruption |
+| [BEG-276](https://linear.app/terminaldotshop/issue/BEG-276) | Third-party SDK and Mineflayer type trust boundaries |
+| [BEG-277](https://linear.app/terminaldotshop/issue/BEG-277) | Postgres/Drizzle integrity, migrations, and transaction boundaries |
+| [BEG-278](https://linear.app/terminaldotshop/issue/BEG-278) | Browser state/events and Effect/bundling scope |
+| [BEG-279](https://linear.app/terminaldotshop/issue/BEG-279) | LLM-to-command/generated-code path as an untrusted typed protocol |
+| [BEG-280](https://linear.app/terminaldotshop/issue/BEG-280) | Orchestration workflows: typed steps, idempotency, cleanup |
+
+Start with BEG-271 and BEG-272. The scorecard says where the risk is; the questionnaires
+prevent the implementer from guessing domain invariants while converting loose objects.
+
 ## Reference
 
 - [Effect Schema](https://effect.website/docs/schema/getting-started/)
