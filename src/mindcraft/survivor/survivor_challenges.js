@@ -17,6 +17,25 @@ export const SURVIVOR_CHALLENGE_TYPES = Object.freeze([
     'spleef',
 ]);
 
+// Baseline deck: reliable existing games only. Puzzle/endurance/PVP experiments
+// (hot_button, team_base_siege, …) stay out of default scenarios until after a
+// watchable season has run.
+export const BASELINE_SURVIVOR_CHALLENGE_GAME_IDS = Object.freeze([
+    'cake_race',
+    'death_race',
+    'dog_race',
+    'diamond_race',
+    'netherite_race',
+    'tower_battle',
+    'deepest_2_5',
+    'deepest_5',
+    'spleef',
+]);
+
+export function isBaselineSurvivorChallenge(gameId) {
+    return BASELINE_SURVIVOR_CHALLENGE_GAME_IDS.includes(gameId);
+}
+
 function assertResults(results) {
     if (!Array.isArray(results) || results.length === 0) {
         throw new Error('Challenge results are required');

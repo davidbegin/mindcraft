@@ -14,6 +14,14 @@ Intent document for the watchable mini-season baseline. Archive stamps hold run-
 | Souls | Existing persona `systemPrompt`s — no experimental/conservative packs yet |
 | USA vs China | Curiosity only **after** baseline; no dedicated infra |
 
+## Challenge deck (baseline)
+
+Default scenario decks use only proven race / tower / spleef games:
+
+`cake_race`, `death_race`, `dog_race`, `diamond_race`, `netherite_race`, `tower_battle`, `deepest_2_5`, `deepest_5`, `spleef`.
+
+`hot_button`, `team_base_siege`, and other experimental contests can still be added from the deck UI (labeled experimental) but are not season defaults. Host can skip a live challenge, declare a winner, set immunity, or jump to Tribal from the Scenario harness.
+
 ## Capture
 
 Stamp each season archive/journal with:

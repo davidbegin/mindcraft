@@ -181,7 +181,12 @@ test('the four-player scenario casts four bots for a final two', () => {
         ['Billy', 'Kimmy', 'Marcus', 'Dario']
     );
     assert.ok(four.challengeGameIds.length > 0);
-    assert.ok(four.phaseDurationsMs.strategy < getSurvivorSeasonPreset().phaseDurationsMs.strategy);
+    assert.equal(four.phaseDurationsMs.strategy, 10 * 60_000);
+    assert.equal(
+        four.phaseDurationsMs.strategy,
+        getSurvivorSeasonPreset().phaseDurationsMs.strategy,
+        'strategy stays 10 minutes across scenarios'
+    );
 });
 
 test('the six-player scenario runs two tribes into a four-person jury', () => {
@@ -199,7 +204,7 @@ test('the six-player scenario runs two tribes into a four-person jury', () => {
     );
     assert.deepEqual(six.challengeGameIds, [
         'cake_race',
-        'team_base_siege',
+        'tower_battle',
         'spleef',
         'diamond_race',
         'death_race',

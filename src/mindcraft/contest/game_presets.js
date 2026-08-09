@@ -88,7 +88,6 @@ export const SURVIVOR_SEASON_PRESET = Object.freeze({
         'deepest_2_5',
         'deepest_5',
         'spleef',
-        'hot_button',
     ]),
 });
 
@@ -121,7 +120,6 @@ export const SURVIVOR_FOUR_PLAYER_PRESET = Object.freeze({
         'cake_race',
         'death_race',
         'spleef',
-        'hot_button',
     ]),
 });
 
@@ -152,7 +150,7 @@ export const SURVIVOR_SIX_PLAYER_PRESET = Object.freeze({
     }),
     challengeGameIds: Object.freeze([
         'cake_race',
-        'team_base_siege',
+        'tower_battle',
         'spleef',
         'diamond_race',
         'death_race',

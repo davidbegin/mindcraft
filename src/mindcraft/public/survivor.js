@@ -269,10 +269,13 @@
         if (previous && remaining.includes(previous)) select.value = previous;
         else if ((game.immunityIds || [])[0]) select.value = game.immunityIds[0];
         el('harnessSetImmunityBtn').disabled = !usable || game.phase !== 'strategy';
+        el('harnessDeclareWinnerBtn').disabled = !usable || game.phase !== 'challenge';
         el('harnessSkipChallengeBtn').disabled = !usable || game.phase !== 'challenge';
         el('harnessJumpCouncilBtn').disabled = !usable;
         el('harnessHint').textContent = game.phase === 'challenge'
-            ? 'Skip challenge (assigns immunity) or jump straight to Tribal.'
+            ? (game.merged
+                ? 'Declare a winner, skip (assigns immunity), or jump straight to Tribal.'
+                : 'Declare a winning tribe via any member, skip, or jump to Tribal.')
             : game.phase === 'strategy'
                 ? `Strategy open. Vulnerable: ${names(game.eligibleTargetIds) || '—'}. Jump opens council.`
                 : `Harness idle during ${phaseLabel(game.phase)}.`;
@@ -1157,8 +1160,21 @@
     }
 
     function renderDeckAddOptions() {
-        el('deckAddSelect').innerHTML = games
-            .map(game => `<option value="${esc(game.id)}">${esc(game.title)}</option>`)
+        // Baseline games first; experimental contests stay available but labeled.
+        const baselineIds = new Set([
+            'cake_race', 'death_race', 'dog_race', 'diamond_race', 'netherite_race',
+            'tower_battle', 'deepest_2_5', 'deepest_5', 'spleef',
+        ]);
+        const sorted = [...games].sort((left, right) => {
+            const leftBase = baselineIds.has(left.id) ? 0 : 1;
+            const rightBase = baselineIds.has(right.id) ? 0 : 1;
+            return leftBase - rightBase || left.title.localeCompare(right.title);
+        });
+        el('deckAddSelect').innerHTML = sorted
+            .map(game => {
+                const tag = baselineIds.has(game.id) ? '' : ' (experimental)';
+                return `<option value="${esc(game.id)}">${esc(game.title)}${tag}</option>`;
+            })
             .join('');
     }
 
@@ -1683,6 +1699,19 @@
     el('harnessSetImmunityBtn').addEventListener('click', () =>
         control('set-immunity', harnessPayload())
     );
+    el('harnessDeclareWinnerBtn').addEventListener('click', () => {
+        const game = currentGame();
+        const payload = harnessPayload();
+        const label = game?.merged
+            ? payload.winnerId
+            : `${payload.winningTribe} (via ${payload.winnerId})`;
+        if (!window.confirm(
+            `Declare challenge winner: ${label}? This ends the live contest and awards immunity.`
+        )) {
+            return;
+        }
+        control('challenge-result', payload);
+    });
     el('harnessSkipChallengeBtn').addEventListener('click', () =>
         control('skip-challenge', harnessPayload())
     );

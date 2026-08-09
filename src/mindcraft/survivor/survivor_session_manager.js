@@ -803,6 +803,14 @@ export class SurvivorSessionManager {
         this.active.challengeIndex += 1;
         const preset = this.getContestPreset(selectedId);
         const participantIds = state.participantIds.filter(id => state.players[id].active);
+        const teamSetup = state.merged
+            ? null
+            : {
+                teamNames: [...state.tribeNames],
+                teamByParticipant: Object.fromEntries(
+                    participantIds.map(id => [id, state.players[id].tribe])
+                ),
+            };
         const contest = await this.contestCoordinator.createContest({
             title: `${preset.title} — Survivor Round ${state.round}`,
             prompt: preset.prompt,
@@ -816,22 +824,25 @@ export class SurvivorSessionManager {
                 survivorRound: state.round,
                 survivorMode: state.merged ? 'individual' : 'tribe',
                 tribes: clone(state.tribes),
-                // Wire Minecraft team coloring for pre-merge challenges.
-                teamNames: state.merged ? null : [...state.tribeNames],
-                teamByParticipant: state.merged
-                    ? null
-                    : Object.fromEntries(
-                        participantIds.map(id => [id, state.players[id].tribe])
-                    ),
+                // Contests, HUD, and cake/tower team scoring all read teams from
+                // metadata.gameSession — the same shape standalone games use.
+                gameSession: {
+                    contestType: 'survivor',
+                    survivorSeasonId: state.id,
+                    teamNames: teamSetup?.teamNames ?? null,
+                    teamByParticipant: teamSetup?.teamByParticipant ?? null,
+                    participants: participantIds.map(id => ({
+                        name: id,
+                        team: teamSetup?.teamByParticipant?.[id] ?? null,
+                    })),
+                },
+                teamNames: teamSetup?.teamNames ?? null,
+                teamByParticipant: teamSetup?.teamByParticipant ?? null,
             },
         });
         await this.prepareArena(preset, participantIds, {
-            teamNames: state.merged ? undefined : state.tribeNames,
-            teamByParticipant: state.merged
-                ? undefined
-                : Object.fromEntries(
-                    participantIds.map(id => [id, state.players[id].tribe])
-                ),
+            teamNames: teamSetup?.teamNames,
+            teamByParticipant: teamSetup?.teamByParticipant,
         });
         await this.coordinator.apply('startChallenge', {
             id: preset.id,

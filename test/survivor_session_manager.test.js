@@ -3,9 +3,10 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { getContestGamePreset } from '../src/mindcraft/contest/game_presets.js';
+import { getContestGamePreset, getSurvivorSeasonPreset } from '../src/mindcraft/contest/game_presets.js';
 import { ConversationRequestRegistry } from '../src/mindcraft/survivor/conversation_requests.js';
 import { PrivateRoomRegistry } from '../src/mindcraft/survivor/private_rooms.js';
+import { BASELINE_SURVIVOR_CHALLENGE_GAME_IDS } from '../src/mindcraft/survivor/survivor_challenges.js';
 import { SurvivorCoordinator } from '../src/mindcraft/survivor/survivor_coordinator.js';
 import { SurvivorSessionManager } from '../src/mindcraft/survivor/survivor_session_manager.js';
 
@@ -1666,6 +1667,57 @@ test('harness can skip a challenge, set immunity, and jump to Tribal', async () 
     assert.equal(manager.view().challengeContestId, null);
     assert.equal(contestCoordinator.contests[contestId].status, 'cancelled');
     assert.equal(contestCoordinator.activeContestId, null);
+});
+
+test('pre-merge challenges wire tribes into contest gameSession for Minecraft teams', async () => {
+    const { manager, coordinator, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(6),
+        mergeAt: 4,
+        finalistCount: 2,
+        tribeNames: ['Ember', 'Tide'],
+        challengeGameIds: ['cake_race'],
+    });
+    assert.equal(coordinator.view().merged, false);
+    const contestId = manager.view().challengeContestId;
+    const contest = contestCoordinator.contests[contestId];
+    assert.deepEqual(contest.metadata.gameSession.teamNames, ['Ember', 'Tide']);
+    assert.equal(
+        contest.metadata.gameSession.teamByParticipant.Bot1,
+        coordinator.view().players.Bot1.tribe
+    );
+    assert.equal(
+        contest.metadata.gameSession.participants.find(p => p.name === 'Bot1').team,
+        coordinator.view().players.Bot1.tribe
+    );
+});
+
+test('host can declare a challenge winner through challenge-result', async () => {
+    const { manager, coordinator, contestCoordinator } = await createManager();
+    await manager.start({
+        participants: participants(4),
+        mergeAt: 4,
+        finalistCount: 2,
+        challengeGameIds: ['cake_race'],
+    });
+    const contestId = manager.view().challengeContestId;
+    await manager.control('challenge-result', { winnerId: 'Bot2' });
+    assert.equal(coordinator.view().phase, 'strategy');
+    assert.deepEqual(coordinator.view().immunityIds, ['Bot2']);
+    assert.equal(manager.view().challengeContestId, null);
+    assert.equal(contestCoordinator.contests[contestId].status, 'cancelled');
+});
+
+test('baseline Survivor scenario decks stay on proven challenge games', async () => {
+    for (const scenarioId of ['classic', 'four_player', 'six_player']) {
+        const deck = getSurvivorSeasonPreset(scenarioId).challengeGameIds;
+        for (const gameId of deck) {
+            assert.ok(
+                BASELINE_SURVIVOR_CHALLENGE_GAME_IDS.includes(gameId),
+                `${scenarioId} includes non-baseline ${gameId}`
+            );
+        }
+    }
 });
 
 test('fire-making requires operator confirmation', async () => {
