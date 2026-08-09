@@ -49,7 +49,7 @@
         "postinstall": "patch-package",
         "start": "node main.js",
         "test": "node --test",
-        "test:bun": "bun test test/colony_store.test.ts test/colony_store.integration.test.ts test/settings_schema.test.ts test/model_error.test.ts test/ipc_contracts.test.ts",
+        "test:bun": "bun test test/colony_store.test.ts test/colony_store.integration.test.ts test/settings_schema.test.ts test/model_error.test.ts test/ipc_contracts.test.ts test/profile.test.ts",
         "typecheck": "tsc --noEmit -p tsconfig.json",
         "lint:types": "eslint \"src/**/*.ts\" \"test/**/*.test.ts\" drizzle.config.ts",
         "db:generate": "drizzle-kit generate",
