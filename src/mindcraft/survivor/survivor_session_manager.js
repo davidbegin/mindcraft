@@ -10,6 +10,11 @@ import { ConversationRequestRegistry, MAX_CONVERSATION_INVITEES } from './conver
 import { buildChallengeDeck, resolveTeamChallenge } from './survivor_challenges.js';
 import { COUNCIL_PHASES, HOST_HELD_VOTE_PHASES, MIN_SURVIVOR_PLAYERS } from './survivor_game.js';
 import { buildPlayerBriefing } from './survivor_memory.js';
+import {
+    attributeReason,
+    collectBriefingFacts,
+    summarizeBriefingUse,
+} from './survivor_memory_probe.js';
 import { buildSurvivorDirective } from './survivor_prompts.js';
 import { buildSurvivorRelationships } from './survivor_relationships.js';
 import { buildSurvivorStandings } from './survivor_standings.js';
@@ -19,6 +24,21 @@ function clone(value) {
     return value === null || value === undefined
         ? value
         : JSON.parse(JSON.stringify(value));
+}
+
+// One round's memory evidence. Re-evaluation leanings are the "before" picture
+// and ballots are the "after", so a mind changed at council is visible as a flip
+// rather than inferred from the result.
+function emptyVoteProof() {
+    return {
+        beforeTargets: {},
+        afterTargets: {},
+        councilCiting: {},
+        leaningReasons: {},
+        // playerId -> attributeReason() report for the sealed ballot reason.
+        ballotSources: {},
+        leaningSources: {},
+    };
 }
 
 export function councilQuestionPrompt(question, state) {
@@ -374,6 +394,7 @@ export class SurvivorSessionManager {
             relationships: buildSurvivorRelationships(game, this.roomHistory),
             conversationRequests: this.conversations.view(),
             conversationStats: this._conversationStats(),
+            memoryProof: this._memoryProof(),
             problems: clone(this.problems),
             operatorRunState: this._operatorRunState(game),
             rooms: this.rooms.view().map(room => ({
@@ -787,7 +808,7 @@ export class SurvivorSessionManager {
             councilAutoAdvance: Boolean(request.councilAutoAdvance),
             readiness: null,
             // Harness / memory-flip proof: before targets (reeval) vs ballots.
-            voteProof: { beforeTargets: {}, afterTargets: {}, councilCiting: {} },
+            voteProof: emptyVoteProof(),
             talkStats: {
                 asked: 0,
                 accepted: 0,
@@ -1197,9 +1218,42 @@ export class SurvivorSessionManager {
                     const reason = String(payload.reason || '');
                     this.active.voteProof.councilCiting[agentId] = /council|mat|jeff|tribal|said|answer/i
                         .test(reason);
+                    this.active.voteProof.ballotSources[agentId] =
+                        this._attributeReason(agentId, reason, state);
                 }
                 this._emit();
                 return { success: true, data, message: 'Secret ballot accepted' };
+            }
+            case 'declare-leaning': {
+                // The "before" half of the memory-flip measurement. It is a stated
+                // leaning, not a ballot: nothing is applied to the game, and a bot
+                // is free to write a different name down once voting opens.
+                if (state.phase !== 'reevaluation') {
+                    throw new Error('Leanings are only declared during reevaluation');
+                }
+                if (!state.eligibleVoterIds.includes(agentId)) {
+                    throw new Error('You are not voting at this council');
+                }
+                const targetId = String(payload.targetId ?? '');
+                if (!state.eligibleTargetIds.includes(targetId)) {
+                    throw new Error(
+                        `${targetId || 'that player'} is not a legal target; legal targets are `
+                        + state.eligibleTargetIds.join(', ')
+                    );
+                }
+                const reason = String(payload.reason || '');
+                if (this.active?.voteProof) {
+                    this.active.voteProof.beforeTargets[agentId] = targetId;
+                    this.active.voteProof.leaningReasons[agentId] = reason;
+                    this.active.voteProof.leaningSources[agentId] =
+                        this._attributeReason(agentId, reason, state);
+                }
+                this._emit();
+                return {
+                    success: true,
+                    data: { targetId },
+                    message: `Noted: you are leaning ${targetId}. You can still change your mind.`,
+                };
             }
             case 'deadlock-decision': {
                 await this.coordinator.apply('submitDeadlockDecision', agentId, payload.targetId);
@@ -1357,11 +1411,7 @@ export class SurvivorSessionManager {
                 // Ordinary councils enter re-evaluation before ballots open.
                 const { phase } = this._requireRunning();
                 if (phase !== 'jury_questioning' && this.active) {
-                    this.active.voteProof = {
-                        beforeTargets: {},
-                        afterTargets: {},
-                        councilCiting: {},
-                    };
+                    this.active.voteProof = emptyVoteProof();
                 }
                 return this._applyAndTransition(
                     phase === 'jury_questioning' ? 'beginJuryVote' : 'beginReevaluation'
@@ -1666,6 +1716,50 @@ export class SurvivorSessionManager {
     // actually part of.
     briefingFor(playerId, state = this.coordinator.view()) {
         return buildPlayerBriefing(state, playerId, { privateLog: this.secretEventLog });
+    }
+
+    // Checks one bot's stated reason against the facts its own briefing carried.
+    // Built from the same private log as briefingFor(), so a bot can never be
+    // credited for reading a room it was never in.
+    _attributeReason(playerId, reason, state = this.coordinator.view()) {
+        const facts = collectBriefingFacts(state, playerId, {
+            privateLog: this.secretEventLog,
+        });
+        return attributeReason(reason, facts);
+    }
+
+    // The answer to "is the briefing doing anything?": per source, how many bots
+    // had it available and how many demonstrably used it, plus who changed their
+    // mind between the re-evaluation beat and the sealed ballot.
+    _memoryProof() {
+        const proof = this.active?.voteProof;
+        if (!proof) return null;
+        const voters = [...new Set([
+            ...Object.keys(proof.beforeTargets),
+            ...Object.keys(proof.afterTargets),
+        ])];
+        const flips = voters
+            .filter(id =>
+                proof.beforeTargets[id]
+                && proof.afterTargets[id]
+                && proof.beforeTargets[id] !== proof.afterTargets[id]
+            )
+            .map(id => ({
+                playerId: id,
+                from: proof.beforeTargets[id],
+                to: proof.afterTargets[id],
+                // A flip only counts as a council flip when the new reason
+                // actually echoes something said on the mat.
+                citedCouncil: Boolean(proof.ballotSources[id]?.sources?.council?.echoed),
+            }));
+        return {
+            declaredLeanings: Object.keys(proof.beforeTargets).length,
+            ballotsCast: Object.keys(proof.afterTargets).length,
+            flips,
+            ballotUse: summarizeBriefingUse(proof.ballotSources),
+            leaningUse: summarizeBriefingUse(proof.leaningSources),
+            bySource: clone(proof.ballotSources),
+        };
     }
 
     _privateStatus(agentId) {
