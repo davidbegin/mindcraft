@@ -2439,6 +2439,7 @@ export function createMindServer(host_public = false, port = 8080) {
     const conversationsHtml = path.join(publicDir, 'conversations.html');
     const seasonsHtml = path.join(publicDir, 'seasons.html');
     const gamesArchiveHtml = path.join(publicDir, 'games_archive.html');
+    const architectureHtml = path.join(publicDir, 'architecture.html');
     // index: false so `/` can redirect to `/colony` instead of silently serving index.html
     app.use(express.static(publicDir, { index: false }));
     // Client-side views share index.html; each has a real URL for copy/share/reload.
@@ -2463,6 +2464,11 @@ export function createMindServer(host_public = false, port = 8080) {
     // is its own archive page, separate from the live games dashboard.
     app.get('/games/archive', (_req, res) => {
         res.sendFile(gamesArchiveHtml);
+    });
+    // Engineer-facing docs for how the whole system fits together. Static content,
+    // so it stays readable even when no bots are running.
+    app.get('/architecture', (_req, res) => {
+        res.sendFile(architectureHtml);
     });
     app.get('/', (_req, res) => {
         res.redirect(302, '/colony');
