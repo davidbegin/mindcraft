@@ -11,266 +11,172 @@
 
         main { max-width: 1080px; margin: 0 auto; }
 
-        /* —— Header —— */
+        /* —— Menu bar —— */
         .topbar {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            margin: 0 auto 26px;
-            max-width: 1080px;
-            flex-wrap: wrap;
-        }
-
-        .brand { display: flex; align-items: baseline; gap: 10px; }
-        .brand h1 { margin: 0; font-size: 1.55rem; font-weight: 700; letter-spacing: -0.03em; }
-        .brand .tag { color: var(--text-dim); font-size: 0.85rem; font-weight: 500; }
-
-        .view-nav {
-            display: inline-flex;
-            gap: 4px;
-            padding: 3px;
-            border-radius: 10px;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border);
-            flex-wrap: wrap;
-        }
-
-        .view-nav a {
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-weight: 600;
-            text-decoration: none;
-            font-size: 0.85rem;
-            color: var(--text-dim);
-        }
-        .view-nav a:hover { color: var(--text); }
-        .view-nav a.active {
-            background: var(--lime-dim);
-            color: var(--lime);
-            border: 1px solid rgba(159, 232, 112, 0.28);
-        }
-
-        .status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border-radius: 999px;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border);
-            font-size: 0.78rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            color: var(--text-dim);
-            margin-left: auto;
-        }
-        .status-pill.online { color: var(--lime); border-color: rgba(159, 232, 112, 0.35); background: var(--lime-dim); }
-        .status-pill.offline { color: var(--red); border-color: rgba(239, 83, 80, 0.35); background: var(--red-dim); }
-        .status-pill::before {
-            content: "";
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            background: currentColor;
-            box-shadow: 0 0 8px currentColor;
-        }
-
-        /* —— Intro —— */
-        .lede {
-            font-size: 1.05rem;
-            color: var(--text-dim);
-            max-width: 760px;
-            margin: 0 0 30px;
-        }
-        .lede strong { color: var(--text); font-weight: 600; }
-
-        section { margin-bottom: 38px; }
-
-        .section-head {
-            display: flex;
-            align-items: baseline;
-            gap: 12px;
-            margin-bottom: 14px;
-        }
-        .section-head h2 {
-            margin: 0;
-            font-size: 0.8rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            color: var(--text-mute);
-        }
-        .section-head .hint { color: var(--text-mute); font-size: 0.82rem; }
-
-        /* —— Live status —— */
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 12px;
-        }
-
-        .status-card {
-            background: var(--bg-elevated);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 14px 16px;
-            box-shadow: var(--shadow);
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-        .status-card.active { border-color: rgba(159, 232, 112, 0.35); }
-
-        .status-card h3 {
-            margin: 0;
-            font-size: 0.74rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-mute);
-        }
-
-        .status-value {
-            font-size: 1.15rem;
-            font-weight: 600;
-            letter-spacing: -0.01em;
-        }
-        .status-card.active .status-value { color: var(--lime); }
-        .status-detail { color: var(--text-dim); font-size: 0.88rem; }
-
-        .status-card a {
-            margin-top: auto;
-            padding-top: 6px;
-            color: var(--cyan);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.84rem;
-        }
-        .status-card a:hover { text-decoration: underline; }
-
-        .join-line {
-            margin-top: 14px;
             display: flex;
             align-items: center;
             gap: 10px;
             flex-wrap: wrap;
-            color: var(--text-dim);
-            font-size: 0.88rem;
+        }
+
+        .brand { display: flex; align-items: baseline; gap: 8px; padding-right: 6px; }
+        .brand h1 { margin: 0; }
+        .view-nav { display: inline-flex; flex-wrap: wrap; }
+        .view-nav a { text-decoration: none; }
+
+        .status-pill { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+        .status-pill::before { content: ""; background: currentColor; }
+
+        /* —— Intro —— */
+        .lede { max-width: 760px; margin: 0 0 14px; }
+        .lede strong { font-weight: 700; }
+
+        /* Group box: a hairline frame with the heading notched into its top
+           edge, the way a 90s dialog fenced off related controls. */
+        section {
+            margin: 0 0 14px;
+            padding: 16px 12px 12px;
+            box-shadow: var(--bevel-in-thin);
+        }
+
+        .section-head {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            margin: -25px 0 10px;
+            padding-left: 4px;
+        }
+        .section-head h2 {
+            margin: 0;
+            padding: 0 5px;
+            background: var(--w-face);
+            text-transform: none;
+        }
+        .section-head .hint {
+            padding: 0 5px;
+            background: var(--w-face);
+            font-size: 0.8rem;
+        }
+
+        /* —— Live status —— */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 8px;
+        }
+
+        .status-card {
+            padding: 9px 11px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .status-card h3 {
+            margin: 0;
+            font-size: 0.8rem;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        .status-value { font-size: 1rem; font-weight: 700; }
+        .status-card.active .status-value { color: var(--lime); }
+        .status-detail { color: var(--text-dim); font-size: 0.85rem; }
+
+        .status-card a {
+            margin-top: auto;
+            padding-top: 6px;
+            font-size: 0.82rem;
+        }
+
+        .join-line {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            font-size: 0.85rem;
         }
         .join-copy {
-            font: inherit;
             font-family: var(--mono);
-            font-size: 0.82rem;
-            color: var(--text);
-            background: var(--bg-inset);
-            border: 1px solid var(--border-strong);
-            border-radius: 8px;
-            padding: 5px 10px;
+            font-size: 0.8rem;
+            padding: 3px 8px;
+            background: var(--w-field);
+            box-shadow: var(--bevel-in);
+            border: none;
             cursor: pointer;
         }
-        .join-copy:hover { border-color: var(--lime); color: var(--lime); }
 
         /* —— How it works —— */
         .steps {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 14px;
+            grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+            gap: 8px;
             counter-reset: step;
         }
 
-        .step {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 16px 18px;
-        }
+        .step { padding: 10px 12px; }
         .step h3 {
-            margin: 0 0 6px;
-            font-size: 0.98rem;
-            font-weight: 600;
+            margin: 0 0 4px;
+            font-size: 0.92rem;
             display: flex;
             align-items: center;
-            gap: 9px;
+            gap: 8px;
         }
         .step h3::before {
             counter-increment: step;
             content: counter(step);
-            width: 22px;
-            height: 22px;
+            width: 18px;
+            height: 18px;
             flex: none;
             display: grid;
             place-items: center;
-            border-radius: 50%;
-            background: var(--lime-dim);
-            color: var(--lime);
+            background: var(--w-field);
+            box-shadow: var(--bevel-in-thin);
             font-family: var(--mono);
-            font-size: 0.76rem;
-            font-weight: 600;
+            font-size: 0.74rem;
         }
         .step p { margin: 0; color: var(--text-dim); }
-        .step code {
-            font-family: var(--mono);
-            font-size: 0.82rem;
-            color: var(--cyan);
-        }
+        .step code { font-size: 0.82rem; color: var(--w-navy); }
 
         /* —— Links —— */
         .link-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+            gap: 8px;
         }
 
         .link-card {
             display: block;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 15px 17px;
+            padding: 10px 12px;
             text-decoration: none;
             color: inherit;
-            transition: border-color 0.15s, background 0.15s, transform 0.15s;
+            cursor: pointer;
         }
-        .link-card:hover {
-            border-color: var(--border-strong);
-            background: var(--bg-elevated);
-            transform: translateY(-1px);
-        }
-        .link-card h3 {
-            margin: 0 0 5px;
-            font-size: 1rem;
-            font-weight: 600;
-        }
-        .link-card p { margin: 0; color: var(--text-dim); font-size: 0.88rem; }
+        .link-card h3 { margin: 0 0 3px; font-size: 0.95rem; }
+        .link-card p { margin: 0; color: var(--text-dim); font-size: 0.85rem; }
         .link-card .link-state {
             display: block;
-            margin-top: 8px;
+            margin-top: 6px;
             font-family: var(--mono);
-            font-size: 0.76rem;
+            font-size: 0.75rem;
             color: var(--text-mute);
         }
-        .link-card.colony { border-color: rgba(94, 200, 192, 0.3); }
-        .link-card.colony h3 { color: var(--cyan); }
 
         footer {
             max-width: 1080px;
             margin: 0 auto;
-            color: var(--text-mute);
             font-size: 0.82rem;
-            border-top: 1px solid var(--border);
-            padding-top: 14px;
         }
-        footer a { color: var(--text-dim); }
 
         @media (max-width: 720px) {
-            body { padding: 16px 14px 60px; }
             .status-pill { margin-left: 0; }
         }
     </style>
     <link rel="stylesheet" href="/theme.css">
 </head>
 <body>
+    <div class="titlebar"><span class="titlebar-text">Mindcraft — Home</span><span class="titlebar-btns" aria-hidden="true"><b>_</b><b>□</b><b>✕</b></span></div>
     <header class="topbar">
         <div class="brand">
             <h1>Mindcraft</h1>
@@ -338,7 +244,7 @@
         <section>
             <div class="section-head">
                 <h2>How it works</h2>
-                <span class="hint">the short version — <a href="/architecture" style="color: var(--cyan)">full architecture</a></span>
+                <span class="hint">the short version — <a href="/architecture">full architecture</a></span>
             </div>
             <div class="steps">
                 <article class="step">

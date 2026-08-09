@@ -51,3 +51,6 @@ contests/survivor/
 
 # Local UI preview screenshots
 .home-preview.png
+
+# local UI review screenshots
+.ui-shots/
