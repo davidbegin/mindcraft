@@ -86,6 +86,9 @@ html {
        the root down shrinks all of them to desktop-software proportions. */
     font-size: 14px;
     background: var(--w-desktop);
+    /* Without this, browsers with automatic dark mode invert the 3D-face
+       gray into a charcoal that defeats the whole palette. */
+    color-scheme: light;
 }
 
 body {
