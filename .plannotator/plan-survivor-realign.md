@@ -247,6 +247,17 @@ The through-line is **instrument before you tune**. Bots already get a social-mo
 7. **Do not build a Deep-vs-Testing memory toggle yet** (Q6): revisit only after the harness memory drills show what bots actually ignore.
 8. **Add all four memory drills to the harness** (Q8), sequenced after the basic boot path: **council memory flip** (preload target → public reveal → re-eval → ballot cites council), **refuse → grudge**, **private deal then public flip**, **jury resentment path**. These extend the Quiz 2/3/4 harness rather than forming a separate track.
 
+### Build status (Quiz 5) — instrumentation + drills shipped and green
+
+The instrument-first gate (work items 1 and 8) is now implemented and passing, which retires the "in progress" status for the [BEG-250](https://linear.app/terminaldotshop/issue/BEG-250/instrument-survivor-memory-and-relationship-effects) drill core:
+
+- **Memory probe** — `src/mindcraft/survivor/survivor_memory_probe.js` (`collectBriefingFacts` / `attributeReason`) attributes each stated reason to the briefing source it echoes (council / private / votes / jury) and separates *cued* (used the word) from *echoed* (reproduced the fact), so vocabulary alone does not count as reading the briefing.
+- **No-Minecraft harness** — `test/helpers/survivor_harness.js` drives a full season with plain functions (fake contest coordinator, in-memory rooms/conversations), letting a drill read back exactly what the cast was told and said.
+- **All four drills green** — `test/survivor_memory_drills.test.js`: council memory flip (declared-leaning → ballot flip cites council), refuse → grudge (private-source evidence, bystander sees nothing), private deal → public flip (ballot traces to the room), jury resentment (juror named aloud + can cite the ballot that cut him). Plus guards that a leaning is not a ballot, the graph never reaches a bot, and cue-only vocabulary is not scored as echo.
+- Full suite: **532/532 passing**.
+
+Still open on BEG-250 / paced by later quizzes: live-cast baseline run against these drills, the stronger name-the-jurors lens (Q5), and more council history for short seasons (Q7). Refusal-salience redesign (Q3), graph-to-bots (Q4), and Deep-vs-Testing modes (Q6) remain harness-gated as decided.
+
 ## Quiz 6 results — Mini-games & Challenges (answered)
 
 The challenge library is **deep enough to run a short season**, but it **feels samey** (five first-finish races). That variety gap is real and we should eventually build toward puzzle / endurance / PVP — and it must **not** block the watchable season. Near-term challenge work is operator control + pre-merge team wiring, not a bigger game catalog. Rewards stay parked.
@@ -436,7 +447,7 @@ Existing challenge catalog issues (`BEG-240`–`BEG-247`) remain in the project,
 2. **Complete:** write a code-backed **current-system map** (phases, private rooms, council, vote, memory, audio/recording, params).
 3. **Complete:** translate scorecard gaps into **Linear issues** under [BEG-248](https://linear.app/terminaldotshop/issue/BEG-248/watchable-survivor-mini-season), with acceptance criteria tied to the north star.
 4. **Shipped / Done in Linear:** harness + host-held vote ([BEG-251](https://linear.app/terminaldotshop/issue/BEG-251/build-live-tribal-scenario-harness-and-host-held-vote-path)), pause control ([BEG-249](https://linear.app/terminaldotshop/issue/BEG-249/replace-pausesuspend-with-one-legible-cast-preserving-control)), challenge skip/immunity/teams ([BEG-253](https://linear.app/terminaldotshop/issue/BEG-253/add-challenge-skip-immunity-override-and-real-tribe-setup)).
-5. **In progress:** memory instrumentation drills ([BEG-250](https://linear.app/terminaldotshop/issue/BEG-250/instrument-survivor-memory-and-relationship-effects)), private conspiracy ([BEG-254](https://linear.app/terminaldotshop/issue/BEG-254/make-private-conspiracy-usable-and-auditable)).
+5. **Drill core done / green:** Survivor memory instrumentation + all four drills ([BEG-250](https://linear.app/terminaldotshop/issue/BEG-250/instrument-survivor-memory-and-relationship-effects)) — probe, no-Minecraft harness, and drills pass (532/532); live-cast baseline + name-the-jurors lens + more council history remain. **In progress:** private conspiracy ([BEG-254](https://linear.app/terminaldotshop/issue/BEG-254/make-private-conspiracy-usable-and-auditable)).
 6. **Done (Quiz 7 audio):** soft/hard mute, flush, pause tie-in, stale-line age/depth cap, per-bot mute/volume — [BEG-252](https://linear.app/terminaldotshop/issue/BEG-252/add-survivor-softhard-mute-and-voice-queue-controls).
 7. **Backlog next:** recording archive ([BEG-255](https://linear.app/terminaldotshop/issue/BEG-255/produce-a-reliable-survivor-season-av-journal-archive)), params matrix stamp ([BEG-256](https://linear.app/terminaldotshop/issue/BEG-256/define-and-stamp-the-bounded-survivor-params-matrix)).
 
