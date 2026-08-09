@@ -45,7 +45,7 @@ const MERMAID_CONFIG = {
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
 /** Below roughly this scale, Mermaid label text stops being legible. */
-const READABLE_SCALE = 0.8;
+const READABLE_SCALE = 0.7;
 
 const el = {
     sections: document.getElementById('sections'),
@@ -147,12 +147,12 @@ function renderDiagramShell(block) {
             <div class="diagram-tools">
                 <button class="tool-btn" type="button" data-act="out" title="Zoom out" aria-label="Zoom out">&minus;</button>
                 <button class="tool-btn" type="button" data-act="in" title="Zoom in" aria-label="Zoom in">+</button>
-                <button class="tool-btn wide" type="button" data-act="fit" title="Fit to view">fit</button>
+                <button class="tool-btn wide" type="button" data-act="fit" title="Show the whole diagram">fit</button>
                 <button class="tool-btn wide" type="button" data-act="expand" title="Toggle tall view">tall</button>
             </div>
             <span class="diagram-hint">loading…</span>
         </div>
-        <div class="diagram-stage"><div class="diagram-canvas"></div></div>
+        <div class="diagram-stage"${block.height ? ` style="height:${block.height}px"` : ''}><div class="diagram-canvas"></div></div>
         ${block.caption ? `<figcaption class="diagram-caption">${escapeHtml(block.caption)}</figcaption>` : ''}`;
     return wrap;
 }
@@ -210,24 +210,29 @@ function applyTransform(view) {
     view.canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
 }
 
-function fitDiagram(view) {
+/**
+ * Two framings. `readable` is the default the page opens with: never shrink the
+ * labels past legibility, and let the user pan a diagram that does not fit.
+ * The fit button uses the other one, which shows the whole diagram at any size.
+ */
+function fitDiagram(view, { readable = true } = {}) {
     const stage = view.stage;
     const stageWidth = stage.clientWidth;
     const stageHeight = stage.clientHeight;
     if (!stageWidth || !stageHeight || !view.width || !view.height) return;
 
     const padding = 20;
-    const widthScale = (stageWidth - padding * 2) / view.width;
-    const heightScale = (stageHeight - padding * 2) / view.height;
+    const whole = Math.min(
+        (stageWidth - padding * 2) / view.width,
+        (stageHeight - padding * 2) / view.height,
+        1.35,
+    );
 
-    // Tall diagrams would shrink past the point of readability if we always fit
-    // the whole thing, so fall back to fitting the width and let the user pan down.
-    let scale = Math.min(widthScale, heightScale, 1.35);
-    scale = Math.max(scale, Math.min(widthScale, READABLE_SCALE));
+    view.scale = Math.max(MIN_SCALE, readable ? Math.max(whole, READABLE_SCALE) : whole);
 
-    view.scale = Math.max(MIN_SCALE, scale);
+    const scaledWidth = view.width * view.scale;
     const scaledHeight = view.height * view.scale;
-    view.x = (stageWidth - view.width * view.scale) / 2;
+    view.x = scaledWidth > stageWidth ? padding : (stageWidth - scaledWidth) / 2;
     view.y = scaledHeight > stageHeight ? padding : (stageHeight - scaledHeight) / 2;
     applyTransform(view);
 }
@@ -294,7 +299,7 @@ function wirePanAndZoom(view, figure) {
         window.addEventListener('pointerup', onUp, { once: true });
     });
 
-    stage.addEventListener('dblclick', () => fitDiagram(view));
+    stage.addEventListener('dblclick', () => fitDiagram(view, { readable: false }));
 
     figure.querySelector('.diagram-tools').addEventListener('click', (event) => {
         const button = event.target.closest('button');
@@ -309,7 +314,7 @@ function wirePanAndZoom(view, figure) {
                 zoomBy(view, 1 / 1.25, centerX, centerY);
                 break;
             case 'fit':
-                fitDiagram(view);
+                fitDiagram(view, { readable: false });
                 break;
             case 'expand':
                 stage.style.height = stage.style.height === '78vh' ? '' : '78vh';

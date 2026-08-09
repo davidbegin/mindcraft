@@ -273,6 +273,7 @@ export const SECTIONS = [
             {
                 type: 'diagram',
                 id: 'topology',
+                height: 620,
                 title: 'Everything, at once',
                 caption: 'Solid arrows are calls or spawns; the double arrow between the agent and MindServer is the persistent Socket.IO connection carrying every directive and report.',
                 mermaid: `flowchart TB

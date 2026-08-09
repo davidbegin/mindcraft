@@ -143,7 +143,8 @@
             scroll-behavior: smooth;
         }
 
-        .article-inner { max-width: 900px; margin: 0 auto; padding: 28px 32px 120px; }
+        /* Wide enough for diagrams; prose keeps its own reading measure below. */
+        .article-inner { max-width: 1180px; margin: 0 auto; padding: 28px 32px 120px; }
 
         .page-head { margin-bottom: 34px; }
         .page-head h2 { font-size: 1.6rem; letter-spacing: -0.02em; }
@@ -156,6 +157,12 @@
 
         .section { padding-top: 26px; margin-bottom: 42px; border-top: 1px solid var(--border); }
         .section:first-of-type { border-top: none; }
+
+        .section > .prose,
+        .section > .steps,
+        .section > .facts,
+        .section > .code-block,
+        .section > .doc-table-wrap { max-width: 900px; }
 
         .section-eyebrow {
             font-family: var(--mono);
