@@ -122,6 +122,15 @@ export function buildChallengeDirective(state, playerId, preset = null) {
     ].join('\n\n');
 }
 
+// The bench, named. Repeated at the mat and before ballots because a jury the
+// cast cannot name is a jury the cast does not play for.
+function juryRoll(state) {
+    const jurors = state.juryIds || [];
+    return jurors.length > 0
+        ? `The jury so far: ${jurors.join(', ')}. They pick the winner, so every name you write down is a vote you will have to justify to them.`
+        : null;
+}
+
 function phaseInstructions(state, playerId) {
     const player = state.players[playerId];
     const legalTargets = state.eligibleTargetIds.filter(id => id !== playerId);
@@ -149,28 +158,32 @@ function phaseInstructions(state, playerId) {
                 'Answer so that the person you are about to vote out could still respect you afterwards.',
                 'Listen hard to what everyone else says. You are expected to change your mind here if',
                 'what comes out on the mat changes the picture. That is what council is for.',
+                juryRoll(state),
                 `Vulnerable tonight: ${legalTargets.join(', ') || 'nobody'}.`,
-            ];
+            ].filter(Boolean);
         case 'reevaluation':
             return [
                 'Council is closed. Before anyone votes, reconsider the public record.',
                 'What changed on the mat? Who exposed a lie, panicked, or became a better target?',
-                'If your target shifted, say so privately or in a short confessional — then be ready to vote.',
+                'Say where you stand right now with !declareVoteLeaning("Name", "why"). It is not a',
+                'ballot and it does not bind you — it is how the host knows the room before votes open.',
+                juryRoll(state),
                 `Legal targets still: ${legalTargets.join(', ')}.`,
                 'DO NOT cast a ballot yet. Voting opens after this re-evaluation beat.',
-            ];
+            ].filter(Boolean);
         case 'voting':
         case 'revote':
             return [
                 'Re-evaluation is over. Vote now.',
                 'Your ballot reason should cite what happened at council when it mattered.',
+                juryRoll(state),
                 `Legal targets: ${legalTargets.join(', ')}.`,
                 'Cast exactly one secret ballot with !castSurvivorVote("Name", "why"). Do not announce it.',
                 'The reason is sealed with your ballot: no other player ever sees it, so write the',
                 'real reason you are writing this name down, not the version you told them.',
                 'You may keep working people privately while you decide, but the ballot comes first:',
                 'a bot still whispering when the host reveals has cast nothing.',
-            ];
+            ].filter(Boolean);
         case 'jury_voting':
             return [
                 `Vote for the winner: ${legalTargets.join(', ')}.`,

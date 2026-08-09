@@ -1644,6 +1644,10 @@ export class SurvivorSessionManager {
             this.conversations.removePlayer(playerId);
             await this.onEliminated(playerId, after);
         }
+        // Naming the bench out loud after every boot is the whole jury lens: a
+        // cast that never hears who is judging them plays to survive the night
+        // instead of to win the vote.
+        if (newlyEliminated.length > 0) await this._narrateJury(after);
         if (after.status === 'completed') {
             this.active.status = 'completed';
             this.active.phaseDeadlineAt = null;
@@ -1660,8 +1664,18 @@ export class SurvivorSessionManager {
         const duration = this._durationForPhase(after.phase);
         this.active.phaseDeadlineAt = duration == null ? null : this.clock() + duration;
         if (phaseChanged) await this._narrate(buildSurvivorPhaseAnnouncement(after));
+        if (phaseChanged && COUNCIL_PHASES.includes(after.phase)) await this._narrateJury(after);
         await this._broadcastPhase();
         this._emit();
+    }
+
+    async _narrateJury(state) {
+        const jurors = state?.juryIds || [];
+        if (jurors.length === 0) return;
+        await this._narrate(
+            `Remember who is on the jury: ${jurors.join(', ')}. `
+            + 'They decide who wins this game.'
+        );
     }
 
     async _broadcastPhase() {
