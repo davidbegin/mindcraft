@@ -2,14 +2,31 @@
 import globals from "globals";
 import pluginJs from "@eslint/js";
 import noFloatingPromise from "eslint-plugin-no-floating-promise";
+import tseslint from "typescript-eslint";
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
   // First, import the recommended configuration
   pluginJs.configs.recommended,
 
-  // Then override or customize specific rules
+  // Type-aware linting for the TypeScript slice only. Scoped on purpose: the
+  // JavaScript surface is not ready for strict-type-checked rules yet, so this
+  // block keeps the new code honest without flooding the legacy files.
+  ...tseslint.config({
+    files: ["src/db/**/*.ts", "test/**/*.test.ts", "drizzle.config.ts"],
+    extends: [...tseslint.configs.strictTypeChecked],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  }),
+
+  // Then override or customize specific rules (JavaScript only; the TypeScript
+  // slice above owns its own rule set).
   {
+    files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
     plugins: {
       "no-floating-promise": noFloatingPromise,
     },
