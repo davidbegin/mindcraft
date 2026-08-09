@@ -8,7 +8,7 @@ import { TTSConfig as elevenLabsTTSConfig } from '../models/elevenlabs.js';
 import { resolveVoice, getElevenLabsModel } from './tts_voices.js';
 import { noteVoiceFailure, noteVoiceSuccess } from './tts_health.js';
 
-let speakingQueue = []; // each item: {text, isSystem, volume, audioData, ready}
+let speakingQueue = []; // each item: {text, isSystem, volume, audioData, ready, enqueuedAt}
 let isSpeaking = false;
 let speechGeneration = 0;
 let activePlayer = null;
@@ -22,8 +22,32 @@ let muteMode = 'off';
 // that dies mid-sentence stops spending ElevenLabs credits as well as stopping
 // talking.
 const silencedBots = new Set();
+// Operator host-playback level per bot (0–100). 0 = quiet that cast member
+// without a global mute; eliminated bots still use silenceBot() instead.
+const botVolumes = new Map();
 
 const MUTE_MODES = Object.freeze(['off', 'soft', 'hard']);
+// TTS often runs several beats ahead of on-screen action. Drop lines that sat
+// in the queue too long, and never let the backlog grow without bound.
+let maxSpeechAgeMs = 20_000;
+let maxSpeechQueue = 8;
+
+/** Current max age for a queued line before it is dropped unread. */
+export function getMaxSpeechAgeMs() {
+    return maxSpeechAgeMs;
+}
+
+/** Current max host-queue depth before oldest lines are dropped. */
+export function getMaxSpeechQueue() {
+    return maxSpeechQueue;
+}
+
+/** Test/ops hook for lag policy. Pass null to restore defaults. */
+export function setSpeechLagLimits({ maxAgeMs, maxQueue } = {}) {
+    if (maxAgeMs != null) maxSpeechAgeMs = Math.max(0, Number(maxAgeMs));
+    if (maxQueue != null) maxSpeechQueue = Math.max(1, Math.round(Number(maxQueue)));
+    return { maxAgeMs: maxSpeechAgeMs, maxQueue: maxSpeechQueue };
+}
 
 /** Current mute mode: off | soft | hard. */
 export function getMuteMode() {
@@ -82,6 +106,36 @@ export function allowBot(botName) {
     return silencedBots.delete(String(botName));
 }
 
+/** Host playback volume for one bot (0–100). Missing entries default to 100. */
+export function getBotVolume(botName) {
+    const key = String(botName);
+    return botVolumes.has(key) ? botVolumes.get(key) : 100;
+}
+
+/** Snapshot of operator-set per-bot volumes (only bots that were explicitly set). */
+export function getBotVolumes() {
+    return Object.fromEntries(botVolumes.entries());
+}
+
+/**
+ * Set host playback volume for one bot. 0 quietens that cast member; 100 is
+ * full. Does not stop ElevenLabs generation — use silenceBot / hard mute for that.
+ */
+export function setBotVolume(botName, volume) {
+    const key = String(botName);
+    const vol = Math.max(0, Math.min(100, Math.round(Number(volume))));
+    if (!Number.isFinite(vol)) return getBotVolume(key);
+    if (vol >= 100) botVolumes.delete(key);
+    else botVolumes.set(key, vol);
+    if (vol === 0) clearSpeechQueue({ botName: key });
+    return getBotVolume(key);
+}
+
+/** Clear all operator per-bot volume overrides (everyone back to full). */
+export function clearBotVolumes() {
+    botVolumes.clear();
+}
+
 /**
  * Drop speech that has not played yet and stop the line currently playing.
  * A generation token also invalidates TTS requests that are still resolving,
@@ -128,6 +182,22 @@ export function clearSpeechQueue({ botName = null } = {}) {
 // full flush moved the queue on past it while its TTS request was in flight.
 function isStale(item) {
     return item.cancelled === true || item.generation !== speechGeneration;
+}
+
+function isAgedOut(item, now = Date.now()) {
+    return typeof item.enqueuedAt === 'number' && (now - item.enqueuedAt) > maxSpeechAgeMs;
+}
+
+function trimQueueToCap() {
+    while (speakingQueue.length > maxSpeechQueue) {
+        const dropped = speakingQueue.shift();
+        if (dropped) dropped.cancelled = true;
+    }
+}
+
+/** How many lines are waiting to play (not including the active line). */
+export function getSpeechQueueDepth() {
+    return speakingQueue.length;
 }
 
 /**
@@ -211,6 +281,7 @@ export function playSpeech({ text, model, botName, volume = 100, audioPromise = 
         ready: Promise.resolve(),
         generation: speechGeneration,
         cancelled: false,
+        enqueuedAt: Date.now(),
     };
     if (!item.isSystem) {
         const promise = audioPromise || generateSpeech(text, model, botName);
@@ -219,6 +290,7 @@ export function playSpeech({ text, model, botName, volume = 100, audioPromise = 
             .catch(err => { item.error = err; });
     }
     speakingQueue.push(item);
+    trimQueueToCap();
     // Soft mute keeps generating into the queue but does not start playback.
     if (!isSpeaking && muteMode === 'off') processQueue();
 }
@@ -230,6 +302,12 @@ export function speak(text, speak_model, botName) {
 
 async function processQueue() {
     isSpeaking = true;
+    // Drop lines that aged out while waiting so we never play a beat that
+    // already happened on screen three speeches ago.
+    while (speakingQueue.length > 0 && (isStale(speakingQueue[0]) || isAgedOut(speakingQueue[0]))) {
+        const dropped = speakingQueue.shift();
+        if (dropped) dropped.cancelled = true;
+    }
     if (speakingQueue.length === 0) {
         isSpeaking = false;
         return;
@@ -250,12 +328,29 @@ async function processQueue() {
     // wait for preprocessing if needed
     try {
         await item.ready;
+        // Flush/silence may already own the queue; age-out must continue it.
         if (isStale(item)) return;
+        if (isAgedOut(item)) {
+            activeItem = null;
+            isSpeaking = false;
+            processQueue();
+            return;
+        }
         if (item.error) throw item.error;
     } catch (err) {
         // A line abandoned because its bot left the game is not a voice fault,
         // so it must not raise an alarm in the control room.
         if (!isStale(item)) noteVoiceFailure(err, { botName: item.botName });
+        activeItem = null;
+        isSpeaking = false;
+        processQueue();
+        return;
+    }
+
+    const botVol = getBotVolume(item.botName);
+    if (botVol <= 0) {
+        // Operator muted this cast member: burn the line without playing it so
+        // the rest of the queue can catch up.
         activeItem = null;
         isSpeaking = false;
         processQueue();
@@ -295,7 +390,7 @@ async function processQueue() {
             return;
         }
 
-        const vol = Math.max(0, Math.min(100, Math.round(volume ?? 100)));
+        const vol = Math.max(0, Math.min(100, Math.round((volume ?? 100) * (botVol / 100))));
         try {
             if (isWin) {
                 const tmpPath = path.join(os.tmpdir(), `tts_${Date.now()}.mp3`);

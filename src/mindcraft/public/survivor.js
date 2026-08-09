@@ -725,12 +725,35 @@
         { key: 'id', label: 'Player', numeric: false },
         { key: 'tribe', label: 'Tribe', numeric: false },
         { key: 'status', label: 'Status', numeric: false },
+        { key: 'voice', label: 'Voice', numeric: false, title: 'Host playback for this cast member' },
         { key: 'immunityWins', label: 'Imm', numeric: true, title: 'Immunity wins' },
         { key: 'votesReceived', label: 'Vs', numeric: true, title: 'Votes received' },
         { key: 'votesCast', label: 'Cast', numeric: true, title: 'Votes cast' },
         { key: 'juryVotesReceived', label: 'Jury', numeric: true, title: 'Jury votes received' },
         { key: 'placement', label: 'Place', numeric: true },
     ];
+
+    let botVoiceVolumes = {};
+
+    function botVoiceMuted(botName) {
+        const vol = botVoiceVolumes[botName];
+        return vol != null && vol <= 0;
+    }
+
+    async function setBotVoiceVolume(botName, volume) {
+        const response = await fetch(`/api/voice/bots/${encodeURIComponent(botName)}/volume`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ volume }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.success === false) {
+            setStatus(body.error || `Could not set volume for ${botName}`);
+            return;
+        }
+        botVoiceVolumes = body.volumes || { ...botVoiceVolumes, [botName]: body.volume };
+        renderStandings();
+    }
 
     function sortedStandings() {
         const rows = [...(state?.standings || [])];
@@ -756,18 +779,27 @@
             <th data-sort="${column.key}" class="${standingsSort.key === column.key ? 'sorted' : ''}"
                 title="${esc(column.title || column.label)}">${esc(column.label)}</th>
         `).join('');
-        el('standingsBody').innerHTML = rows.map(row => `
+        el('standingsBody').innerHTML = rows.map(row => {
+            const muted = botVoiceMuted(row.id);
+            const voiceCell = row.active
+                ? `<button type="button" class="btn btn-ghost btn-icon bot-voice-mute"
+                    data-bot="${esc(row.id)}" data-muted="${muted ? '1' : '0'}"
+                    title="${muted ? 'Unmute host playback for this bot' : 'Mute host playback for this bot'}">
+                    ${muted ? 'Unmute' : 'Mute'}</button>`
+                : '—';
+            return `
             <tr class="${row.active ? '' : 'out'} ${row.status === 'winner' ? 'winner' : ''}">
                 <td><strong>${esc(row.id)}</strong></td>
                 <td>${esc(row.tribe || '—')}</td>
                 <td><span class="pill ${esc(row.status)}">${esc(phaseLabel(row.status))}</span></td>
+                <td>${voiceCell}</td>
                 <td class="num">${row.immunityWins || '·'}</td>
                 <td class="num">${row.votesReceived || '·'}</td>
                 <td class="num">${row.votesCast || '·'}</td>
                 <td class="num">${row.juryVotesReceived || '·'}</td>
                 <td class="num">${row.placement ?? '·'}</td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
         for (const header of el('standingsHead').querySelectorAll('th')) {
             header.addEventListener('click', () => {
                 const key = header.dataset.sort;
@@ -775,6 +807,13 @@
                     ? { key, descending: !standingsSort.descending }
                     : { key, descending: true };
                 renderStandings();
+            });
+        }
+        for (const button of el('standingsBody').querySelectorAll('.bot-voice-mute')) {
+            button.addEventListener('click', () => {
+                const botName = button.dataset.bot;
+                const next = button.dataset.muted === '1' ? 100 : 0;
+                setBotVoiceVolume(botName, next);
             });
         }
     }
@@ -1945,10 +1984,23 @@
         voiceMuteMode = payload?.mode || (payload?.muted ? 'hard' : 'off');
         renderMuteButtons();
     });
+    socket.on('voice-bot-volume', payload => {
+        if (payload?.reset) botVoiceVolumes = {};
+        else if (payload?.volumes) botVoiceVolumes = payload.volumes;
+        else if (payload?.botName) {
+            if (payload.volume >= 100) delete botVoiceVolumes[payload.botName];
+            else botVoiceVolumes[payload.botName] = payload.volume;
+        }
+        renderStandings();
+    });
     fetch('/api/voice/mute').then(r => r.json()).then(body => {
         if (body?.mode) voiceMuteMode = body.mode;
         else if (body?.muted) voiceMuteMode = 'hard';
         renderMuteButtons();
+    }).catch(() => {});
+    fetch('/api/voice/bots').then(r => r.json()).then(body => {
+        if (body?.volumes) botVoiceVolumes = body.volumes;
+        renderStandings();
     }).catch(() => {});
 
     if (typeof window.initBotVoice === 'function') window.initBotVoice(socket);

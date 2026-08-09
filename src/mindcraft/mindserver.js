@@ -85,10 +85,14 @@ import {
 } from '../models/llm_audit.js';
 import {
     allowBot,
+    clearBotVolumes,
     clearSpeechQueue,
+    getBotVolumes,
     getMuteMode,
+    getSpeechQueueDepth,
     isBotSilenced,
     playSpeech,
+    setBotVolume,
     setMuteMode,
     setMuted,
     silenceBot,
@@ -2589,6 +2593,32 @@ export function createMindServer(host_public = false, port = 8080) {
         clearSpeechQueue();
         io.emit('voice-flush', { ok: true });
         res.json({ success: true });
+    });
+    // Per-bot host volume (0–100). 0 quietens one loud cast member without a
+    // global mute; generation still runs unless the bot is silenced/hard-muted.
+    app.get('/api/voice/bots', (_req, res) => {
+        res.json({
+            success: true,
+            volumes: getBotVolumes(),
+            queueDepth: getSpeechQueueDepth(),
+        });
+    });
+    app.post('/api/voice/bots/:botName/volume', (req, res) => {
+        const botName = String(req.params.botName || '').trim();
+        if (!botName) return res.status(400).json({ success: false, error: 'botName required' });
+        const raw = req.body?.volume ?? req.query.volume;
+        if (raw === undefined) {
+            return res.status(400).json({ success: false, error: 'volume (0-100) required' });
+        }
+        const volume = setBotVolume(botName, raw);
+        const payload = { botName, volume, muted: volume <= 0 };
+        io.emit('voice-bot-volume', payload);
+        res.json({ success: true, ...payload, volumes: getBotVolumes() });
+    });
+    app.post('/api/voice/bots/volumes/reset', (_req, res) => {
+        clearBotVolumes();
+        io.emit('voice-bot-volume', { reset: true, volumes: {} });
+        res.json({ success: true, volumes: {} });
     });
 
     // Why the bots went quiet, without digging through the server console.
