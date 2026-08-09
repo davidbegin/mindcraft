@@ -1,0 +1,920 @@
+/* ==========================================================================
+   Mindcraft — shared chrome, styled after mid-90s desktop software.
+
+   Every page still ships its own layout CSS. This file owns the palette,
+   the typography, and the look of every control, and is linked *after*
+   each page's <style> block so it wins on equal specificity.
+
+   The palette is the classic 3D-face gray. Depth comes from 2px bevels
+   drawn as inset shadows rather than from blur or transparency, so the
+   two bevel tokens below are the only "shadow" this UI has.
+   ========================================================================== */
+
+:root {
+    /* —— Raw system palette —— */
+    --w-desktop: #008080;
+    --w-face: #c0c0c0;
+    --w-face-lit: #dfdfdf;
+    --w-white: #ffffff;
+    --w-gray: #808080;
+    --w-black: #0a0a0a;
+    --w-navy: #000080;
+    --w-navy-lit: #1084d0;
+    --w-field: #ffffff;
+
+    /* Outer edge lights top-left, inner edge shades bottom-right. Reversed
+       for sunken. Both assume the element draws no border of its own. */
+    --bevel-out:
+        inset -1px -1px var(--w-black),
+        inset 1px 1px var(--w-face-lit),
+        inset -2px -2px var(--w-gray),
+        inset 2px 2px var(--w-white);
+    --bevel-in:
+        inset -1px -1px var(--w-white),
+        inset 1px 1px var(--w-gray),
+        inset -2px -2px var(--w-face-lit),
+        inset 2px 2px var(--w-black);
+    --bevel-out-thin: inset -1px -1px var(--w-gray), inset 1px 1px var(--w-white);
+    --bevel-in-thin: inset -1px -1px var(--w-white), inset 1px 1px var(--w-gray);
+
+    /* —— Legacy tokens, remapped —— */
+    --bg: var(--w-desktop);
+    --bg-elevated: var(--w-face);
+    --bg-card: var(--w-face);
+    --bg-inset: var(--w-field);
+    --border: var(--w-gray);
+    --border-strong: var(--w-black);
+    --text: #000000;
+    --text-dim: #3a3a3a;
+    --text-mute: #565656;
+
+    /* Accents are flat and dark enough to read on a gray face. The "-dim"
+       variants are used as fills behind their own accent text. */
+    --lime: #006411;
+    --lime-dim: #cfe0c4;
+    --amber: #7a4b00;
+    --amber-dim: #e8dcb4;
+    --red: #9c0000;
+    --red-dim: #e8c8c8;
+    --cyan: var(--w-navy);
+    --health: #9c0000;
+    --hunger: #7a4b00;
+
+    --font: Tahoma, Verdana, Geneva, "MS Sans Serif", sans-serif;
+    --mono: "Lucida Console", Monaco, "Courier New", monospace;
+    --radius: 0;
+    --shadow: var(--bevel-out);
+
+    /* live.html and llm_audit.html name a few tokens differently. */
+    --bg-panel: var(--w-face);
+    --green: #006411;
+    --panel: var(--w-face);
+    --card: var(--w-face);
+    --inset: var(--w-field);
+    --dim: #3a3a3a;
+    --mute: #565656;
+    --lime-bg: #cfe0c4;
+    --amber-bg: #e8dcb4;
+}
+
+/* ==========================================================================
+   Document
+   ========================================================================== */
+
+html {
+    /* rem-based sizes across the pages are tuned against a 16px root; pulling
+       the root down shrinks all of them to desktop-software proportions. */
+    font-size: 14px;
+    background: var(--w-desktop);
+}
+
+body {
+    margin: 0;
+    padding: 0 10px 32px;
+    min-height: 100vh;
+    background: var(--w-face);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+::selection {
+    background: var(--w-navy);
+    color: var(--w-white);
+}
+
+h1, h2, h3, h4, h5, h6 {
+    letter-spacing: 0;
+    font-weight: 700;
+}
+
+a {
+    color: var(--w-navy);
+}
+
+code, pre, kbd, samp {
+    font-family: var(--mono);
+}
+
+hr {
+    border: none;
+    height: 2px;
+    box-shadow: var(--bevel-in-thin);
+    margin: 10px 0;
+}
+
+/* ==========================================================================
+   Window chrome
+   ========================================================================== */
+
+.titlebar {
+    position: sticky;
+    top: 0;
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 -10px 8px;
+    padding: 3px 3px 3px 5px;
+    background: linear-gradient(90deg, var(--w-navy), var(--w-navy-lit));
+    border-bottom: 2px solid var(--w-face);
+    color: var(--w-white);
+    font-size: 12px;
+    font-weight: 700;
+    user-select: none;
+}
+
+.titlebar-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.titlebar-btns {
+    display: flex;
+    gap: 2px;
+    flex: none;
+}
+
+.titlebar-btns b {
+    width: 18px;
+    height: 16px;
+    display: grid;
+    place-items: center;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out);
+    color: #000;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    /* Decorative: these mimic a window's caption buttons but have no target. */
+    cursor: default;
+}
+
+/* The header strip on every page reads as a menu bar. */
+.topbar {
+    align-items: center;
+    gap: 10px;
+    padding: 2px 4px;
+    margin-bottom: 10px;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out-thin);
+}
+
+.brand h1 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+.brand .tag {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+}
+
+/* ==========================================================================
+   Menus and navigation
+   ========================================================================== */
+
+.view-nav {
+    gap: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 0;
+}
+
+.view-nav a {
+    padding: 3px 9px;
+    border: 1px solid transparent;
+    border-radius: 0;
+    color: #000;
+    font-weight: 400;
+    font-size: 0.85rem;
+}
+
+.view-nav a:hover {
+    background: var(--w-navy);
+    color: var(--w-white);
+}
+
+.view-nav a.active,
+.view-nav a[aria-current="page"] {
+    background: var(--w-face);
+    border: none;
+    box-shadow: var(--bevel-in-thin);
+    color: #000;
+    font-weight: 700;
+}
+
+.menu-dropdown {
+    border: none;
+    border-radius: 0;
+    padding: 2px;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out);
+}
+
+.menu-dropdown button {
+    border-radius: 0;
+    padding: 4px 10px;
+    font-size: 0.85rem;
+}
+
+.menu-dropdown button:hover:not(:disabled) {
+    background: var(--w-navy);
+    color: var(--w-white);
+}
+
+.menu-dropdown button.danger {
+    color: var(--red);
+}
+
+.menu-dropdown button.danger:hover:not(:disabled) {
+    background: var(--w-navy);
+    color: var(--w-white);
+}
+
+.menu-btn {
+    width: 22px;
+    height: 20px;
+    border: none;
+    border-radius: 0;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out);
+    color: #000;
+    font-size: 0.85rem;
+}
+
+.menu-btn:hover {
+    color: #000;
+}
+
+.menu-btn:active {
+    box-shadow: var(--bevel-in);
+}
+
+/* ==========================================================================
+   Buttons
+   ========================================================================== */
+
+button,
+.btn,
+.btn-icon {
+    font-family: var(--font);
+}
+
+.btn,
+.btn-icon,
+button.tab,
+.rec-export button,
+.voices-add button {
+    border: none;
+    border-radius: 0;
+    padding: 4px 12px;
+    min-height: 22px;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out);
+    color: #000;
+    font-weight: 400;
+    font-size: 0.85rem;
+    transition: none;
+}
+
+.btn:active:not(:disabled),
+.btn-icon:active:not(:disabled) {
+    box-shadow: var(--bevel-in);
+    padding: 5px 11px 3px 13px;
+}
+
+.btn:focus-visible,
+.btn-icon:focus-visible {
+    outline: 1px dotted #000;
+    outline-offset: -4px;
+}
+
+/* Intent is carried by a bold label and a colour-coded marker, not by a
+   filled background — a 3D-face button is always gray. */
+.btn-primary {
+    background: var(--w-face);
+    color: #000;
+    font-weight: 700;
+    box-shadow: var(--bevel-out), inset 0 0 0 3px var(--w-face);
+}
+
+.btn-primary:hover:not(:disabled) {
+    filter: none;
+}
+
+.btn-ghost {
+    background: var(--w-face);
+    border-color: transparent;
+    color: #000;
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background: var(--w-face);
+}
+
+.btn-danger,
+.btn-rec {
+    background: var(--w-face);
+    border-color: transparent;
+    color: var(--red);
+    font-weight: 700;
+}
+
+.btn-danger:hover:not(:disabled),
+.btn-rec:hover:not(:disabled) {
+    background: var(--w-face);
+}
+
+.btn-amber {
+    background: var(--w-face);
+    border-color: transparent;
+    color: var(--amber);
+    font-weight: 700;
+}
+
+.btn-auto {
+    background: var(--w-face);
+    border-color: transparent;
+    color: #000;
+}
+
+.btn-auto:hover:not(:disabled) {
+    background: var(--w-face);
+}
+
+.btn-auto.on,
+.btn-rec.active {
+    box-shadow: var(--bevel-in);
+    font-weight: 700;
+    animation: none;
+}
+
+button:disabled,
+.btn:disabled {
+    opacity: 1;
+    color: var(--w-gray);
+    text-shadow: 1px 1px 0 var(--w-white);
+}
+
+/* ==========================================================================
+   Fields
+   ========================================================================== */
+
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="password"],
+input[type="datetime-local"],
+input[type="date"],
+input[type="time"],
+textarea,
+select,
+.msg-input {
+    border: none;
+    border-radius: 0;
+    padding: 3px 5px;
+    background: var(--w-field);
+    box-shadow: var(--bevel-in);
+    color: #000;
+    font-family: var(--font);
+    font-size: 0.85rem;
+    color-scheme: light;
+}
+
+textarea {
+    font-family: var(--mono);
+}
+
+select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 22px;
+    /* Face-coloured button with a black triangle, drawn at the right edge. */
+    background-image:
+        linear-gradient(var(--w-white), var(--w-white) 5px, transparent 5px),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='7' height='4'%3E%3Cpath d='M0 0h7L3.5 4z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat, no-repeat;
+    background-position: 0 0, right 6px center;
+    background-size: 0 0, 7px 4px;
+}
+
+input:focus,
+textarea:focus,
+select:focus,
+.msg-input:focus {
+    outline: none;
+    box-shadow: var(--bevel-in);
+    border-color: transparent;
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled,
+.msg-input:disabled {
+    background: var(--w-face);
+    color: var(--w-gray);
+    text-shadow: 1px 1px 0 var(--w-white);
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--w-gray);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    margin: 0 4px 0 0;
+    background: var(--w-field);
+    box-shadow: var(--bevel-in);
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+}
+
+input[type="checkbox"]:checked::after {
+    content: "";
+    width: 7px;
+    height: 4px;
+    border: 2px solid #000;
+    border-top: none;
+    border-right: none;
+    transform: translateY(-1px) rotate(-45deg);
+}
+
+input[type="radio"] {
+    border-radius: 50%;
+}
+
+input[type="radio"]:checked::after {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #000;
+}
+
+/* ==========================================================================
+   Panels
+   ========================================================================== */
+
+/* Raised group boxes: the page's own `border: 1px solid var(--border)` is
+   replaced by a bevel so the edge reads as geometry rather than a hairline. */
+.status-card,
+.step,
+.link-card,
+.card,
+.agent-card,
+.colony-strip,
+.map-panel,
+.games-strip,
+.start-panel,
+.council,
+.results,
+.voice-alert,
+.pane,
+.suspended-banner,
+.detail-body,
+.step-detail,
+.diagram,
+.talk-card,
+.qa-block,
+.game-setup-row,
+.game-setup-teams,
+.rec-export,
+.problem-row,
+.empty,
+.empty-agents,
+.meta-chip {
+    border: none;
+    border-radius: 0;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out);
+    transition: none;
+}
+
+.link-card:hover,
+.agent-card:hover {
+    background: var(--w-face);
+    border-color: transparent;
+    transform: none;
+}
+
+.link-card:active {
+    box-shadow: var(--bevel-in);
+}
+
+/* A focused or flagged card gets a dotted marquee, the period-correct way to
+   show selection, instead of a coloured glow. */
+.agent-card.focused,
+.status-card.active {
+    box-shadow: var(--bevel-out);
+    outline: 1px dotted #000;
+    outline-offset: -5px;
+}
+
+.agent-card.offline {
+    opacity: 1;
+    color: var(--text-mute);
+}
+
+/* Sunken wells: lists, transcripts, readouts, and anything that was inset. */
+.colony-map,
+.transcript,
+.code-block,
+.loadout,
+.action-block,
+.rec-row,
+.voice-row,
+.avatar-wrap,
+.slot,
+.coords,
+.map-strip {
+    border: none;
+    border-radius: 0;
+    background: var(--w-field);
+    box-shadow: var(--bevel-in);
+}
+
+.coords:hover:not(.empty),
+.coords.copied {
+    background: var(--w-field);
+    border-color: transparent;
+    color: #000;
+}
+
+.coords.copied {
+    outline: 1px dotted #000;
+    outline-offset: -4px;
+}
+
+.slot:hover {
+    border-color: transparent;
+}
+
+.slot.empty,
+.loadout-icon.empty {
+    opacity: 1;
+    background: var(--w-face);
+}
+
+.loadout-icon {
+    border: none;
+    border-radius: 0;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out-thin);
+}
+
+.code-block,
+.transcript {
+    padding: 6px 8px;
+}
+
+/* ==========================================================================
+   Status indicators
+   ========================================================================== */
+
+/* Status readouts sit in a sunken well, like a status bar segment. */
+.status-pill {
+    border: none;
+    border-radius: 0;
+    padding: 2px 8px;
+    background: var(--w-face);
+    box-shadow: var(--bevel-in-thin);
+    color: #000;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.status-pill.online {
+    background: var(--w-face);
+    border-color: transparent;
+    color: var(--lime);
+    font-weight: 700;
+}
+
+.status-pill.offline {
+    background: var(--w-face);
+    border-color: transparent;
+    color: var(--red);
+    font-weight: 700;
+}
+
+/* Indicator lamps are square and unlit rather than round and glowing. */
+.status-pill::before,
+.live-dot,
+.voice-dot,
+.auto-armed-dot,
+.tier-pips span {
+    border-radius: 0;
+    box-shadow: var(--bevel-in-thin);
+}
+
+.status-pill::before {
+    width: 8px;
+    height: 8px;
+}
+
+.live-dot,
+.voice-dot {
+    width: 8px;
+    height: 8px;
+}
+
+.live-dot.on,
+.voice-dot.on {
+    box-shadow: var(--bevel-in-thin);
+}
+
+.auto-armed-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--w-navy);
+    animation: none;
+}
+
+.chip,
+.task-pill {
+    border: none;
+    border-radius: 0;
+    padding: 2px 6px;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out-thin);
+    color: #000;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.chip.role,
+.chip.busy,
+.chip.idle,
+.chip.thinking,
+.chip.planning,
+.chip.queued,
+.chip.paused,
+.chip.rec {
+    background: var(--w-face);
+    border-color: transparent;
+    font-weight: 700;
+}
+
+.chip.role { color: var(--w-navy); }
+.chip.busy { color: var(--amber); }
+.chip.idle { color: var(--lime); }
+.chip.thinking { color: var(--w-navy); }
+.chip.planning,
+.chip.queued { color: #5a2d8c; }
+.chip.paused { color: var(--text-mute); }
+.chip.rec { color: var(--red); }
+
+.action-value.planning,
+.action-value.queued { color: #5a2d8c; }
+
+/* A hard two-frame blink, the way a recording light actually behaved. */
+@keyframes recPulse {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0.25; }
+}
+
+@keyframes autoGlow {
+    from { box-shadow: var(--bevel-in); }
+    to { box-shadow: var(--bevel-in); }
+}
+
+@keyframes autoBreathe {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0.3; }
+}
+
+/* ==========================================================================
+   Progress bars
+   ========================================================================== */
+
+.bar {
+    height: 14px;
+    border-radius: 0;
+    background: var(--w-face);
+    box-shadow: var(--bevel-in);
+    padding: 2px;
+    overflow: hidden;
+}
+
+/* Segmented fill: a solid block, chopped into chunks by face-coloured gaps. */
+.bar > span {
+    border-radius: 0;
+    transition: none;
+    background: var(--w-navy);
+    -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 8px, transparent 8px 10px);
+    mask-image: repeating-linear-gradient(90deg, #000 0 8px, transparent 8px 10px);
+}
+
+.bar.health > span { background: var(--health); }
+.bar.hunger > span { background: var(--hunger); }
+.bar.gear > span { background: var(--w-navy); }
+.bar.gear.maxed > span { background: var(--lime); }
+
+/* ==========================================================================
+   Tabs
+   ========================================================================== */
+
+.tab {
+    border: none;
+    border-radius: 0;
+    margin-right: 2px;
+    padding: 4px 12px;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out);
+    color: #000;
+    font-weight: 400;
+}
+
+.tab:hover {
+    background: var(--w-face);
+    color: #000;
+}
+
+.tab.active {
+    background: var(--w-face);
+    color: #000;
+    font-weight: 700;
+    box-shadow: var(--bevel-out);
+    outline: 1px dotted #000;
+    outline-offset: -5px;
+}
+
+/* ==========================================================================
+   Dialogs
+   ========================================================================== */
+
+.modal-backdrop {
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: none;
+}
+
+.modal,
+.modal-card,
+.modal-panel,
+.game-setup-modal {
+    border: none;
+    border-radius: 0;
+    background: var(--w-face);
+    box-shadow: var(--bevel-out);
+}
+
+.modal-head,
+.modal-header,
+.game-setup-modal > header {
+    background: linear-gradient(90deg, var(--w-navy), var(--w-navy-lit));
+    color: var(--w-white);
+    border-radius: 0;
+    border-bottom: none;
+    padding: 3px 4px 3px 6px;
+    font-weight: 700;
+}
+
+.modal-head h2,
+.modal-head h3,
+.modal-header h2,
+.modal-header h3 {
+    color: var(--w-white);
+    font-size: 0.9rem;
+    margin: 0;
+}
+
+/* ==========================================================================
+   Tables
+   ========================================================================== */
+
+table {
+    border-collapse: collapse;
+    background: var(--w-field);
+    box-shadow: var(--bevel-in);
+}
+
+th {
+    background: var(--w-face);
+    box-shadow: var(--bevel-out-thin);
+    color: #000;
+    font-weight: 400;
+    text-align: left;
+    padding: 3px 8px;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+td {
+    border: none;
+    padding: 3px 8px;
+}
+
+/* ==========================================================================
+   Scrollbars
+   ========================================================================== */
+
+* {
+    scrollbar-color: var(--w-face) #e0e0e0;
+}
+
+::-webkit-scrollbar {
+    width: 17px;
+    height: 17px;
+}
+
+::-webkit-scrollbar-track {
+    /* The 50% checkerboard of a classic scrollbar trough. */
+    background:
+        repeating-conic-gradient(var(--w-white) 0% 25%, var(--w-face) 0% 50%)
+        0 0 / 2px 2px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--w-face);
+    box-shadow: var(--bevel-out);
+    border: none;
+}
+
+::-webkit-scrollbar-corner {
+    background: var(--w-face);
+}
+
+::-webkit-scrollbar-button:single-button {
+    display: block;
+    height: 17px;
+    width: 17px;
+    background: var(--w-face) no-repeat center;
+    box-shadow: var(--bevel-out);
+}
+
+::-webkit-scrollbar-button:single-button:vertical:decrement {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='7' height='4'%3E%3Cpath d='M3.5 0 7 4H0z'/%3E%3C/svg%3E");
+}
+
+::-webkit-scrollbar-button:single-button:vertical:increment {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='7' height='4'%3E%3Cpath d='M0 0h7L3.5 4z'/%3E%3C/svg%3E");
+}
+
+::-webkit-scrollbar-button:single-button:horizontal:decrement {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='7'%3E%3Cpath d='M0 3.5 4 0v7z'/%3E%3C/svg%3E");
+}
+
+::-webkit-scrollbar-button:single-button:horizontal:increment {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='7'%3E%3Cpath d='M0 0l4 3.5L0 7z'/%3E%3C/svg%3E");
+}
+
+/* ==========================================================================
+   Section headings
+   ========================================================================== */
+
+.section-head h2 {
+    color: #000;
+    font-size: 0.8rem;
+    letter-spacing: 0;
+}
+
+.section-head .hint,
+.map-hint {
+    color: var(--text-mute);
+}
+
+footer {
+    border-top: none;
+    box-shadow: var(--bevel-in-thin);
+    padding: 8px 10px;
+    color: #000;
+}
+
+footer a {
+    color: var(--w-navy);
+}

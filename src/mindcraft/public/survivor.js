@@ -228,6 +228,7 @@
         renderActiveChallenge();
         renderRelationships();
         renderTalkRequests();
+        renderMemoryProof();
         renderRooms();
         renderSecretFeed();
         renderDiagnostics();
@@ -433,6 +434,53 @@
         }
         control('council-question', { prompt, targetIds: [...askTargets] });
         el('questionText').value = '';
+    }
+
+    // —— Memory drill ——————————————————————————————————————————————
+
+    const BRIEFING_SOURCE_LABELS = {
+        jury: 'Jury roster',
+        council: 'Public council record',
+        votes: 'Vote history',
+        private: 'Their own private talk',
+    };
+
+    // Operator-only. This is a measurement of whether bots read what we send
+    // them, not something the cast is ever shown.
+    function renderMemoryProof() {
+        const proof = state?.memoryProof;
+        const summary = el('memoryProofSummary');
+        const sources = el('memoryProofSources');
+        const flips = el('memoryProofFlips');
+        if (!summary || !sources || !flips) return;
+        el('memoryFlipCount').textContent = proof?.flips?.length
+            ? `${proof.flips.length} flip${proof.flips.length === 1 ? '' : 's'}`
+            : '';
+        if (!proof || (proof.declaredLeanings === 0 && proof.ballotsCast === 0)) {
+            summary.textContent = 'Nothing to measure yet. Leanings are declared during'
+                + ' re-evaluation and ballots are read when voting opens.';
+            sources.innerHTML = '';
+            flips.innerHTML = '';
+            return;
+        }
+        summary.textContent = `${proof.declaredLeanings} leaning(s) declared · `
+            + `${proof.ballotsCast} ballot(s) cast · ${proof.flips.length} changed their mind`;
+        const bySource = proof.ballotUse?.bySource || {};
+        sources.innerHTML = Object.entries(BRIEFING_SOURCE_LABELS).map(([key, label]) => {
+            const entry = bySource[key] || { available: 0, echoed: 0, cuedOnly: 0 };
+            if (!entry.available) {
+                return `<div class="rel-signals">${esc(label)}: nothing to read yet</div>`;
+            }
+            const cued = entry.cuedOnly > 0 ? ` · ${entry.cuedOnly} only said the words` : '';
+            return `<div class="rel-signals">${esc(label)}: `
+                + `<strong>${entry.echoed} of ${entry.available}</strong> used it${cued}</div>`;
+        }).join('');
+        flips.innerHTML = proof.flips.length === 0
+            ? ''
+            : `<div class="rel-signals" style="margin-top:8px">${proof.flips.map(flip =>
+                `${esc(flip.playerId)}: ${esc(flip.from)} → ${esc(flip.to)}`
+                + (flip.citedCouncil ? ' (cited council)' : ' (no council reason)')
+            ).join('<br>')}</div>`;
     }
 
     // —— Conversation requests ————————————————————————————————————

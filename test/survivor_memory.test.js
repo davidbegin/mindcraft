@@ -55,6 +55,41 @@ test('a briefing leads with how the jury decides the winner', () => {
     );
 });
 
+test('the council window is long enough to cover a whole short season', () => {
+    // A four-player season is over in three councils. A window that only held
+    // the last couple of them would drop the very grudges the finale turns on,
+    // so the default has to span more councils than a short season contains.
+    const game = playToCouncil();
+    for (let round = 1; round <= 5; round++) {
+        game.state.council = {
+            id: `c${round}`,
+            kind: 'tribal',
+            attendeeIds: [...CAST],
+            questions: [],
+        };
+        game.state.events.push(
+            {
+                type: 'council.opened',
+                councilId: `c${round}`,
+                kind: 'tribal',
+                round,
+                attendeeIds: [...CAST],
+            },
+            { type: 'council.question', councilId: `c${round}`, id: `q${round}`, prompt: `Question ${round}`, targetIds: ['Billy'] },
+            { type: 'council.answer', councilId: `c${round}`, questionId: `q${round}`, playerId: 'Billy', answer: `Answer ${round}` }
+        );
+    }
+
+    const transcript = buildCouncilTranscript(game.state);
+    assert.match(transcript, /Answer 1/, 'the first council is still remembered');
+    assert.match(transcript, /Answer 5/);
+
+    // The window is a window, not unlimited: an explicitly short one still trims.
+    const short = buildCouncilTranscript(game.state, { rounds: 2 });
+    assert.doesNotMatch(short, /Answer 1/);
+    assert.match(short, /Answer 5/);
+});
+
 test('a bot is never briefed on a private room it was not in', () => {
     const game = playToCouncil();
     const privateLog = [

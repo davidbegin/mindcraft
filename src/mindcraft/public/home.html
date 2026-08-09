@@ -5,50 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Mindcraft</title>
     <script src="/socket.io/socket.io.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --bg: #0e1210;
-            --bg-elevated: #161c19;
-            --bg-card: #1a221e;
-            --bg-inset: #101614;
-            --border: #2a3530;
-            --border-strong: #3d4d45;
-            --text: #e8efe9;
-            --text-dim: #8a9a90;
-            --text-mute: #5f7066;
-            --lime: #9fe870;
-            --lime-dim: rgba(159, 232, 112, 0.15);
-            --amber: #f0b429;
-            --amber-dim: rgba(240, 180, 41, 0.18);
-            --red: #ef5350;
-            --red-dim: rgba(239, 83, 80, 0.16);
-            --cyan: #5ec8c0;
-            --font: "DM Sans", system-ui, sans-serif;
-            --mono: "JetBrains Mono", ui-monospace, monospace;
-            --radius: 12px;
-            --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
-        }
-
         * { box-sizing: border-box; }
         [hidden] { display: none !important; }
 
-        html, body {
-            margin: 0;
-            min-height: 100%;
-            background:
-                radial-gradient(1200px 600px at 10% -10%, rgba(159, 232, 112, 0.06), transparent 55%),
-                radial-gradient(900px 500px at 90% 0%, rgba(94, 200, 192, 0.05), transparent 50%),
-                var(--bg);
-            color: var(--text);
-            font-family: var(--font);
-            font-size: 14px;
-            line-height: 1.5;
-        }
-
-        body { padding: 20px 22px 90px; }
         main { max-width: 1080px; margin: 0 auto; }
 
         /* —— Header —— */
@@ -308,6 +268,7 @@
             .status-pill { margin-left: 0; }
         }
     </style>
+    <link rel="stylesheet" href="/theme.css">
 </head>
 <body>
     <header class="topbar">
