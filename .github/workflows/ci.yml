@@ -9,6 +9,22 @@ jobs:
   typescript-slice:
     name: TypeScript slice (Bun)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mindcraft
+          POSTGRES_PASSWORD: mindcraft
+          POSTGRES_DB: mindcraft
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mindcraft"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://mindcraft:mindcraft@localhost:5432/mindcraft
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +42,10 @@ jobs:
       - name: Lint (typed, scoped to the TS slice)
         run: bun run lint:types
 
-      - name: Test the TS slice
+      - name: Apply migrations
+        run: bun run db:migrate
+
+      - name: Test the TS slice (incl. Postgres integration)
         run: bun run test:bun
 
   node-tests:
