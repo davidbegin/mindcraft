@@ -12,7 +12,7 @@ export class Ollama {
     }
 
     async sendRequest(turns, systemMessage) {
-        let model = this.model_name || 'sweaterdog/andy-4:micro-q8_0';
+        let model = this.model_name || 'llama3.1';
         let messages = strictFormat(turns);
         messages.unshift({ role: 'system', content: systemMessage });
         const maxAttempts = 5;

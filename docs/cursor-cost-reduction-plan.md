@@ -83,7 +83,7 @@ Call-site inventory (traced through the code):
 | Embeddings | `cursor.js embed()` throws → word-overlap fallback | **$0 — already free** |
 | Vision | `allow_vision: false` | off |
 
-Fleet: `colony/state.json` shows **16 desired bots, all busy** (23 on roster). Models: mostly `gpt-5.4-mini` (`andy.json`), plus `gpt-5.6-sol` / `gpt-5.6-terra` variants via `model_profiles.js`.
+Fleet: `colony/state.json` shows **16 desired bots, all busy** (23 on roster). Models: mostly `gpt-5.4-mini` (`agent.json`), plus `gpt-5.6-sol` / `gpt-5.6-terra` variants via `model_profiles.js`.
 
 ## 3. Token-level problems (cost per call)
 
@@ -119,7 +119,7 @@ $NAME → $SELF_PROMPT → $MEMORY → $STATS → $INVENTORY → $COMMAND_DOCS �
 
 1. **Fix thread growth** (`src/models/cursor.js`): lower `MAX_SENDS_PER_AGENT` from 25 to **3–5** (bounds dead-weight replay while amortizing `Agent.create` spacing). Longer term, invert the design: stop embedding the full conversation each send and let the SDK thread carry history — send only the new turns plus a compact volatile-state block.
 2. **Cache-friendly prompt layout** (`profiles/defaults/_default.json` + `prompter.js`): reorder to *stable-first* — persona + `$COMMAND_DOCS` + `$EXAMPLES` up front; `$MEMORY`, `$SELF_PROMPT`, `$STATS`, `$INVENTORY`, conversation at the end. Pin example selection per session (select once, reuse) so `$EXAMPLES` stays byte-stable.
-3. **Cheap-model tiering** (`andy.json` / profiles): keep the chat model as-is (or move to `composer-2.5` to use the generous Cursor-pool allowance); add a profile-level model for `saving_memory` and `bot_responder` pointing at `gpt-5.6-luna` or `gpt-5.4-nano` (~$0.20/M input). Requires a small `prompter.js` change to honor a `memory_model` field (it already supports `code_model`/`vision_model`).
+3. **Cheap-model tiering** (`agent.json` / profiles): keep the chat model as-is (or move to `composer-2.5` to use the generous Cursor-pool allowance); add a profile-level model for `saving_memory` and `bot_responder` pointing at `gpt-5.6-luna` or `gpt-5.4-nano` (~$0.20/M input). Requires a small `prompter.js` change to honor a `memory_model` field (it already supports `code_model`/`vision_model`).
 4. **Replace `promptShouldRespondToBot` with a heuristic** (`conversation.js`): a "respond / don't respond" binary spending a full LLM call is not worth it — use simple rules (was I addressed by name? am I mid-action?).
 5. **Deduplicate colony directives** (`mindserver_proxy.js`): skip the `history.add('system', ...)` when the directive prompt is unchanged from the last one delivered — directive spam is what drags history to the summarization threshold.
 6. **Tighten retries:** coder `MAX_ATTEMPTS` 5 → **3**; `promptConvo` hallucination retries 3 → **2**, and strip `(FROM OTHER BOT)` lines instead of retrying when that's the only defect.

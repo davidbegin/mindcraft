@@ -217,7 +217,7 @@ def read_settings(file_path):
 
     profiles = json_data['profiles']
 
-    ## profiles is a list of strings like "./andy.json" and "./bob.json"
+    ## profiles is a list of strings like "./alex.json" and "./bob.json"
 
     agent_names = [profile.split('/')[-1].split('.')[0] for profile in profiles]
     return agent_names 
@@ -387,16 +387,16 @@ def launch_server_experiment(task_path,
     # set up server and agents 
     session_name = str(server_port - 55916)
     if num_agents == 1: 
-        agent_names = [f"Andy_{session_name}"]
+        agent_names = [f"Alex_{session_name}"]
         models = [model]
         apis = [api]
     elif num_agents == 2:
-        agent_names = [f"Andy_{session_name}", f"Jill_{session_name}"]
+        agent_names = [f"Alex_{session_name}", f"Jill_{session_name}"]
         models = [model] * 2
         apis = [api] * 2
     else:
         # Lets use an ordered list of 10 human names.
-        human_names = ["Andy", "Jill", "Bob", "Sally", "Mike", "Laura", "John", "Emma", "Tom", "Kate"]
+        human_names = ["Alex", "Jill", "Bob", "Sally", "Mike", "Laura", "John", "Emma", "Tom", "Kate"]
         agent_names = []
         for i in range(num_agents):
             name = human_names[i % len(human_names)]
@@ -657,7 +657,7 @@ def delete_server_files(dest_path):
     #     delete_server_files(dest_path)
     
 
-def launch_world(server_path="./tasks/server_data/", agent_names=["andy", "jill"], session_name="server", port=55916):
+def launch_world(server_path="./tasks/server_data/", agent_names=["alex", "jill"], session_name="server", port=55916):
     """Launch the Minecraft world."""
     print(f"Launching Minecraft world with port {port}...")
     cmd = f"cd {server_path} && java -jar server.jar"
@@ -726,7 +726,7 @@ def detach_process(command):
         return None
 
 def main():
-    # edit_settings("settings.js", {"profiles": ["./andy.json", "./jill.json"], "port": 55917})
+    # edit_settings("settings.js", {"profiles": ["./alex.json", "./jill.json"], "port": 55917})
     # edit_server_properties_file("../server_data/", 55917)
 
     parser = argparse.ArgumentParser(description='Run Minecraft AI agent experiments')

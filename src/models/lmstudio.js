@@ -15,7 +15,7 @@ export class LMStudio {
 
     async sendRequest(turns, systemMessage, stop_seq='***') {
         let messages = [{ role: 'system', content: systemMessage }].concat(strictFormat(turns));
-        let model = this.model_name || 'andy-4.1';
+        let model = this.model_name || 'local-model';
         let res = null;
 
         try {

@@ -35,7 +35,7 @@ Do not connect this bot to public servers with coding enabled. This project allo
 
 2. Download the [latest release](https://github.com/mindcraft-bots/mindcraft/releases/latest) and unzip it, or clone the repository.
 
-3. Rename `keys.example.json` to `keys.json` and fill in your API keys (you only need one). The desired model is set in `andy.json` or other profiles. For other models refer to the table below.
+3. Rename `keys.example.json` to `keys.json` and fill in your API keys (you only need one). The desired model is set in `agent.json` or other profiles. For other models refer to the table below.
 
 4. In terminal/command prompt, run `npm install` from the installed directory
 
@@ -51,7 +51,7 @@ If you encounter issues, check the [FAQ](https://github.com/mindcraft-bots/mindc
 
 You can configure project details in `settings.js`. [See file.](settings.js)
 
-You can configure the agent's name, model, and prompts in their profile like `andy.json`. The model can be specified with the `model` field, with values like `model: "gemini-2.5-pro"`. You will need the correct API key for the API provider you choose. See all supported APIs below.
+You can configure the agent's name, model, and prompts in a profile such as `agent.json`. The model can be specified with the `model` field, with values like `model: "gemini-2.5-pro"`. You will need the correct API key for the API provider you choose. See all supported APIs below.
 
 <details>
 <summary><strong>⭐ VIEW SUPPORTED APIs ⭐</strong></summary>
@@ -82,10 +82,10 @@ You can configure the agent's name, model, and prompts in their profile like `an
 
 For more comprehensive model configuration and syntax, see [Model Specifications](#model-specifications).
 
-For local models we support [ollama](https://ollama.com/) and we provide our own finetuned models for you to use. 
-To install our models, install ollama and run the following terminal command:
+For local models we support [Ollama](https://ollama.com/).
+To install a general-purpose model and the embedding model, install Ollama and run:
 ```bash
-ollama pull sweaterdog/andy-4:micro-q8_0 && ollama pull embeddinggemma
+ollama pull llama3.1 && ollama pull embeddinggemma
 ```
 
 ## Online Servers
@@ -162,7 +162,7 @@ To connect to an unsupported minecraft version, you can try to use [viaproxy](se
 
 # Bot Profiles
 
-Bot profiles are json files (such as `andy.json`) that define:
+Bot profiles are json files (such as `agent.json`) that define:
 
 1. Bot backend LLMs to use for talking, coding, and embedding.
 2. Prompts used to influence the bot's behavior.
@@ -255,7 +255,7 @@ With `speak: true` and `speak_proximity: true` in `settings.js`, voices behave l
 
 ## Specifying Profiles via Command Line
 
-By default, the program will use the profiles specified in `settings.js`. You can specify one or more agent profiles using the `--profiles` argument: `node main.js --profiles ./profiles/andy.json ./profiles/jill.json`
+By default, the program will use the profiles specified in `settings.js`. You can specify one or more agent profiles using the `--profiles` argument: `node main.js --profiles ./profiles/gpt.json ./profiles/claude.json`
 
 
 # Contributing

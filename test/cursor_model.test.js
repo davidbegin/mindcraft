@@ -18,8 +18,8 @@ test.beforeEach(() => {
     resetCursorAdapterGates();
 });
 
-test('uses Cursor for the default Andy profile', () => {
-    const profile = JSON.parse(readFileSync(new URL('../andy.json', import.meta.url), 'utf8'));
+test('uses Cursor for the default agent profile', () => {
+    const profile = JSON.parse(readFileSync(new URL('../agent.json', import.meta.url), 'utf8'));
 
     assert.equal(profile.model.api, 'cursor');
 });
@@ -71,7 +71,7 @@ test('includes the conversation and forbids tool use when there are turns', () =
             { role: 'user', content: 'miner_bob: follow me' },
             { role: 'assistant', content: 'Coming!' },
         ],
-        'You are a Minecraft bot named andy.'
+        'You are a Minecraft bot named agent.'
     );
 
     assert.match(prompt, /Do not call tools/);

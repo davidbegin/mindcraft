@@ -6,7 +6,7 @@ set shell := ["bash", "-cu"]
 default:
     @just --list
 
-# Start Minecraft + Andy, streaming bot logs (Ctrl-C stops the bot)
+# Start Minecraft + the default agent, streaming bot logs (Ctrl-C stops the bot)
 up:
     @./scripts/demo.sh up
 

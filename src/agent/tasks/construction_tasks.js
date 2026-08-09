@@ -1005,7 +1005,7 @@ async function getBlockName(bot, coordinate) {
  * @param y_amount - how many spaces you want to register from the start coordinate in the y dimension
  * @param x_amount - how many spaces in the x direction on minecraft
  * @param z_amount - how many spaces from the start coordinate in the z direction in minecraft
- * @param bot - the mineflayer agent (ex. andy)
+ * @param bot - the mineflayer agent (ex. builder)
  * @returns - a Blueprint object of the converted blueprint
  */
 export async function worldToBlueprint(startCoord, y_amount, x_amount, z_amount, bot) {
@@ -1082,14 +1082,14 @@ export function blueprintToTask(blueprint_data, num_agents) {
 //
 //
 // import {initBot} from "../../utils/mcdata.js";
-// let bot = initBot("andy");
+// let bot = initBot("builder");
 
 
 // example usage of world->blueprint function
 
 // bot.once('spawn', async () => {
 //     console.log("nearby position", nearbyPosition);
-//     bot.chat(`/tp @andy ${nearbyPosition.x} ${nearbyPosition.y} ${nearbyPosition.z}`);
+//     bot.chat(`/tp @builder ${nearbyPosition.x} ${nearbyPosition.y} ${nearbyPosition.z}`);
 //     for (const command of commands) {
 //         bot.chat(command);
 //     }

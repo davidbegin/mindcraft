@@ -52,7 +52,7 @@ MineCollab is a versatile benchmark for assessing the embodied and collaborative
 
 ### Cooking
 At the beginning of a cooking task episode, the agents are initialized with a goal to make a meal, e.g. they need to make cake and bread.
-The agents then need to coordinate the collection of ingredients through natural language communication (e.g. Andy collects wheat for the bread while Jill makes the cake) and combine them in a multi-step plan. 
+The agents then need to coordinate the collection of ingredients through natural language communication (e.g. Alex collects wheat for the bread while Jill makes the cake) and combine them in a multi-step plan.
 To assist them in collecting resources, agents are placed in a "cooking world" that possesses all of the items they need to complete the task, from livestock, to crops, to a smoker, furnace, and crafting table.
 Following a popular test of collaboration in humans, we further introduce a ``Hell's Kitchen'' variant of the cooking tasks where each agent is given the recipes for a small subset of the items they need to cook and must communicate the instructions with the other teammates.
 For example, if the task is to make a baked potato and a cake, one agent is given recipe for baked potato, but is required to bake the cake to complete the task, forcing them to ask their teammate for help in baking the potato.

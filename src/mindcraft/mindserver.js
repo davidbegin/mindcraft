@@ -240,7 +240,7 @@ function isProviderConfigured(provider) {
 
 function getAvailableProfiles() {
     const profilePaths = [
-        path.join(projectRoot, 'andy.json'),
+        path.join(projectRoot, 'agent.json'),
         ...readdirSync(path.join(projectRoot, 'profiles'), { withFileTypes: true })
             .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
             .map(entry => path.join(projectRoot, 'profiles', entry.name)),

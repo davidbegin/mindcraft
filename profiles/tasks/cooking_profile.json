@@ -1,5 +1,5 @@
 {
-    "name": "andy", 
+    "name": "alex",
     "model": "claude-3-5-sonnet-latest", 
     "modes": {
         "hunting": false,

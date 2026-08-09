@@ -7,11 +7,11 @@ import { CookingTaskInitiator } from '../src/agent/tasks/cooking_tasks.js';
 import fs from 'fs';
 import { start } from 'repl';
 
-// add a mineflayer bot the world named Andy 
+// add a mineflayer bot the world named Alex
 const bot = mineflayer.createBot({
     host: 'localhost', // Replace with your server IP or hostname
     port: 55916,       // Replace with your server port
-    username: 'andy', // Replace with your bot's username
+    username: 'alex', // Replace with your bot's username
     // password: 'your_bot_password' // Only if the server has online-mode=true
 });
 
@@ -58,7 +58,7 @@ bot.on('spawn', async () => {
     // initiate the world according to the construction or cooking world
     const usernames = args.usernames;
     console.log(usernames);
-    bot.chat(`/tp andy ${usernames[0]}`);
+    bot.chat(`/tp alex ${usernames[0]}`);
     await new Promise(resolve => setTimeout(resolve, 5000));
     // console.log(taskData);
     console.log(`Task id is ${task_id}`)

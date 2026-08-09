@@ -10,7 +10,7 @@ const settings = {
     
     "base_profile": "survival", // survival, assistant, creative, or god_mode
     "profiles": [
-        "./andy.json",
+        "./agent.json",
         // "./profiles/gpt.json",
         // "./profiles/claude.json",
         // "./profiles/gemini.json",
@@ -21,7 +21,6 @@ const settings = {
         // "./profiles/deepseek.json",
         // "./profiles/mercury.json",
         // "./profiles/cursor.json", // uses your Cursor plan through the Cursor SDK
-        // "./profiles/andy-4.json", // Supports up to 75 messages!
 
         // using more than 1 profile requires you to /msg each bot indivually
         // individual profiles override values from the base profile

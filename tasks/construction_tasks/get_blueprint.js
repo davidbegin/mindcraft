@@ -6,7 +6,7 @@ import { start } from 'repl';
 const bot = mineflayer.createBot({
     host: 'localhost', // Replace with your server IP or hostname
     port: 55916,       // Replace with your server port
-    username: 'andy', // Replace with your bot's username
+    username: 'builder', // Replace with your bot's username
     // password: 'your_bot_password' // Only if the server has online-mode=true
 });
 
@@ -18,7 +18,7 @@ bot.on('spawn', async () => {
         y: 1, 
         z: 133,
     }
-    bot.chat(`/tp andy ${startCoord.x} ${startCoord.y} ${startCoord.z}`);
+    bot.chat(`/tp builder ${startCoord.x} ${startCoord.y} ${startCoord.z}`);
     const yOffset = 2;
     const xOffset = 30;
     const zOffset = 20;

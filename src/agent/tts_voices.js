@@ -36,7 +36,7 @@ export const DEFAULT_ELEVENLABS_MODEL = 'eleven_flash_v2_5';
 // User config, editable by hand or from the mindserver web UI (Voices modal).
 // Pins bots to a specific voice (a VOICE_POOL name or a raw ElevenLabs voice
 // ID), sets a default voice for unpinned bots, and sets the TTS model:
-// { "elevenlabs_model": "...", "default_voice": "Adam", "bots": { "andy": "Adam" } }
+// { "elevenlabs_model": "...", "default_voice": "Adam", "bots": { "example_bot": "Adam" } }
 const VOICES_CONFIG_PATH = path.resolve(process.env.MINDCRAFT_VOICES_PATH || './voices.json');
 
 const CONFIG_README = 'Per-bot ElevenLabs voice assignments, editable from the mindserver UI (Voices). '

@@ -27,6 +27,6 @@ test('a missing connection is controlled by nobody', () => {
 });
 
 test('a bot with no settings is treated as a colony bot, not a game bot', () => {
-    assert.equal(isGameSessionAgent({ name: 'andy' }), false);
-    assert.equal(colonyControlsAgent({ name: 'andy' }), true);
+    assert.equal(isGameSessionAgent({ name: 'builder' }), false);
+    assert.equal(colonyControlsAgent({ name: 'builder' }), true);
 });

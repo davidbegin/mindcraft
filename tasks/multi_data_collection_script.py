@@ -108,7 +108,7 @@ def run_data_collection(args):
             
     # Clear temp agent dirs from project_root/bots/
     for bot_dir in bots_dir_path.glob("*"):
-        if bot_dir.name.startswith(("Andy_", "Jill_", "agent_")):
+        if bot_dir.name.startswith(("Alex_", "Jill_", "agent_")):
             shutil.rmtree(bot_dir)
 
     # Resolve eval_script path
@@ -157,7 +157,7 @@ def run_data_collection(args):
                 exp_name = os.path.basename(exp_path)
                 # For each agent, find and copy their logs for this successful experiment
                 for bot_dir in bots_dir_path.glob("*"):
-                    if bot_dir.name.startswith(("Andy_", "Jill_", "agent_")):
+                    if bot_dir.name.startswith(("Alex_", "Jill_", "agent_")):
                         agent_logs_dir = bot_dir / "logs"
                         if agent_logs_dir.exists():
                             # Look for the experiment directory directly under logs
@@ -173,7 +173,7 @@ def run_data_collection(args):
             full_logs_dir = FULL_RUN_LOGS_DIR / run_id
             full_logs_dir.mkdir(parents=True, exist_ok=True)
             for bot_dir in bots_dir_path.glob("*"):
-                if bot_dir.name.startswith(("Andy_", "Jill_", "agent_")):
+                if bot_dir.name.startswith(("Alex_", "Jill_", "agent_")):
                     # bot_dir is already the full path, no need for agent_dir
                     dest_dir = full_logs_dir / bot_dir.name
                     if bot_dir.exists():

@@ -79,12 +79,12 @@ test('treats rate limiting as transient so it never becomes a sticky banner', ()
 });
 
 test('an exhausted quota raises an outage the operator can see', () => {
-    noteVoiceFailure(quotaExhaustedError(), { botName: 'andy' });
+    noteVoiceFailure(quotaExhaustedError(), { botName: 'test_bot' });
 
     const health = getVoiceHealth();
     assert.equal(health.ok, false);
     assert.equal(health.outage.kind, 'quota');
-    assert.equal(health.outage.botName, 'andy');
+    assert.equal(health.outage.botName, 'test_bot');
     assert.match(health.summary, /out of TTS credits/i);
 });
 

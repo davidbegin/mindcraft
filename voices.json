@@ -2,7 +2,6 @@
     "_readme": "Per-bot ElevenLabs voice assignments, editable from the mindserver UI (Voices). Values are voice names from VOICE_POOL in src/agent/tts_voices.js, or raw ElevenLabs voice IDs. 'default_voice' is used for bots not listed under 'bots'; when omitted, each bot gets a stable, automatically-assigned voice from the pool. 'elevenlabs_model' sets the TTS model for all bots.",
     "elevenlabs_model": "eleven_flash_v2_5",
     "bots": {
-        "andy": "Giggles",
         "billy": "Giggles",
         "explorer": "Sasquatch",
         "explorer2": "DudeDavis",

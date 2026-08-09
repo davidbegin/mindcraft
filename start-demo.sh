@@ -38,7 +38,7 @@ else
   echo "WARNING: no .env found. Put OPENAI_API_KEY in .env (or use keys.json)."
 fi
 
-echo "Starting Mindcraft bot (OpenAI / andy)..."
+echo "Starting Mindcraft bot (Cursor / agent)..."
 echo "  UI:        http://localhost:8080"
 echo "  Minecraft: 127.0.0.1:55916"
 echo "Join tips:   just join"

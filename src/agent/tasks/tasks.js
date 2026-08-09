@@ -324,18 +324,18 @@ export class Task {
 
 
             if (this.data.agent_count > 2) {
-
-                if (this.name.toLowerCase().startsWith('andy')) {
+                const coordinator = this.available_agents[0] || this.name;
+                if (this.name === coordinator) {
                     add_string = '\nIn the end, all the food items should be given to you by other bots. Make sure to talk to all the agents using startConversation command to coordinate the task instead of talking to just one agent. You can even end current conversation with any agent using endConversation command and then talk to a new agent using startConversation command.';
-                } 
+                }
                 else {
-                    add_string = '\nIn the end, all the food items should be given to one single bot whose name starts with andy or Andy. Make sure to talk to all the agents using startConversation command to coordinate the task instead of talking to just one agent. You can even end current conversation with any agent using endConversation command and then talk to a new agent using startConversation command.';
-                }   
-            } 
+                    add_string = `\nIn the end, all the food items should be given to ${coordinator}. Make sure to talk to all the agents using startConversation command to coordinate the task instead of talking to just one agent. You can even end current conversation with any agent using endConversation command and then talk to a new agent using startConversation command.`;
+                }
+            }
             else {
                 if (this.data.task_id && this.data.task_id.endsWith('hells_kitchen')) {
                     add_string = '';
-                } 
+                }
                 else {
                 add_string = '\nIn the end, all the food items should be given to one single bot.';
                 }
