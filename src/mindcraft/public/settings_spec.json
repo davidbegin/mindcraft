@@ -162,6 +162,7 @@
         "description": "Persistent multi-agent colony coordination and liveness settings.",
         "default": {
             "enabled": true,
+            "start_paused": true,
             "world_id": "mindcraft-colony-epic-megabase-v1",
             "state_dir": "./colony",
             "min_agents": 3,

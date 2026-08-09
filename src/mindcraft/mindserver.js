@@ -1680,11 +1680,15 @@ async function ensureColony(options) {
             leaseMs: options.task_lease_ms ?? 300000,
             spawnCooldownMs: options.spawn_cooldown_ms ?? 120000,
         };
+        const startPaused = options.start_paused !== false;
         colonyReady = (existsSync(path.join(root, 'state.json'))
             ? ColonyCoordinator.load(coordinatorOptions)
             : ColonyCoordinator.create(coordinatorOptions)
-        ).then(coordinator => {
+        ).then(async coordinator => {
             colonyCoordinator = coordinator;
+            if (startPaused && !coordinator.view().paused) {
+                await coordinator.pause('Colony deprioritized by default; focus is on Survivor and games');
+            }
             startColonySupervisor();
             return coordinator;
         });

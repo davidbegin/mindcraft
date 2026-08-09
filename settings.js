@@ -67,6 +67,7 @@ const settings = {
 
     "colony": {
         "enabled": true,
+        "start_paused": true, // colony is deprioritized; always boots paused so focus stays on Survivor and games
         "world_id": "mindcraft-colony-epic-megabase-v1",
         "state_dir": "./colony",
         "min_agents": 3,
