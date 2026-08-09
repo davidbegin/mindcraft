@@ -676,7 +676,7 @@
         }
         .voice-row {
             display: grid;
-            grid-template-columns: minmax(110px, 150px) 1fr auto;
+            grid-template-columns: minmax(110px, 150px) 1fr auto auto;
             align-items: center;
             gap: 10px;
             padding: 7px 10px;
@@ -6167,6 +6167,8 @@
         let voicesSavedJson = '';
         let extraVoiceBots = [];  // names added in the UI for bots that don't exist yet
         let previewAudio = null;
+        // Host playback overrides from /api/voice/bots (0 = muted for that cast member).
+        let botVoiceVolumes = {};
 
         function voicesDirty() {
             return Boolean(voicesDraft) && JSON.stringify(voicesDraft) !== voicesSavedJson;
@@ -6243,6 +6245,7 @@
                     const fallback = voicesDraft.default_voice
                         ? `default → ${poolNameFor(voicesDraft.default_voice) || 'custom ID'}`
                         : `auto → ${bot.autoVoice}`;
+                    const hostMuted = (botVoiceVolumes[bot.name] ?? 100) <= 0;
                     return `
                         <div class="voice-row" data-bot="${esc(bot.name)}">
                             <span class="voice-name" title="${esc(bot.name)}${bot.connected ? ' (connected)' : ''}">
@@ -6254,6 +6257,8 @@
                                     value="${isCustom ? esc(assigned) : ''}" ${isCustom ? '' : 'hidden'}>
                                 ${has ? '' : `<span class="voice-hint">${esc(fallback)}</span>`}
                             </div>
+                            <button class="btn btn-ghost" data-role="voice-mute"
+                                title="${hostMuted ? 'Unmute host playback' : 'Mute host playback for this bot'}">${hostMuted ? 'Unmute' : 'Mute'}</button>
                             <button class="btn btn-ghost btn-preview" data-role="voice-preview"
                                 ${voicesState.previewAvailable ? '' : 'disabled'}
                                 title="${voicesState.previewAvailable
@@ -6382,11 +6387,42 @@
         });
 
         voicesBotList.addEventListener('click', (e) => {
+            const muteBtn = e.target.closest('[data-role="voice-mute"]');
+            if (muteBtn) {
+                const name = muteBtn.closest('.voice-row').dataset.bot;
+                const next = (botVoiceVolumes[name] ?? 100) <= 0 ? 100 : 0;
+                fetch(`/api/voice/bots/${encodeURIComponent(name)}/volume`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ volume: next }),
+                }).then(r => r.json()).then(body => {
+                    if (body?.volumes) botVoiceVolumes = body.volumes;
+                    else if (body?.success) {
+                        if (next >= 100) delete botVoiceVolumes[name];
+                        else botVoiceVolumes[name] = next;
+                    }
+                    renderVoices();
+                }).catch(() => setVoicesStatus(`Could not mute ${name}`, true));
+                return;
+            }
             const btn = e.target.closest('[data-role="voice-preview"]');
             if (!btn) return;
             const name = btn.closest('.voice-row').dataset.bot;
             playVoicePreview(draftVoiceFor(name), name, btn);
         });
+
+        socket.on('voice-bot-volume', (payload) => {
+            if (payload?.reset) botVoiceVolumes = {};
+            else if (payload?.volumes) botVoiceVolumes = payload.volumes;
+            else if (payload?.botName) {
+                if (payload.volume >= 100) delete botVoiceVolumes[payload.botName];
+                else botVoiceVolumes[payload.botName] = payload.volume;
+            }
+            if (voicesModal.style.display === 'flex') renderVoices();
+        });
+        fetch('/api/voice/bots').then(r => r.json()).then(body => {
+            if (body?.volumes) botVoiceVolumes = body.volumes;
+        }).catch(() => {});
 
         function addVoiceBot() {
             const input = document.getElementById('voicesAddInput');
