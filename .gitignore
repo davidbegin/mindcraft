@@ -48,3 +48,6 @@ contests/journal.jsonl
 contests/state.json
 contests/tower_high_scores.json
 contests/survivor/
+
+# Local UI preview screenshots
+.home-preview.png

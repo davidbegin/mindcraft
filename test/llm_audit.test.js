@@ -6,11 +6,15 @@ import test from 'node:test';
 
 import {
     beginLLMAudit,
+    deleteLLMAuditCategory,
+    deleteLLMAuditEntry,
     finishLLMAudit,
     instrumentLLMModel,
     listLLMAuditEntries,
+    readLLMAuditCategory,
     readLLMAuditEntry,
     setLLMAuditModelDefaults,
+    updateLLMAuditCategory,
     withLLMAuditContext,
 } from '../src/models/llm_audit.js';
 
@@ -87,6 +91,43 @@ test('records failed calls without losing their request', async () => {
         assert.equal(stored.status, 'error');
         assert.equal(stored.error.message, 'provider unavailable');
         assert.equal(stored.request.systemPrompt, 'Write code.');
+    } finally {
+        await fs.rm(path.join('bots', agent), { recursive: true, force: true });
+    }
+});
+
+test('labels, reviews, and deletes audit categories and calls', async () => {
+    const agent = `audit-test-${randomUUID()}`;
+    try {
+        const first = await beginLLMAudit({ agent, kind: 'conversation' });
+        const second = await beginLLMAudit({ agent, kind: 'conversation' });
+        await finishLLMAudit(first, { response: 'first' });
+        await finishLLMAudit(second, { response: 'second' });
+
+        assert.deepEqual(readLLMAuditCategory(agent), {
+            label: agent,
+            reviewState: 'unreviewed',
+            note: '',
+        });
+        const category = await updateLLMAuditCategory(agent, {
+            label: 'Needs investigation',
+            reviewState: 'pending',
+            note: 'Unexpected background traffic',
+        });
+        assert.deepEqual(category, {
+            label: 'Needs investigation',
+            reviewState: 'pending',
+            note: 'Unexpected background traffic',
+        });
+        assert.deepEqual(listLLMAuditEntries({ agent })[0].category, category);
+
+        assert.equal(await deleteLLMAuditEntry(agent, first.id), true);
+        assert.equal(readLLMAuditEntry(agent, first.id), null);
+        assert.equal(listLLMAuditEntries({ agent }).length, 1);
+
+        assert.equal(await deleteLLMAuditCategory(agent), true);
+        assert.deepEqual(listLLMAuditEntries({ agent }), []);
+        assert.equal(await deleteLLMAuditCategory(agent), false);
     } finally {
         await fs.rm(path.join('bots', agent), { recursive: true, force: true });
     }

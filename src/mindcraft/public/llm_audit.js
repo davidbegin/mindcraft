@@ -39,6 +39,23 @@
         return model?.model || model?.provider || 'default model';
     }
 
+    function categoryForAgent(agent) {
+        return summaries.find(item => item.agent === agent)?.category || {
+            label: agent,
+            reviewState: 'unreviewed',
+            note: '',
+        };
+    }
+
+    async function requestJson(url, options = {}) {
+        const response = await fetch(url, options);
+        const payload = await response.json();
+        if (!response.ok || !payload.success) {
+            throw new Error(payload.error || `Request failed (${response.status})`);
+        }
+        return payload;
+    }
+
     function entriesForAgent(agent) {
         const needle = search.trim().toLowerCase();
         return summaries.filter(item => {
@@ -92,15 +109,22 @@
         el('agents').innerHTML = names.length
             ? names.map(name => {
                 const all = summaries.filter(item => item.agent === name);
+                const category = categoryForAgent(name);
                 const pending = all.filter(item => item.status === 'pending').length;
                 const failed = all.filter(item => item.status === 'error').length;
                 const state = pending ? `${pending} live` : failed ? `${failed} failed` : `${all.length} captured`;
                 return `<button class="row${name === selectedAgent ? ' selected' : ''}" data-agent="${esc(name)}">
-                    <span class="row-top"><span class="row-title">${esc(name)}</span><span class="agent-count">${all.length}</span></span>
-                    <span class="meta">${esc(state)} · latest ${esc(timeLabel(all[0]?.startedAt))}</span>
+                    <span class="row-top">
+                        <span class="row-title">${esc(category.label)}</span>
+                        <span class="category-state ${esc(category.reviewState)}">${esc(category.reviewState)}</span>
+                        <span class="agent-count">${all.length}</span>
+                    </span>
+                    <span class="meta">${category.label !== name ? `${esc(name)} · ` : ''}${esc(state)} · latest ${esc(timeLabel(all[0]?.startedAt))}</span>
+                    ${category.note ? `<span class="preview">${esc(category.note)}</span>` : ''}
                 </button>`;
             }).join('')
             : '<div class="empty">No LLM calls captured yet. New calls appear here automatically.</div>';
+        el('categoryAction').disabled = !selectedAgent;
     }
 
     function renderCalls() {
@@ -109,7 +133,9 @@
             .filter(item => item.agent === selectedAgent)
             .sort((left, right) => left.startedAt.localeCompare(right.startedAt));
         const numberById = new Map(chronological.map((item, index) => [item.id, index + 1]));
-        el('callsTitle').textContent = selectedAgent || 'Calls';
+        el('callsTitle').textContent = selectedAgent
+            ? categoryForAgent(selectedAgent).label
+            : 'Calls';
         el('callCount').textContent = calls.length ? `${calls.length} shown` : '';
         el('calls').innerHTML = calls.length
             ? calls.map(item => `<button class="row${item.id === selectedCall ? ' selected' : ''}" data-call="${esc(item.id)}">
@@ -174,6 +200,7 @@
                     <button class="button" id="speakButton" type="button">Read aloud</button>
                     <button class="button" id="copyButton" type="button">Copy JSON</button>
                     <button class="button" id="downloadButton" type="button">Download</button>
+                    <button class="button danger" id="deleteCallButton" type="button">Delete call</button>
                 </div>
             </div>
             <div class="facts">
@@ -218,6 +245,22 @@
                 response || 'No response.',
             ].join('\n');
             speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+        });
+        el('deleteCallButton').addEventListener('click', async () => {
+            if (!window.confirm(`Delete call #${callNumber}? This cannot be undone.`)) return;
+            try {
+                await requestJson(`/api/llm-audit/${encodeURIComponent(entry.agent)}/${encodeURIComponent(entry.id)}`, {
+                    method: 'DELETE',
+                });
+                entryCache.delete(entry.id);
+                summaries = summaries.filter(item => item.id !== entry.id);
+                selectedCall = null;
+                selectedEntry = null;
+                render();
+                await refresh();
+            } catch (error) {
+                window.alert(error.message);
+            }
         });
     }
 
@@ -330,6 +373,50 @@
             render();
             await loadEntry(selectedCall);
         }, 180);
+    });
+    el('categoryAction').addEventListener('change', async event => {
+        const action = event.target.value;
+        event.target.value = '';
+        if (!action || !selectedAgent) return;
+        const agent = selectedAgent;
+        const category = categoryForAgent(agent);
+        try {
+            if (action === 'delete') {
+                if (!window.confirm(`Delete “${category.label}” and all ${summaries.filter(item => item.agent === agent).length} captured calls? This cannot be undone.`)) return;
+                await requestJson(`/api/llm-audit/${encodeURIComponent(agent)}`, { method: 'DELETE' });
+                for (const item of summaries.filter(item => item.agent === agent)) entryCache.delete(item.id);
+                summaries = summaries.filter(item => item.agent !== agent);
+                selectedAgent = null;
+                selectedCall = null;
+                selectedEntry = null;
+                render();
+                await refresh();
+                return;
+            }
+            let updates;
+            if (action === 'rename') {
+                const label = window.prompt('Category label', category.label);
+                if (label === null || label.trim() === category.label) return;
+                updates = { label };
+            } else if (action === 'note') {
+                const note = window.prompt('Category note (leave blank to clear)', category.note || '');
+                if (note === null) return;
+                updates = { note };
+            } else {
+                updates = { reviewState: action };
+            }
+            const payload = await requestJson(`/api/llm-audit/${encodeURIComponent(agent)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updates),
+            });
+            summaries
+                .filter(item => item.agent === agent)
+                .forEach(item => { item.category = payload.category; });
+            render();
+        } catch (error) {
+            window.alert(error.message);
+        }
     });
 
     refresh().catch(() => {});

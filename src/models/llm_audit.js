@@ -16,6 +16,8 @@ const projectRoot = path.resolve(moduleDir, '../..');
 const botsRoot = path.join(projectRoot, 'bots');
 const auditVersion = 1;
 const auditContext = new AsyncLocalStorage();
+const categoryMetadataFilename = '.category.json';
+const reviewStates = new Set(['unreviewed', 'pending', 'reviewed', 'archived']);
 
 function safeSegment(value) {
     return String(value || 'unknown').replace(/[^A-Za-z0-9_.-]/g, '_');
@@ -45,6 +47,81 @@ function auditDirectory(agentName) {
 
 function auditFile(agentName, id) {
     return path.join(auditDirectory(agentName), `${safeSegment(id)}.json`);
+}
+
+function categoryMetadataFile(agentName) {
+    return path.join(auditDirectory(agentName), categoryMetadataFilename);
+}
+
+function defaultCategoryMetadata(agentName) {
+    return {
+        label: agentName,
+        reviewState: 'unreviewed',
+        note: '',
+    };
+}
+
+export function readLLMAuditCategory(agentName) {
+    if (!validSegment(agentName)) return null;
+    const defaults = defaultCategoryMetadata(agentName);
+    try {
+        const stored = JSON.parse(readFileSync(categoryMetadataFile(agentName), 'utf8'));
+        return {
+            label: typeof stored.label === 'string' && stored.label.trim()
+                ? stored.label.trim()
+                : defaults.label,
+            reviewState: reviewStates.has(stored.reviewState)
+                ? stored.reviewState
+                : defaults.reviewState,
+            note: typeof stored.note === 'string' ? stored.note : defaults.note,
+        };
+    } catch {
+        return defaults;
+    }
+}
+
+export async function updateLLMAuditCategory(agentName, updates = {}) {
+    if (!validSegment(agentName) || !existsSync(auditDirectory(agentName))) return null;
+    const current = readLLMAuditCategory(agentName);
+    const next = { ...current };
+    if (updates.label !== undefined) {
+        const label = String(updates.label).trim();
+        if (!label || label.length > 80) throw new Error('Label must be between 1 and 80 characters');
+        next.label = label;
+    }
+    if (updates.reviewState !== undefined) {
+        if (!reviewStates.has(updates.reviewState)) throw new Error('Invalid review state');
+        next.reviewState = updates.reviewState;
+    }
+    if (updates.note !== undefined) {
+        const note = String(updates.note).trim();
+        if (note.length > 2000) throw new Error('Note must be 2,000 characters or fewer');
+        next.note = note;
+    }
+    const destination = categoryMetadataFile(agentName);
+    const temporary = `${destination}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, JSON.stringify(next, null, 2), 'utf8');
+    await fs.rename(temporary, destination);
+    return next;
+}
+
+export async function deleteLLMAuditEntry(agentName, id) {
+    if (!validSegment(agentName) || !validSegment(id)) return false;
+    const filename = auditFile(agentName, id);
+    if (!existsSync(filename)) return false;
+    await Promise.all([
+        fs.rm(filename, { force: true }),
+        fs.rm(path.join(auditDirectory(agentName), `${id}.jpg`), { force: true }),
+    ]);
+    return true;
+}
+
+export async function deleteLLMAuditCategory(agentName) {
+    if (!validSegment(agentName)) return false;
+    const directory = auditDirectory(agentName);
+    if (!existsSync(directory)) return false;
+    await fs.rm(directory, { recursive: true, force: true });
+    return true;
 }
 
 async function writeEntry(entry) {
@@ -257,8 +334,9 @@ export function listLLMAuditEntries({ agent = null, limit = 1000 } = {}) {
     for (const agentName of agentNames) {
         const directory = auditDirectory(agentName);
         if (!existsSync(directory)) continue;
+        const category = readLLMAuditCategory(agentName);
         for (const filename of readdirSync(directory)) {
-            if (!filename.endsWith('.json')) continue;
+            if (!filename.endsWith('.json') || filename === categoryMetadataFilename) continue;
             try {
                 const entry = JSON.parse(readFileSync(path.join(directory, filename), 'utf8'));
                 summaries.push({
@@ -283,6 +361,7 @@ export function listLLMAuditEntries({ agent = null, limit = 1000 } = {}) {
                     inputCharacters: typeof entry.request?.embeddingInput === 'string'
                         ? entry.request.embeddingInput.length
                         : 0,
+                    category,
                 });
             } catch (error) {
                 console.warn(`Could not index LLM audit entry ${filename}:`, error.message);

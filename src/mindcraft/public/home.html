@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mindcraft</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0e1210;
+            --bg-elevated: #161c19;
+            --bg-card: #1a221e;
+            --bg-inset: #101614;
+            --border: #2a3530;
+            --border-strong: #3d4d45;
+            --text: #e8efe9;
+            --text-dim: #8a9a90;
+            --text-mute: #5f7066;
+            --lime: #9fe870;
+            --lime-dim: rgba(159, 232, 112, 0.15);
+            --amber: #f0b429;
+            --amber-dim: rgba(240, 180, 41, 0.18);
+            --red: #ef5350;
+            --red-dim: rgba(239, 83, 80, 0.16);
+            --cyan: #5ec8c0;
+            --font: "DM Sans", system-ui, sans-serif;
+            --mono: "JetBrains Mono", ui-monospace, monospace;
+            --radius: 12px;
+            --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+        }
+
+        * { box-sizing: border-box; }
+        [hidden] { display: none !important; }
+
+        html, body {
+            margin: 0;
+            min-height: 100%;
+            background:
+                radial-gradient(1200px 600px at 10% -10%, rgba(159, 232, 112, 0.06), transparent 55%),
+                radial-gradient(900px 500px at 90% 0%, rgba(94, 200, 192, 0.05), transparent 50%),
+                var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        body { padding: 20px 22px 90px; }
+        main { max-width: 1080px; margin: 0 auto; }
+
+        /* —— Header —— */
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin: 0 auto 26px;
+            max-width: 1080px;
+            flex-wrap: wrap;
+        }
+
+        .brand { display: flex; align-items: baseline; gap: 10px; }
+        .brand h1 { margin: 0; font-size: 1.55rem; font-weight: 700; letter-spacing: -0.03em; }
+        .brand .tag { color: var(--text-dim); font-size: 0.85rem; font-weight: 500; }
+
+        .view-nav {
+            display: inline-flex;
+            gap: 4px;
+            padding: 3px;
+            border-radius: 10px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+
+        .view-nav a {
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+        .view-nav a:hover { color: var(--text); }
+        .view-nav a.active {
+            background: var(--lime-dim);
+            color: var(--lime);
+            border: 1px solid rgba(159, 232, 112, 0.28);
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-dim);
+            margin-left: auto;
+        }
+        .status-pill.online { color: var(--lime); border-color: rgba(159, 232, 112, 0.35); background: var(--lime-dim); }
+        .status-pill.offline { color: var(--red); border-color: rgba(239, 83, 80, 0.35); background: var(--red-dim); }
+        .status-pill::before {
+            content: "";
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        /* —— Intro —— */
+        .lede {
+            font-size: 1.05rem;
+            color: var(--text-dim);
+            max-width: 760px;
+            margin: 0 0 30px;
+        }
+        .lede strong { color: var(--text); font-weight: 600; }
+
+        section { margin-bottom: 38px; }
+
+        .section-head {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .section-head h2 {
+            margin: 0;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-mute);
+        }
+        .section-head .hint { color: var(--text-mute); font-size: 0.82rem; }
+
+        /* —— Live status —— */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 12px;
+        }
+
+        .status-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+            box-shadow: var(--shadow);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .status-card.active { border-color: rgba(159, 232, 112, 0.35); }
+
+        .status-card h3 {
+            margin: 0;
+            font-size: 0.74rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-mute);
+        }
+
+        .status-value {
+            font-size: 1.15rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+        .status-card.active .status-value { color: var(--lime); }
+        .status-detail { color: var(--text-dim); font-size: 0.88rem; }
+
+        .status-card a {
+            margin-top: auto;
+            padding-top: 6px;
+            color: var(--cyan);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.84rem;
+        }
+        .status-card a:hover { text-decoration: underline; }
+
+        .join-line {
+            margin-top: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            color: var(--text-dim);
+            font-size: 0.88rem;
+        }
+        .join-copy {
+            font: inherit;
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            color: var(--text);
+            background: var(--bg-inset);
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .join-copy:hover { border-color: var(--lime); color: var(--lime); }
+
+        /* —— How it works —— */
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 14px;
+            counter-reset: step;
+        }
+
+        .step {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px 18px;
+        }
+        .step h3 {
+            margin: 0 0 6px;
+            font-size: 0.98rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+        }
+        .step h3::before {
+            counter-increment: step;
+            content: counter(step);
+            width: 22px;
+            height: 22px;
+            flex: none;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: var(--lime-dim);
+            color: var(--lime);
+            font-family: var(--mono);
+            font-size: 0.76rem;
+            font-weight: 600;
+        }
+        .step p { margin: 0; color: var(--text-dim); }
+        .step code {
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            color: var(--cyan);
+        }
+
+        /* —— Links —— */
+        .link-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+        }
+
+        .link-card {
+            display: block;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 15px 17px;
+            text-decoration: none;
+            color: inherit;
+            transition: border-color 0.15s, background 0.15s, transform 0.15s;
+        }
+        .link-card:hover {
+            border-color: var(--border-strong);
+            background: var(--bg-elevated);
+            transform: translateY(-1px);
+        }
+        .link-card h3 {
+            margin: 0 0 5px;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+        .link-card p { margin: 0; color: var(--text-dim); font-size: 0.88rem; }
+        .link-card .link-state {
+            display: block;
+            margin-top: 8px;
+            font-family: var(--mono);
+            font-size: 0.76rem;
+            color: var(--text-mute);
+        }
+        .link-card.colony { border-color: rgba(94, 200, 192, 0.3); }
+        .link-card.colony h3 { color: var(--cyan); }
+
+        footer {
+            max-width: 1080px;
+            margin: 0 auto;
+            color: var(--text-mute);
+            font-size: 0.82rem;
+            border-top: 1px solid var(--border);
+            padding-top: 14px;
+        }
+        footer a { color: var(--text-dim); }
+
+        @media (max-width: 720px) {
+            body { padding: 16px 14px 60px; }
+            .status-pill { margin-left: 0; }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <h1>Mindcraft</h1>
+            <span class="tag">home</span>
+        </div>
+        <nav class="view-nav" aria-label="Main views">
+            <a href="/" class="active" aria-current="page">Home</a>
+            <a href="/games">Games</a>
+            <a href="/games/archive">Games Log</a>
+            <a href="/survivor">Survivor</a>
+            <a href="/conversations">Conversations</a>
+            <a href="/llm-audit">LLM Audit</a>
+            <a href="/seasons">Archive</a>
+            <a href="/architecture">Architecture</a>
+            <a href="/colony">Colony</a>
+        </nav>
+        <span id="msStatus" class="status-pill offline">mindserver offline</span>
+    </header>
+
+    <main>
+        <p class="lede">
+            A pile of <strong>LLM-driven Minecraft bots</strong> sharing one world. Each bot is its own process with its
+            own model and personality; this server launches them, watches what they do, and records all of it. Below is
+            what is running right now, how the pieces fit together, and where to go next.
+        </p>
+
+        <section>
+            <div class="section-head">
+                <h2>Running right now</h2>
+                <span class="hint" id="liveHint">connecting…</span>
+            </div>
+            <div class="status-grid">
+                <article class="status-card" id="botsCard">
+                    <h3>Bots</h3>
+                    <div class="status-value" id="botsValue">—</div>
+                    <div class="status-detail" id="botsDetail">Waiting for the roster…</div>
+                    <a href="/live.html" target="_blank" rel="noopener">Watch the live wall →</a>
+                </article>
+                <article class="status-card" id="gamesCard">
+                    <h3>Game</h3>
+                    <div class="status-value" id="gamesValue">—</div>
+                    <div class="status-detail" id="gamesDetail">Checking the contest coordinator…</div>
+                    <a href="/games">Open games →</a>
+                </article>
+                <article class="status-card" id="survivorCard">
+                    <h3>Survivor</h3>
+                    <div class="status-value" id="survivorValue">—</div>
+                    <div class="status-detail" id="survivorDetail">Checking the season…</div>
+                    <a href="/survivor">Open control room →</a>
+                </article>
+                <article class="status-card" id="colonyCard">
+                    <h3>Colony</h3>
+                    <div class="status-value" id="colonyValue">—</div>
+                    <div class="status-detail" id="colonyDetail">Checking the coordinator…</div>
+                    <a href="/colony">Open colony →</a>
+                </article>
+            </div>
+            <div class="join-line">
+                <span>Join the same world from your own client:</span>
+                <button type="button" class="join-copy" id="joinAddress" title="Click to copy">unavailable</button>
+                <span id="joinCopied" hidden>copied</span>
+            </div>
+        </section>
+
+        <section>
+            <div class="section-head">
+                <h2>How it works</h2>
+                <span class="hint">the short version — <a href="/architecture" style="color: var(--cyan)">full architecture</a></span>
+            </div>
+            <div class="steps">
+                <article class="step">
+                    <h3>One server owns everything</h3>
+                    <p>
+                        MindServer is an Express + Socket.IO process on <code>localhost:8080</code>. It serves these
+                        pages, spawns bot processes, and holds every coordinator. Browser and bots only ever talk to it.
+                    </p>
+                </article>
+                <article class="step">
+                    <h3>Each bot is its own process</h3>
+                    <p>
+                        A bot is a Node child process running a Mineflayer client. It keeps its own history, prompts its
+                        own model, and is restarted automatically if it dies badly.
+                    </p>
+                </article>
+                <article class="step">
+                    <h3>The model drives through commands</h3>
+                    <p>
+                        World state goes into a prompt; the reply comes back with <code>!command(args)</code> calls that
+                        the executor runs as skills. Reactive survival modes tick every 300 ms and can interrupt.
+                    </p>
+                </article>
+                <article class="step">
+                    <h3>Coordinators set the goal</h3>
+                    <p>
+                        On top of the bots sit three drivers: contests for short judged games, a Survivor season with
+                        alliances and votes, and the colony's persistent task board.
+                    </p>
+                </article>
+                <article class="step">
+                    <h3>The world is controlled over RCON</h3>
+                    <p>
+                        Bots connect to a Java Minecraft server over the game protocol, while MindServer rebuilds arenas,
+                        teleports players, and reads scoreboards through RCON.
+                    </p>
+                </article>
+                <article class="step">
+                    <h3>Everything is recorded</h3>
+                    <p>
+                        Per-bot POV video, private conversation transcripts, and every prompt and response are written to
+                        disk so a finished run can be replayed and audited.
+                    </p>
+                </article>
+            </div>
+        </section>
+
+        <section>
+            <div class="section-head">
+                <h2>Where to go</h2>
+            </div>
+            <div class="link-grid">
+                <a class="link-card" href="/games">
+                    <h3>Games</h3>
+                    <p>Launch a short contest — pick a preset, cast the bots, and watch the run.</p>
+                    <span class="link-state" id="gamesLinkState"></span>
+                </a>
+                <a class="link-card" href="/survivor">
+                    <h3>Survivor</h3>
+                    <p>Run a full season: tribes, immunity challenges, tribal council, and the jury vote.</p>
+                    <span class="link-state" id="survivorLinkState"></span>
+                </a>
+                <a class="link-card" href="/live.html" target="_blank" rel="noopener">
+                    <h3>Live wall</h3>
+                    <p>Every bot's point of view in one grid, plus the map strip.</p>
+                    <span class="link-state" id="liveLinkState"></span>
+                </a>
+                <a class="link-card" href="/conversations">
+                    <h3>Conversations</h3>
+                    <p>Read the private chats bots had with each other, castaway by castaway.</p>
+                </a>
+                <a class="link-card" href="/llm-audit">
+                    <h3>LLM audit</h3>
+                    <p>Every prompt and response, per agent — the place to look when a bot does something baffling.</p>
+                </a>
+                <a class="link-card" href="/games/archive">
+                    <h3>Games log</h3>
+                    <p>Finished contests: results, integrity checks, and transcripts.</p>
+                </a>
+                <a class="link-card" href="/seasons">
+                    <h3>Season archive</h3>
+                    <p>Completed Survivor seasons, read back from disk.</p>
+                </a>
+                <a class="link-card" href="/architecture">
+                    <h3>Architecture</h3>
+                    <p>How the modules connect, from <code>main.js</code> down to the Mineflayer client.</p>
+                </a>
+                <a class="link-card colony" href="/colony">
+                    <h3>Colony</h3>
+                    <p>The long game: a persistent base with a phase, a task board, and bots that keep working on it.</p>
+                    <span class="link-state" id="colonyLinkState"></span>
+                </a>
+            </div>
+        </section>
+
+        <footer>
+            Not sure where to start? Open the <a href="/games">games</a> page and launch a preset — it spawns the bots
+            for you.
+        </footer>
+    </main>
+
+    <script>
+        const socket = io();
+        const statusEl = document.getElementById('msStatus');
+        const liveHint = document.getElementById('liveHint');
+
+        const setText = (id, text) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = text;
+        };
+        const setActive = (id, active) => {
+            document.getElementById(id)?.classList.toggle('active', Boolean(active));
+        };
+        const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+        const titleCase = value => String(value ?? '').replaceAll('_', ' ');
+
+        function markOffline() {
+            statusEl.className = 'status-pill offline';
+            statusEl.textContent = 'mindserver offline';
+            liveHint.textContent = 'disconnected';
+        }
+
+        socket.on('connect', () => {
+            statusEl.className = 'status-pill online';
+            statusEl.textContent = 'mindserver online';
+            liveHint.textContent = 'live';
+            loadContest();
+            loadSurvivor();
+            loadColony();
+        });
+        socket.on('disconnect', markOffline);
+        socket.on('connect_error', markOffline);
+
+        // —— Bots ——
+        socket.on('agents-status', agents => {
+            const roster = Array.isArray(agents) ? agents : [];
+            const inGame = roster.filter(agent => agent.in_game);
+            setActive('botsCard', inGame.length > 0);
+            setText('botsValue', roster.length === 0 ? 'None running' : plural(inGame.length, 'bot') + ' in game');
+            setText('botsDetail', roster.length === 0
+                ? 'Launch a game or start the colony to spawn some.'
+                : (inGame.length > 0 ? inGame : roster).map(agent => agent.name).join(', '));
+            setText('liveLinkState', roster.length === 0 ? '' : `${plural(inGame.length, 'stream')} available`);
+        });
+
+        // —— Games ——
+        function loadContest() {
+            socket.emit('contest-status', result => {
+                if (!result?.success) {
+                    setActive('gamesCard', false);
+                    setText('gamesValue', 'Disabled');
+                    setText('gamesDetail', result?.error || 'Contest coordinator unavailable.');
+                    return;
+                }
+                renderContest(result.data, result.join);
+            });
+        }
+
+        function renderContest(state, join) {
+            renderJoin(join);
+            const session = state?.gameSession;
+            const live = state?.activeContest
+                || (state?.contests || []).find(contest => ['draft', 'running', 'judging'].includes(contest.status))
+                || null;
+            const busy = session && !['idle', 'completed', 'failed'].includes(session.status);
+            setActive('gamesCard', Boolean(live) || busy);
+            if (live) {
+                setText('gamesValue', live.title || 'Game in progress');
+                setText('gamesDetail', `${titleCase(live.status)} · ${plural((live.participantIds || []).length, 'bot')}`);
+                setText('gamesLinkState', `live: ${live.title || live.id}`);
+                return;
+            }
+            if (busy) {
+                setText('gamesValue', 'Launching');
+                setText('gamesDetail', `Session ${titleCase(session.status)}.`);
+                setText('gamesLinkState', 'launching a game');
+                return;
+            }
+            const played = (state?.contests || []).length;
+            setText('gamesValue', 'Idle');
+            setText('gamesDetail', played === 0
+                ? 'No games run yet. Pick a preset to start one.'
+                : `${plural(played, 'game')} on record. Pick a preset to start another.`);
+            setText('gamesLinkState', '');
+        }
+
+        // —— Survivor ——
+        function loadSurvivor() {
+            socket.emit('survivor-status', result => {
+                if (!result?.success) {
+                    setActive('survivorCard', false);
+                    setText('survivorValue', 'Disabled');
+                    setText('survivorDetail', result?.error || 'Survivor is not enabled.');
+                    return;
+                }
+                renderSurvivor(result.data);
+            });
+        }
+
+        function renderSurvivor(state) {
+            const game = state?.game;
+            const running = game?.status === 'running' && state?.status !== 'suspended';
+            setActive('survivorCard', running);
+            if (game?.status === 'running') {
+                const remaining = (game.participantIds || []).filter(id => game.players?.[id]?.active).length;
+                setText('survivorValue', state?.status === 'suspended' ? 'Suspended' : 'Season in progress');
+                setText('survivorDetail',
+                    `Round ${game.round} · ${titleCase(game.phase)} · ${remaining} of ${(game.participantIds || []).length} still in`);
+                setText('survivorLinkState', `round ${game.round}`);
+                return;
+            }
+            if (game?.status === 'completed') {
+                setText('survivorValue', 'Season over');
+                setText('survivorDetail', `Won by ${(game.winnerIds || []).join(', ') || 'nobody'}.`);
+                setText('survivorLinkState', 'last season finished');
+                return;
+            }
+            setText('survivorValue', 'No season');
+            setText('survivorDetail', 'Two tribes, secret votes, and a final-three jury — start one from the control room.');
+            setText('survivorLinkState', '');
+        }
+
+        // —— Colony ——
+        function loadColony() {
+            socket.emit('colony-status', result => {
+                if (!result?.success) {
+                    setActive('colonyCard', false);
+                    setText('colonyValue', 'Disabled');
+                    setText('colonyDetail', result?.error || 'Colony coordinator unavailable.');
+                    return;
+                }
+                renderColony(result.data);
+            });
+        }
+
+        function renderColony(state) {
+            if (!state) return;
+            const paused = state.paused === true;
+            const phase = state.phase?.title || state.phase?.id || 'Bootstrap';
+            const open = (state.tasks || []).filter(task => task.status !== 'done').length;
+            setActive('colonyCard', !paused);
+            setText('colonyValue', paused ? 'Paused' : phase);
+            setText('colonyDetail', paused
+                ? (state.pauseReason || `Parked at ${phase}.`)
+                : `${plural(open, 'open task')} · ${plural((state.agents || []).length, 'agent')}`);
+            setText('colonyLinkState', paused ? 'paused' : `${phase} · ${plural(open, 'open task')}`);
+        }
+
+        socket.on('colony-update', renderColony);
+        socket.on('contest-update', state => renderContest(state, null));
+        socket.on('survivor-update', renderSurvivor);
+
+        // —— Join address ——
+        let joinAddress = null;
+        function renderJoin(join) {
+            if (!join?.address) return;
+            joinAddress = join.address;
+            setText('joinAddress', joinAddress);
+        }
+
+        document.getElementById('joinAddress').addEventListener('click', async () => {
+            if (!joinAddress) return;
+            try {
+                await navigator.clipboard.writeText(joinAddress);
+                const flag = document.getElementById('joinCopied');
+                flag.hidden = false;
+                setTimeout(() => { flag.hidden = true; }, 1500);
+            } catch {
+                // Clipboard is blocked outside a secure context; the address is still on screen.
+            }
+        });
+    </script>
+</body>
+</html>

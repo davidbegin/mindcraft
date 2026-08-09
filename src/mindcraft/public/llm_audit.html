@@ -109,6 +109,17 @@
             letter-spacing: .09em;
         }
         .count { margin-left: auto; color: var(--mute); font-size: .66rem; }
+        .pane-action {
+            max-width: 118px;
+            margin-left: auto;
+            color: var(--dim);
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 4px 6px;
+            font-size: .7rem;
+        }
+        .pane-action:disabled { opacity: .45; }
         .pane-body { flex: 1; overflow: auto; min-height: 0; }
         .row {
             width: 100%;
@@ -140,6 +151,15 @@
         .badge.complete { color: var(--lime); border-color: var(--lime); }
         .badge.pending { color: var(--amber); border-color: var(--amber); }
         .badge.error { color: var(--red); border-color: var(--red); }
+        .category-state {
+            flex: none;
+            color: var(--mute);
+            font: .55rem var(--mono);
+            text-transform: uppercase;
+        }
+        .category-state.pending { color: var(--amber); }
+        .category-state.reviewed { color: var(--lime); }
+        .category-state.archived { color: var(--cyan); }
         .agent-count {
             min-width: 26px;
             text-align: center;
@@ -162,6 +182,7 @@
             cursor: pointer;
         }
         .button:hover { color: var(--text); border-color: var(--strong); }
+        .button.danger { color: var(--red); }
         .facts {
             display: grid;
             grid-template-columns: repeat(4, minmax(100px, 1fr));
@@ -224,12 +245,13 @@
     <header class="topbar">
         <div class="brand"><h1>LLM Audit</h1><span class="tag">complete context</span></div>
         <nav aria-label="Main views">
-            <a href="/colony">Colony</a>
+            <a href="/">Home</a>
             <a href="/games">Games</a>
             <a href="/survivor">Survivor</a>
             <a href="/conversations">Conversations</a>
             <a href="/llm-audit" class="active" aria-current="page">LLM Audit</a>
             <a href="/seasons">Archive</a>
+            <a href="/colony">Colony</a>
         </nav>
         <div class="toolbar">
             <select id="kindFilter" class="select" aria-label="Filter by call type"><option value="">All calls</option></select>
@@ -239,7 +261,20 @@
     </header>
     <main class="layout">
         <aside class="pane">
-            <div class="pane-head"><h2>Agents</h2><span id="agentCount" class="count"></span></div>
+            <div class="pane-head">
+                <h2>Categories</h2>
+                <span id="agentCount" class="count"></span>
+                <select id="categoryAction" class="pane-action" aria-label="Manage selected category" disabled>
+                    <option value="">Manage…</option>
+                    <option value="rename">Rename label</option>
+                    <option value="pending">Mark pending</option>
+                    <option value="reviewed">Mark reviewed</option>
+                    <option value="unreviewed">Mark unreviewed</option>
+                    <option value="archived">Archive</option>
+                    <option value="note">Add or edit note</option>
+                    <option value="delete">Delete category</option>
+                </select>
+            </div>
             <div id="agents" class="pane-body"></div>
         </aside>
         <section class="pane">

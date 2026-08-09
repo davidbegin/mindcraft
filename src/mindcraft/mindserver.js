@@ -76,7 +76,13 @@ import { runMinecraftCommand } from './minecraft_server.js';
 import { getCursorProfiles } from './model_profiles.js';
 import { synchronizeProfileSkin, SKINS_DIR } from './skins.js';
 import { assignModelTeam } from './nametags.js';
-import { listLLMAuditEntries, readLLMAuditEntry } from '../models/llm_audit.js';
+import {
+    deleteLLMAuditCategory,
+    deleteLLMAuditEntry,
+    listLLMAuditEntries,
+    readLLMAuditEntry,
+    updateLLMAuditCategory,
+} from '../models/llm_audit.js';
 import {
     allowBot,
     clearSpeechQueue,
@@ -2441,6 +2447,7 @@ function exportStamp(selection) {
 // Initialize the server
 export function createMindServer(host_public = false, port = 8080) {
     const app = express();
+    app.use(express.json({ limit: '50kb' }));
     server = http.createServer(app);
     io = new Server(server);
     launchTelemetry.subscribe(streamLaunchEvent);
@@ -2450,13 +2457,14 @@ export function createMindServer(host_public = false, port = 8080) {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const publicDir = path.join(__dirname, 'public');
     const indexHtml = path.join(publicDir, 'index.html');
+    const homeHtml = path.join(publicDir, 'home.html');
     const survivorHtml = path.join(publicDir, 'survivor.html');
     const conversationsHtml = path.join(publicDir, 'conversations.html');
     const llmAuditHtml = path.join(publicDir, 'llm_audit.html');
     const seasonsHtml = path.join(publicDir, 'seasons.html');
     const gamesArchiveHtml = path.join(publicDir, 'games_archive.html');
     const architectureHtml = path.join(publicDir, 'architecture.html');
-    // index: false so `/` can redirect to `/colony` instead of silently serving index.html
+    // index: false so `/` serves the landing page instead of the colony dashboard.
     app.use(express.static(publicDir, { index: false }));
     // Client-side views share index.html; each has a real URL for copy/share/reload.
     app.get(['/colony', '/games'], (_req, res) => {
@@ -2489,8 +2497,10 @@ export function createMindServer(host_public = false, port = 8080) {
     app.get('/architecture', (_req, res) => {
         res.sendFile(architectureHtml);
     });
+    // The landing page explains the system and summarizes what is running, so a
+    // first visit doesn't drop straight into the colony dashboard.
     app.get('/', (_req, res) => {
-        res.redirect(302, '/colony');
+        res.sendFile(homeHtml);
     });
     app.get('/api/llm-audit', (req, res) => {
         try {
@@ -2510,6 +2520,42 @@ export function createMindServer(host_public = false, port = 8080) {
             return;
         }
         res.json({ success: true, entry });
+    });
+    app.patch('/api/llm-audit/:agent', async (req, res) => {
+        try {
+            const category = await updateLLMAuditCategory(req.params.agent, req.body);
+            if (!category) {
+                res.status(404).json({ success: false, error: 'Audit category not found' });
+                return;
+            }
+            res.json({ success: true, category });
+        } catch (error) {
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+    app.delete('/api/llm-audit/:agent/:id', async (req, res) => {
+        try {
+            const deleted = await deleteLLMAuditEntry(req.params.agent, req.params.id);
+            if (!deleted) {
+                res.status(404).json({ success: false, error: 'Audit entry not found' });
+                return;
+            }
+            res.json({ success: true });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+    app.delete('/api/llm-audit/:agent', async (req, res) => {
+        try {
+            const deleted = await deleteLLMAuditCategory(req.params.agent);
+            if (!deleted) {
+                res.status(404).json({ success: false, error: 'Audit category not found' });
+                return;
+            }
+            res.json({ success: true });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
     });
     // Serve bot data (POV recordings, screenshots) so the UI can play/download them
     app.use('/bots', express.static(path.join(projectRoot, 'bots')));
