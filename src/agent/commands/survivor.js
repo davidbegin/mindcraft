@@ -104,21 +104,6 @@ export const survivorActionList = [
         },
     },
     {
-        name: '!declareVoteLeaning',
-        description:
-            'During the post-council re-evaluation beat, say who you are leaning toward voting. Not a ballot and not binding — you can still change your mind when voting opens.',
-        params: {
-            player_name: { type: 'string', description: 'An eligible target from !survivorStatus.' },
-            reason: {
-                type: 'string',
-                description: 'Why you are leaning this way right now. Cite what you heard at council when it matters.',
-            },
-        },
-        perform: function (_agent, playerName, reason) {
-            return request('declare-leaning', { targetId: playerName, reason });
-        },
-    },
-    {
         name: '!castSurvivorVote',
         description: 'Cast your one secret ballot for the current Tribal Council, revote, or final jury vote. Only legal after council closes.',
         params: {
